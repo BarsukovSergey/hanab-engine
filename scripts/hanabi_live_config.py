@@ -84,7 +84,7 @@ class BotConfigStore:
             )
             try:
                 with temporary.open("w", encoding="utf-8") as stream:
-                    json.dump(value=payload, fp=stream, indent=2, ensure_ascii=False)
+                    json.dump(payload, stream, indent=2, ensure_ascii=False)
                     stream.write("\n")
                     stream.flush()
                     os.fsync(stream.fileno())
