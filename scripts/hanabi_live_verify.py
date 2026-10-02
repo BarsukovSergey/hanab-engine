@@ -97,59 +97,65 @@ def verify_trace(
     for table_directory in sorted(
         path for path in tables_root.iterdir() if path.is_dir()
     ):
-        game = load_json(table_directory / "game.json")
-        command = configured_engine_command(base_command, game, engine_override)
-        decisions_path = table_directory / "decisions.jsonl"
-        if not decisions_path.is_file():
-            continue
-        for line_number, line in enumerate(
-            decisions_path.read_text(encoding="utf-8").splitlines(),
-            start=1,
-        ):
-            record = json.loads(line)
-            if not isinstance(record, dict):
-                raise ValueError(
-                    f"{decisions_path}:{line_number} must contain a JSON object"
-                )
-            expected_hash = record.get("responseHash")
-            snapshot_relative = record.get("snapshot")
-            if not isinstance(expected_hash, str) or not isinstance(
-                snapshot_relative,
-                str,
-            ):
+        for game_path in sorted(table_directory.glob("game-*.json")):
+            game = load_json(game_path)
+            command = configured_engine_command(base_command, game, engine_override)
+            generation = game.get("generation")
+            if not isinstance(generation, int):
+                raise ValueError(f"{game_path} generation must be an integer")
+            decisions_path = (
+                table_directory / f"decisions-{generation:06d}.jsonl"
+            )
+            if not decisions_path.is_file():
                 continue
-
-            checked += 1
-            decision_key = record.get("decisionKey")
-            try:
-                snapshot = load_json(run_directory / snapshot_relative)
-                engine = engine_factory(command, timeout)
-                try:
-                    response = engine.request(
-                        {"kind": "initialize", "snapshot": snapshot}
+            for line_number, line in enumerate(
+                decisions_path.read_text(encoding="utf-8").splitlines(),
+                start=1,
+            ):
+            record = json.loads(line)
+                if not isinstance(record, dict):
+                    raise ValueError(
+                        f"{decisions_path}:{line_number} must contain a JSON object"
                     )
-                finally:
-                    engine.close()
-                actual_hash = semantic_response_fingerprint(response)
-            except (OSError, RuntimeError, TypeError, ValueError) as error:
-                errors.append(
+                expected_hash = record.get("responseHash")
+                snapshot_relative = record.get("snapshot")
+                if not isinstance(expected_hash, str) or not isinstance(
+                    snapshot_relative,
+                    str,
+                ):
+                    continue
+
+                checked += 1
+                decision_key = record.get("decisionKey")
+                try:
+                    snapshot = load_json(run_directory / snapshot_relative)
+                    engine = engine_factory(command, timeout)
+                    try:
+                        response = engine.request(
+                            {"kind": "initialize", "snapshot": snapshot}
+                        )
+                    finally:
+                        engine.close()
+                    actual_hash = semantic_response_fingerprint(response)
+                except (OSError, RuntimeError, TypeError, ValueError) as error:
+                    errors.append(
+                        {
+                            "decisionKey": decision_key,
+                            "error": str(error),
+                        }
+                    )
+                    continue
+
+                if actual_hash == expected_hash:
+                    matched += 1
+                    continue
+                mismatches.append(
                     {
                         "decisionKey": decision_key,
-                        "error": str(error),
+                        "expectedResponseHash": expected_hash,
+                        "actualResponseHash": actual_hash,
                     }
                 )
-                continue
-
-            if actual_hash == expected_hash:
-                matched += 1
-                continue
-            mismatches.append(
-                {
-                    "decisionKey": decision_key,
-                    "expectedResponseHash": expected_hash,
-                    "actualResponseHash": actual_hash,
-                }
-            )
 
     return {
         "schemaVersion": 1,
