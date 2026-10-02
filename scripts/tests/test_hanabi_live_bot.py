@@ -520,6 +520,76 @@ class BotConcurrencyTests(unittest.TestCase):
         finally:
             bot.shutdown()
 
+    def test_table_start_freezes_config_and_chat_before_init(self) -> None:
+        bot, socket = make_bot(
+            RecordingEngine,
+            engine_command=[
+                "fake-engine",
+                "live-session",
+                "--convention",
+                "h-group",
+                "--h-group-level",
+                "max",
+            ],
+        )
+        try:
+            bot.handle_table(
+                {
+                    "id": 7,
+                    "players": ["Bot", "Alice"],
+                    "running": False,
+                    "variant": "No Variant",
+                }
+            )
+            bot.handle_chat(
+                {"recipient": "Bot", "who": "Alice", "msg": "/level 3"}
+            )
+            messages_before_start = len(socket.private_messages())
+
+            bot.handle_table_start({"tableID": 7})
+            bot.handle_chat(
+                {"recipient": "Bot", "who": "Alice", "msg": "/level 5"}
+            )
+            bot.reply("Alice", "blocked")
+
+            self.assertEqual(bot.persistent_config.h_group_level, "3")
+            self.assertEqual(len(socket.private_messages()), messages_before_start)
+        finally:
+            bot.shutdown()
+
+    def test_only_players_at_the_bots_pregame_table_can_change_config(self) -> None:
+        bot, socket = make_bot(
+            RecordingEngine,
+            engine_command=[
+                "fake-engine",
+                "live-session",
+                "--convention",
+                "h-group",
+                "--h-group-level",
+                "max",
+            ],
+        )
+        try:
+            bot.handle_table(
+                {
+                    "id": 7,
+                    "players": ["Alice", "Cathy"],
+                    "running": False,
+                    "variant": "No Variant",
+                }
+            )
+            bot.handle_chat(
+                {"recipient": "Bot", "who": "Alice", "msg": "/level 3"}
+            )
+
+            self.assertEqual(bot.persistent_config.h_group_level, "max")
+            self.assertEqual(
+                socket.private_messages()[-1]["msg"],
+                "You must be seated at my table to query or set its level.",
+            )
+        finally:
+            bot.shutdown()
+
     def test_adapter_blocks_all_chat_commands_while_playing(self) -> None:
         bot, socket = make_bot(RecordingEngine)
         try:
