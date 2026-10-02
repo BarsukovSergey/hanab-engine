@@ -818,8 +818,8 @@ class BotConcurrencyTests(unittest.TestCase):
                 request_path = next(table_directory.glob("*.request.json"))
                 response_path = next(table_directory.glob("*.response.json"))
                 result_path = next(table_directory.glob("*.result.json"))
-                game_path = table_directory / "game.json"
-                decisions_path = table_directory / "decisions.jsonl"
+                game_path = next(table_directory.glob("game-*.json"))
+                decisions_path = next(table_directory.glob("decisions-*.jsonl"))
 
                 snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
                 request = json.loads(request_path.read_text(encoding="utf-8"))
