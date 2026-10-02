@@ -172,13 +172,7 @@ echo 'Type-checking Python...'
 run_check 'Python types' .venv/bin/ty check
 
 echo 'Compiling Python sources...'
-run_check 'Python compilation' .venv/bin/python -m py_compile \
-  scripts/hanabi_live_bot.py \
-  scripts/hanabi_live_engine.py \
-  scripts/hanabi_live_game.py \
-  scripts/hanabi_live_trace.py \
-  scripts/workflow.py \
-  scripts/tests/test_hanabi_live_bot.py
+run_check 'Python compilation' .venv/bin/python -m compileall -q scripts
 
 echo 'Running Python tests...'
 run_check 'Python tests' .venv/bin/python -W error::ResourceWarning -m unittest discover -s scripts/tests -v
