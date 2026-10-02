@@ -392,21 +392,13 @@ class HanabiEngineBot:
         self,
         requester: str,
     ) -> tuple[int, LiveGame | None] | None:
-        active = next(
-            (
-                (table_id, game)
-                for table_id, game in self.games.items()
-                if requester in game.player_names
-            ),
-            None,
-        )
-        if active is not None:
-            return active
         table = next(
             (
                 candidate
                 for candidate in self.tables.values()
-                if requester in candidate.get("players", [])
+                if not candidate.get("running", False)
+                and requester in candidate.get("players", [])
+                and self.username in candidate.get("players", [])
             ),
             None,
         )
@@ -432,7 +424,12 @@ class HanabiEngineBot:
             self.tables.pop(table_id, None)
 
     def handle_table_start(self, data: dict[str, Any]) -> None:
-        self.send("getGameInfo1", {"tableID": int(data["tableID"])})
+        table_id = int(data["tableID"])
+        with self.lock:
+            table = self.tables.get(table_id)
+            if table is not None:
+                table["running"] = True
+        self.send("getGameInfo1", {"tableID": table_id})
 
     def handle_init(self, data: dict[str, Any]) -> None:
         table_id = int(data["tableID"])
@@ -481,6 +478,9 @@ class HanabiEngineBot:
             self.send("tableUnattend", {"tableID": table_id})
             with self.lock:
                 game = self.games.pop(table_id, None)
+                table = self.tables.get(table_id)
+                if table is not None:
+                    table["running"] = False
             self._close_game_engine(game)
 
     def maybe_move(self, table_id: int) -> None:
@@ -722,9 +722,15 @@ class HanabiEngineBot:
             self._close_game_engine(game)
 
     def _has_playing_game_locked(self) -> bool:
-        return any(
+        if any(
             not game.spectating and not game.replay and not game.terminal
             for game in self.games.values()
+        ):
+            return True
+        return any(
+            bool(table.get("running", False))
+            and self.username in table.get("players", [])
+            for table in self.tables.values()
         )
 
     def reply(self, recipient: str, message: str) -> None:
