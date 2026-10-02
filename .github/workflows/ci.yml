@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 permissions:
@@ -22,6 +24,32 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - run: rustup toolchain install 1.85.0 --profile minimal
       - run: cargo +1.85.0 check --workspace --all-targets --all-features --locked
+
+  live-bridge:
+    name: Live bridge Python checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Python development dependencies
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --requirement scripts/requirements-dev.txt
+
+      - name: Type-check Python
+        run: .venv/bin/ty check
+
+      - name: Compile Python sources
+        run: .venv/bin/python -m compileall -q scripts
+
+      - name: Run Python tests
+        run: .venv/bin/python -W error::ResourceWarning -m unittest discover -s scripts/tests -v
+
+      - name: Check Hanabi Live bot CLI
+        run: .venv/bin/python scripts/hanabi_live_bot.py --help >/dev/null
 
   quality:
     name: Build, test, and lint

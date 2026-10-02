@@ -428,7 +428,7 @@ class BotConcurrencyTests(unittest.TestCase):
         finally:
             bot.shutdown()
 
-    def test_private_level_message_configures_the_game_engine(self) -> None:
+    def test_private_level_message_configures_the_next_game_engine(self) -> None:
         bot, socket = make_bot(
             RecordingEngine,
             engine_command=[
@@ -441,14 +441,21 @@ class BotConcurrencyTests(unittest.TestCase):
             ],
         )
         try:
-            bot.handle_init(init_message(7))
+            bot.handle_table(
+                {
+                    "id": 7,
+                    "players": ["Bot", "Alice"],
+                    "running": False,
+                    "variant": "No Variant",
+                }
+            )
             bot.handle_chat(
                 {"recipient": "Bot", "who": "Alice", "msg": "/level 3"}
             )
-            self.assertEqual(bot.games[7].h_group_level, "3")
+            self.assertEqual(bot.persistent_config.h_group_level, "3")
             self.assertEqual(
                 socket.private_messages()[-1]["msg"],
-                "H-Group level 3 selected for this game.",
+                "H-Group level 3 selected for future games.",
             )
             bot.handle_chat({"recipient": "Bot", "who": "Alice", "msg": "/level"})
             self.assertEqual(
@@ -456,6 +463,8 @@ class BotConcurrencyTests(unittest.TestCase):
                 "Current H-Group level: level 3.",
             )
 
+            bot.handle_init(init_message(7))
+            self.assertEqual(bot.games[7].h_group_level, "3")
             bot.handle_game_action_list(
                 {
                     "tableID": 7,
@@ -468,7 +477,7 @@ class BotConcurrencyTests(unittest.TestCase):
         finally:
             bot.shutdown()
 
-    def test_changing_level_restarts_only_that_games_engine(self) -> None:
+    def test_level_command_during_playing_is_silent_and_does_not_mutate(self) -> None:
         bot, socket = make_bot(
             RecordingEngine,
             engine_command=[
@@ -481,47 +490,136 @@ class BotConcurrencyTests(unittest.TestCase):
             ],
         )
         try:
-            bot.handle_init(init_message(7))
-            bot.handle_game_action_list(
+            bot.handle_table(
                 {
-                    "tableID": 7,
-                    "list": [{"type": "turn", "num": 0, "currentPlayerIndex": 0}],
+                    "id": 7,
+                    "players": ["Bot", "Alice"],
+                    "running": False,
+                    "variant": "No Variant",
                 }
             )
-            wait_until(lambda: len(socket.actions()) == 1)
-            original = RecordingEngine.instances[0]
-
             bot.handle_chat(
                 {"recipient": "Bot", "who": "Alice", "msg": "/level 3"}
             )
-            self.assertTrue(original.closed)
-            bot.handle_game_action(
-                {
-                    "tableID": 7,
-                    "action": {"type": "turn", "num": 1, "currentPlayerIndex": 1},
-                }
+            messages_before_game = len(socket.private_messages())
+
+            bot.handle_init(init_message(7))
+            self.assertEqual(bot.games[7].h_group_level, "3")
+            bot.handle_chat(
+                {"recipient": "Bot", "who": "Alice", "msg": "/level 5"}
             )
-            bot.handle_game_action(
-                {
-                    "tableID": 7,
-                    "action": {"type": "turn", "num": 2, "currentPlayerIndex": 0},
-                }
-            )
-            wait_until(lambda: len(socket.actions()) == 2)
-            self.assertEqual(len(RecordingEngine.instances), 2)
-            replacement = RecordingEngine.instances[1]
+            bot.reply("Alice", "This must be blocked while Playing.")
+
             self.assertEqual(
-                replacement.command[replacement.command.index("--h-group-level") + 1],
-                "3",
+                len(socket.private_messages()),
+                messages_before_game,
             )
-            self.assertEqual(replacement.payloads[0]["kind"], "initialize")
+            self.assertEqual(bot.persistent_config.h_group_level, "3")
+            self.assertEqual(bot.games[7].h_group_level, "3")
+            self.assertEqual(RecordingEngine.instances, [])
+        finally:
+            bot.shutdown()
+
+    def test_table_start_freezes_config_and_chat_before_init(self) -> None:
+        bot, socket = make_bot(
+            RecordingEngine,
+            engine_command=[
+                "fake-engine",
+                "live-session",
+                "--convention",
+                "h-group",
+                "--h-group-level",
+                "max",
+            ],
+        )
+        try:
+            bot.handle_table(
+                {
+                    "id": 7,
+                    "players": ["Bot", "Alice"],
+                    "running": False,
+                    "variant": "No Variant",
+                }
+            )
+            bot.handle_chat(
+                {"recipient": "Bot", "who": "Alice", "msg": "/level 3"}
+            )
+            messages_before_start = len(socket.private_messages())
+
+            bot.handle_table_start({"tableID": 7})
+            bot.handle_chat(
+                {"recipient": "Bot", "who": "Alice", "msg": "/level 5"}
+            )
+            bot.reply("Alice", "blocked")
+
+            self.assertEqual(bot.persistent_config.h_group_level, "3")
+            self.assertEqual(len(socket.private_messages()), messages_before_start)
+        finally:
+            bot.shutdown()
+
+    def test_only_players_at_the_bots_pregame_table_can_change_config(self) -> None:
+        bot, socket = make_bot(
+            RecordingEngine,
+            engine_command=[
+                "fake-engine",
+                "live-session",
+                "--convention",
+                "h-group",
+                "--h-group-level",
+                "max",
+            ],
+        )
+        try:
+            bot.handle_table(
+                {
+                    "id": 7,
+                    "players": ["Alice", "Cathy"],
+                    "running": False,
+                    "variant": "No Variant",
+                }
+            )
+            bot.handle_chat(
+                {"recipient": "Bot", "who": "Alice", "msg": "/level 3"}
+            )
+
+            self.assertEqual(bot.persistent_config.h_group_level, "max")
+            self.assertEqual(
+                socket.private_messages()[-1]["msg"],
+                "You must be seated at my table to query or set its level.",
+            )
+        finally:
+            bot.shutdown()
+
+    def test_adapter_blocks_all_chat_commands_while_playing(self) -> None:
+        bot, socket = make_bot(RecordingEngine)
+        try:
+            bot.handle_init(init_message(7))
+            before = list(socket.messages)
+
+            bot.send("chat", {"msg": "blocked", "room": "lobby"})
+            bot.send(
+                "chatPM",
+                {"msg": "blocked", "recipient": "Alice", "room": "lobby"},
+            )
+
+            self.assertEqual(socket.messages, before)
+
+            bot.send("loaded", {"tableID": 7})
+            self.assertEqual(socket.messages[-1], 'loaded {"tableID":7}')
         finally:
             bot.shutdown()
 
     def test_level_message_validates_sender_value_and_convention(self) -> None:
         bot, socket = make_bot(RecordingEngine)
         try:
-            bot.handle_init(init_message(7))
+            bot.handle_table(
+                {
+                    "id": 7,
+                    "players": ["Bot", "Alice"],
+                    "running": False,
+                    "variant": "No Variant",
+                }
+            )
             bot.handle_chat(
                 {"recipient": "Bot", "who": "Alice", "msg": "/level 26"}
             )
@@ -539,7 +637,7 @@ class BotConcurrencyTests(unittest.TestCase):
         finally:
             bot.shutdown()
 
-    def test_bare_level_reports_the_default_without_restarting(self) -> None:
+    def test_bare_level_reports_the_default_without_starting_engine(self) -> None:
         bot, socket = make_bot(
             RecordingEngine,
             engine_command=[
@@ -552,13 +650,38 @@ class BotConcurrencyTests(unittest.TestCase):
             ],
         )
         try:
-            bot.handle_init(init_message(7))
+            bot.handle_table(
+                {
+                    "id": 7,
+                    "players": ["Bot", "Alice"],
+                    "running": False,
+                    "variant": "No Variant",
+                }
+            )
             bot.handle_chat({"recipient": "Bot", "who": "Alice", "msg": "/level"})
             self.assertEqual(
                 socket.private_messages()[-1]["msg"],
                 "Current H-Group level: max.",
             )
             self.assertEqual(RecordingEngine.instances, [])
+        finally:
+            bot.shutdown()
+
+    def test_saved_level_is_not_passed_when_h_group_is_disabled(self) -> None:
+        bot, _socket = make_bot(
+            RecordingEngine,
+            engine_command=[
+                "fake-engine",
+                "live-session",
+                "--convention",
+                "none",
+            ],
+        )
+        try:
+            bot.persistent_config = bridge.PersistentBotConfig(h_group_level="3")
+            bot.handle_init(init_message(7))
+            command = bot._engine_command_for_game(bot.games[7])
+            self.assertNotIn("--h-group-level", command)
         finally:
             bot.shutdown()
 
