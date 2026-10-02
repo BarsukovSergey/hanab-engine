@@ -17,6 +17,7 @@ import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
+from hanabi_live_config import BotConfigStore, PersistentBotConfig
 from hanabi_live_engine import (
     EngineProcessError,
     EngineSession,
@@ -116,6 +117,8 @@ class HanabiEngineBot:
         authenticator: Callable[[str, str, str], tuple[str, str]] = authenticate,
         engine_factory: Callable[[list[str], float], EngineSession] = PersistentEngine,
         trace_recorder: TraceRecorder | None = None,
+        config_store: BotConfigStore | None = None,
+        persistent_config: PersistentBotConfig | None = None,
     ) -> None:
         self.base_url = base_url
         self.username = username
@@ -130,7 +133,17 @@ class HanabiEngineBot:
             engine_command,
             "--h-group-level",
         )
-        self.game_levels: dict[int, str] = {}
+        self.config_store = config_store
+        default_config = PersistentBotConfig(
+            h_group_level=self.default_h_group_level,
+        )
+        self.persistent_config = (
+            persistent_config
+            if persistent_config is not None
+            else config_store.load()
+            if config_store is not None
+            else default_config
+        )
         self.tables: dict[int, dict[str, Any]] = {}
         self.games: dict[int, LiveGame] = {}
         self.ws: WebSocketConnection | None = None
@@ -315,37 +328,45 @@ class HanabiEngineBot:
         self.send("tableJoin", {"tableID": table["id"]})
 
     def _handle_level(self, requester: str, message: str) -> None:
-        parts = message.split()
-        if not 1 <= len(parts) <= 2 or parts[0] != "/level":
-            self.reply(requester, "Usage: /level <1-25|max>")
-            return
-        query = len(parts) == 1
-        level = None if query else parts[1].lower()
-        if level is not None and level != "max":
-            try:
-                number = int(level)
-            except ValueError:
-                number = 0
-            if not 1 <= number <= 25 or level != str(number):
-                self.reply(requester, "Level must be 1 through 25, or max.")
-                return
-        if self.default_h_group_level is None:
-            self.reply(requester, "This bot is not running the H-Group convention.")
-            return
-
-        old_engine: EngineSession | None = None
-        active_table: int
         with self.lock:
+            if self._has_playing_game_locked():
+                log(
+                    f"Ignoring config command from {requester} while a game is Playing."
+                )
+                return
+
+            parts = message.split()
+            if not 1 <= len(parts) <= 2 or parts[0] != "/level":
+                self.reply(requester, "Usage: /level <1-25|max>")
+                return
+            query = len(parts) == 1
+            level = None if query else parts[1].lower()
+            if level is not None and level != "max":
+                try:
+                    number = int(level)
+                except ValueError:
+                    number = 0
+                if not 1 <= number <= 25 or level != str(number):
+                    self.reply(requester, "Level must be 1 through 25, or max.")
+                    return
+            if self.default_h_group_level is None:
+                self.reply(
+                    requester,
+                    "This bot is not running the H-Group convention.",
+                )
+                return
+
             target = self._level_target(requester)
             if target is None:
-                self.reply(requester, "You must be seated at my table to query or set its level.")
+                self.reply(
+                    requester,
+                    "You must be seated at my table to query or set its level.",
+                )
                 return
-            active_table, game = target
-
+            active_table, _game = target
             current_level = (
-                game.h_group_level
-                if game is not None
-                else self.game_levels.get(active_table, self.default_h_group_level)
+                self.persistent_config.h_group_level
+                or self.default_h_group_level
             )
             if query:
                 display = self._level_display(str(current_level))
@@ -353,20 +374,19 @@ class HanabiEngineBot:
                 return
 
             assert level is not None
-            self.game_levels[active_table] = level
-            if game is not None and game.h_group_level != level:
-                self.game_generation += 1
-                game.generation = self.game_generation
-                game.h_group_level = level
-                old_engine = game.reset_engine()
-                game.in_flight = False
+            updated = self.persistent_config.with_h_group_level(level)
+            if self.config_store is not None:
+                try:
+                    self.config_store.save(updated)
+                except (OSError, ValueError) as error:
+                    log(f"Could not persist bot configuration: {error}")
+                    self.reply(requester, "Could not save bot configuration.")
+                    return
+            self.persistent_config = updated
 
-        if old_engine is not None:
-            old_engine.close()
         display = self._level_display(level)
         log(f"Table {active_table}: {requester} selected H-Group {display}.")
-        self.reply(requester, f"H-Group {display} selected for this game.")
-        self.maybe_move(active_table)
+        self.reply(requester, f"H-Group {display} selected for future games.")
 
     def _level_target(
         self,
@@ -410,8 +430,6 @@ class HanabiEngineBot:
         table_id = int(data["tableID"])
         with self.lock:
             self.tables.pop(table_id, None)
-            if table_id not in self.games:
-                self.game_levels.pop(table_id, None)
 
     def handle_table_start(self, data: dict[str, Any]) -> None:
         self.send("getGameInfo1", {"tableID": int(data["tableID"])})
@@ -428,10 +446,7 @@ class HanabiEngineBot:
                 spectating=bool(data.get("spectating", False)),
                 replay=bool(data.get("replay", False)),
                 options=data["options"],
-                h_group_level=self.game_levels.get(
-                    table_id,
-                    self.default_h_group_level,
-                ),
+                config_snapshot=self.persistent_config.snapshot(),
                 generation=self.game_generation,
             )
         self._close_game_engine(old)
@@ -466,7 +481,6 @@ class HanabiEngineBot:
             self.send("tableUnattend", {"tableID": table_id})
             with self.lock:
                 game = self.games.pop(table_id, None)
-                self.game_levels.pop(table_id, None)
             self._close_game_engine(game)
 
     def maybe_move(self, table_id: int) -> None:
@@ -705,6 +719,12 @@ class HanabiEngineBot:
         for game in games:
             self._close_game_engine(game)
 
+    def _has_playing_game_locked(self) -> bool:
+        return any(
+            not game.spectating and not game.replay and not game.terminal
+            for game in self.games.values()
+        )
+
     def reply(self, recipient: str, message: str) -> None:
         self.send(
             "chatPM",
@@ -713,6 +733,9 @@ class HanabiEngineBot:
 
     def send(self, command: str, data: dict[str, Any]) -> None:
         with self.lock:
+            if command in {"chat", "chatPM"} and self._has_playing_game_locked():
+                log(f"Blocked outbound {command} while a game is Playing.")
+                return
             ws = self.ws
         if ws is None:
             raise OSError("WebSocket is not connected")
@@ -775,6 +798,17 @@ def parse_arguments() -> argparse.Namespace:
         "--h-group-level",
         choices=tuple(str(level) for level in range(1, 26)) + ("max",),
         default="max",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path(
+            os.getenv(
+                "HANABI_BOT_CONFIG",
+                repository / "config" / "hanabi-live-bot.json",
+            )
+        ),
+        help="path to sticky bot configuration JSON",
     )
     parser.add_argument("--debug", action="store_true")
     return parser.parse_args()
@@ -856,8 +890,25 @@ def main() -> int:
     if arguments.convention == "h-group":
         engine_command.extend(["--h-group-level", arguments.h_group_level])
 
+    default_config = PersistentBotConfig(
+        h_group_level=(
+            arguments.h_group_level
+            if arguments.convention == "h-group"
+            else None
+        )
+    )
+    config_store = BotConfigStore(
+        arguments.config.expanduser().resolve(),
+        default_config,
+    )
+    try:
+        persistent_config = config_store.load()
+    except ValueError as error:
+        log(f"error: {error}")
+        return 2
+
     profile = (
-        f"H-Group {arguments.h_group_level}"
+        f"H-Group {persistent_config.h_group_level or arguments.h_group_level}"
         if arguments.convention == "h-group"
         else "no convention"
     )
@@ -887,6 +938,8 @@ def main() -> int:
         debug=arguments.debug,
         engine_timeout=arguments.engine_timeout,
         trace_recorder=trace_recorder,
+        config_store=config_store,
+        persistent_config=persistent_config,
     )
     try:
         run_with_signal_handlers(bot)
