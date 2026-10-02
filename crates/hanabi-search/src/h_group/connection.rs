@@ -1,0 +1,1006 @@
+use hanabi_core::{Card, CardId, Clue, PlayerId};
+
+use super::HGroupConnectionKind;
+
+/// Stable identity for one concrete connection promise lifecycle.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(super) struct PromiseId(u32);
+
+impl PromiseId {
+    pub(super) const UNASSIGNED: Self = Self(u32::MAX);
+
+    #[cfg(test)]
+    pub(super) const fn from_raw(value: u32) -> Self {
+        Self(value)
+    }
+}
+
+/// Immutable origin of a connection promise. Current status lives in the
+/// manager; provenance survives completion and invalidation for explanation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct PromiseProvenance {
+    pub(super) id: PromiseId,
+    pub(super) created_turn: u32,
+    pub(super) actor: PlayerId,
+    pub(super) focus: CardId,
+    pub(super) expected: Card,
+    pub(super) kind: HGroupConnectionKind,
+}
+
+/// One active, typed step in a Prompt or Finesse chain.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ConnectionObligation {
+    pub(super) promise: PromiseId,
+    pub(super) actor: PlayerId,
+    pub(super) cards: Vec<CardId>,
+    pub(super) expected: Card,
+    /// Identity ultimately promised for `focus`.
+    pub(super) focus_identity: Card,
+    pub(super) kind: HGroupConnectionKind,
+    pub(super) focus: CardId,
+    /// Zero-based position in a multi-connection chain.
+    pub(super) step: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ConnectionStatus {
+    Pending,
+    AwaitingFix,
+    Satisfied,
+    Invalidated,
+    Cancelled,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ConnectionTransitionReason {
+    Scheduled,
+    PlayedExpectedCard,
+    PlayedAlternative,
+    Misplayed,
+    Fixed,
+    DisplacedByClue,
+    Superseded,
+    FocusInvalidated,
+    IdentitySatisfiedElsewhere,
+    IdentityRevealed,
+    LayerExtended,
+    PromptPrioritized,
+    VisibleFinesseDeclined,
+}
+
+/// Auditable lifecycle event for a connection. These records explain current
+/// state; they are not themselves queried as current convention facts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ConnectionTransition {
+    pub(super) promise: PromiseId,
+    pub(super) turn: u32,
+    pub(super) focus: CardId,
+    pub(super) actor: PlayerId,
+    pub(super) expected: Card,
+    pub(super) focus_identity: Card,
+    pub(super) from: ConnectionStatus,
+    pub(super) to: ConnectionStatus,
+    pub(super) reason: ConnectionTransitionReason,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct ConnectionAdvance {
+    pub(super) failed_focuses: Vec<CardId>,
+    pub(super) released_candidates: Vec<CardId>,
+}
+
+/// Canonical owner of every live Prompt/Finesse obligation.
+///
+/// Callers can borrow the active slice for recognition, but all mutation goes
+/// through lifecycle methods so removal and advancement are recorded once.
+#[derive(Clone, Debug, Default)]
+pub(super) struct ConnectionManager {
+    active: Vec<ConnectionObligation>,
+    transitions: Vec<ConnectionTransition>,
+    provenance: Vec<PromiseProvenance>,
+    next_promise: u32,
+    deferred_connections: Vec<(PromiseId, ConnectionObligation)>,
+}
+
+/// Semantic relationship between a clue and an existing connection chain.
+///
+/// Keeping this classification inside the lifecycle owner prevents callers
+/// from independently (and inconsistently) reconstructing whether a touched
+/// card is due now or is merely queued behind an earlier layer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ConnectionClueMatch {
+    Unrelated,
+    ActiveRedundant,
+    LaterContinuation,
+}
+
+impl ConnectionManager {
+    /// A possible own connection waits for the visible Finesse to be tried first.
+    /// <https://hanabi.github.io/level-5/#the-ambiguous-finesse>
+    pub(super) fn defer_connection(&mut self, visible: PromiseId, fallback: ConnectionObligation) {
+        if visible != PromiseId::UNASSIGNED
+            && !self
+                .deferred_connections
+                .iter()
+                .any(|(id, _)| *id == visible)
+        {
+            self.deferred_connections.push((visible, fallback));
+        }
+    }
+
+    /// Only an actionable, unexcused decline transfers the obligation. Playing
+    /// a prerequisite or taking an urgent action is not a failed opportunity.
+    /// A recipient Self-Finesse also resolves when the apparent blind player
+    /// chooses an ordinary clued play. That evidence does not transfer a
+    /// deferred Prompt, which follows its existing decline rule.
+    pub(super) fn resolve_deferred_connections(
+        &mut self,
+        turn: u32,
+        actor: PlayerId,
+        declined: bool,
+        ordinary_clued_play: bool,
+        before_heights: [u8; 5],
+        after_heights: [u8; 5],
+    ) {
+        let deferred = core::mem::take(&mut self.deferred_connections);
+        for (visible, fallback) in deferred {
+            if after_heights[fallback.expected.suit.index()] >= fallback.expected.rank.number() {
+                continue;
+            }
+            let Some(connection) = self.active.iter().find(|item| item.promise == visible) else {
+                continue;
+            };
+            if (declined || (ordinary_clued_play && fallback.kind == HGroupConnectionKind::Finesse))
+                && connection.actor == actor
+                && self.is_active(connection)
+                && before_heights[fallback.expected.suit.index()] + 1
+                    == fallback.expected.rank.number()
+            {
+                self.cancel_where(
+                    turn,
+                    ConnectionTransitionReason::VisibleFinesseDeclined,
+                    |item| item.promise == visible,
+                );
+                self.start(turn, fallback);
+            } else {
+                self.deferred_connections.push((visible, fallback));
+            }
+        }
+    }
+
+    pub(super) fn iter(&self) -> impl Iterator<Item = &ConnectionObligation> {
+        self.active.iter()
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.active.len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_empty(&self) -> bool {
+        self.active.is_empty()
+    }
+
+    /// Whether this obligation is the first unresolved step for its focus.
+    pub(super) fn is_active(&self, candidate: &ConnectionObligation) -> bool {
+        !self.active.iter().any(|other| {
+            other.focus == candidate.focus && other.step < candidate.step && !other.cards.is_empty()
+        })
+    }
+
+    pub(super) fn active(&self) -> impl Iterator<Item = &ConnectionObligation> {
+        self.active
+            .iter()
+            .filter(|connection| self.is_active(connection))
+    }
+
+    pub(super) fn actor_has_active(&self, actor: PlayerId) -> bool {
+        self.active().any(|connection| connection.actor == actor)
+    }
+
+    pub(super) fn identity_is_queued(&self, identity: Card) -> bool {
+        self.active.iter().any(|connection| {
+            connection.expected == identity || connection.focus_identity == identity
+        })
+    }
+
+    /// Classifies a clue against the existing promise lifecycle. A clue that
+    /// touches the due step is a redundant restatement; one that touches only
+    /// a blocked suffix can be a valid Continuation Clue.
+    pub(super) fn match_clue(
+        &self,
+        actor: PlayerId,
+        clue: Clue,
+        touched: &[CardId],
+    ) -> ConnectionClueMatch {
+        let matches = |connection: &ConnectionObligation| {
+            connection.actor == actor
+                && connection.cards.iter().any(|card| touched.contains(card))
+                && clue.matches(connection.expected)
+        };
+        if self.active().any(matches) {
+            ConnectionClueMatch::ActiveRedundant
+        } else if self
+            .active
+            .iter()
+            .any(|connection| matches(connection) && !self.is_active(connection))
+        {
+            ConnectionClueMatch::LaterContinuation
+        } else {
+            ConnectionClueMatch::Unrelated
+        }
+    }
+
+    pub(super) fn transitions(&self) -> &[ConnectionTransition] {
+        &self.transitions
+    }
+
+    pub(super) fn provenance(&self, id: PromiseId) -> Option<PromiseProvenance> {
+        self.provenance
+            .iter()
+            .copied()
+            .find(|origin| origin.id == id)
+    }
+
+    pub(super) fn was_created_on(&self, connection: &ConnectionObligation, turn: u32) -> bool {
+        self.provenance(connection.promise)
+            .is_some_and(|provenance| provenance.created_turn == turn)
+    }
+
+    /// Whether an actor was already carrying a different live connection
+    /// immediately before `turn`. This historical query is used when
+    /// compiling a later clue: a loaded player retains the clue's direct and
+    /// delayed superposition until public actions disambiguate it.
+    pub(super) fn actor_had_pending_before(
+        &self,
+        actor: PlayerId,
+        turn: u32,
+        excluded_focus: CardId,
+    ) -> bool {
+        self.provenance
+            .iter()
+            .filter(|origin| {
+                origin.actor == actor
+                    && origin.focus != excluded_focus
+                    && origin.created_turn < turn
+            })
+            .any(|origin| {
+                self.transitions
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, transition)| {
+                        transition.promise == origin.id && transition.turn < turn
+                    })
+                    .max_by_key(|(index, transition)| (transition.turn, *index))
+                    .is_some_and(|(_, transition)| {
+                        matches!(
+                            transition.to,
+                            ConnectionStatus::Pending | ConnectionStatus::AwaitingFix
+                        )
+                    })
+            })
+    }
+
+    /// Returns the focus identity only after an earlier blind play has
+    /// demonstrated that the still-active layered connection is real.
+    /// Scheduling a connection is not evidence by itself: until a layer
+    /// actually plays, the focus may remain in a direct/delayed
+    /// superposition.
+    pub(super) fn demonstrated_focus_identity(&self, focus: CardId) -> Option<Card> {
+        self.active
+            .iter()
+            .find_map(|connection| {
+                (connection.focus == focus
+                    && self.promise_was_demonstrated_after(connection.promise, 0))
+                .then_some(connection.focus_identity)
+            })
+            .or_else(|| {
+                self.transitions
+                    .iter()
+                    .rev()
+                    .find(|transition| transition.focus == focus)
+                    .filter(|transition| transition.to == ConnectionStatus::Satisfied)
+                    .map(|transition| transition.focus_identity)
+            })
+    }
+
+    /// Whether a queued promise for this identity was publicly demonstrated
+    /// after a later clue was given. This is what lets a recipient upgrade a
+    /// new direct interpretation to one queued behind an older connection.
+    pub(super) fn identity_was_demonstrated_after(&self, identity: Card, turn: u32) -> bool {
+        self.transitions.iter().any(|transition| {
+            transition.focus_identity == identity
+                && transition.turn > turn
+                && transition.from == ConnectionStatus::Pending
+                && matches!(
+                    transition.reason,
+                    ConnectionTransitionReason::PlayedAlternative
+                        | ConnectionTransitionReason::PlayedExpectedCard
+                )
+        })
+    }
+
+    #[cfg(test)]
+    pub(super) fn identity_was_queued_at(&self, identity: Card, turn: u32) -> bool {
+        self.transitions
+            .iter()
+            .filter(|transition| {
+                transition.turn <= turn
+                    && transition.reason == ConnectionTransitionReason::Scheduled
+                    && (transition.expected == identity || transition.focus_identity == identity)
+            })
+            .any(|scheduled| {
+                self.transitions
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, transition)| {
+                        transition.promise == scheduled.promise && transition.turn <= turn
+                    })
+                    .max_by_key(|(index, transition)| (transition.turn, *index))
+                    .is_some_and(|(_, transition)| transition.to == ConnectionStatus::Pending)
+            })
+    }
+
+    pub(super) fn promise_was_demonstrated_after(&self, promise: PromiseId, turn: u32) -> bool {
+        self.transitions.iter().any(|transition| {
+            transition.promise == promise
+                && transition.turn > turn
+                && transition.from == ConnectionStatus::Pending
+                && transition.to == ConnectionStatus::Pending
+                && transition.reason == ConnectionTransitionReason::PlayedAlternative
+        })
+    }
+
+    pub(super) fn validate(&self) -> Result<(), String> {
+        if self
+            .active
+            .iter()
+            .any(|connection| connection.cards.is_empty())
+        {
+            return Err("active connection has no candidates".to_owned());
+        }
+        for (index, connection) in self.active.iter().enumerate() {
+            if self.active[..index].iter().any(|other| {
+                other.actor == connection.actor
+                    && other.focus == connection.focus
+                    && other.step == connection.step
+            }) {
+                return Err(format!(
+                    "duplicate active connection step: {other:?} and {connection:?}",
+                    other = self.active[..index]
+                        .iter()
+                        .find(|other| {
+                            other.actor == connection.actor
+                                && other.focus == connection.focus
+                                && other.step == connection.step
+                        })
+                        .expect("duplicate was just detected")
+                ));
+            }
+            if !self.transitions.iter().any(|transition| {
+                transition.focus == connection.focus
+                    && transition.actor == connection.actor
+                    && transition.reason == ConnectionTransitionReason::Scheduled
+            }) {
+                return Err("active connection has no scheduled transition".to_owned());
+            }
+            if self.provenance(connection.promise).is_none() {
+                return Err("active connection has no promise provenance".to_owned());
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn start(&mut self, turn: u32, mut obligation: ConnectionObligation) -> PromiseId {
+        if self.active.iter().any(|active| {
+            active.actor == obligation.actor
+                && active.cards == obligation.cards
+                && active.expected == obligation.expected
+                && active.focus_identity == obligation.focus_identity
+                && active.kind == obligation.kind
+                && active.focus == obligation.focus
+                && active.step == obligation.step
+        }) {
+            return self
+                .active
+                .iter()
+                .find(|active| {
+                    active.actor == obligation.actor
+                        && active.cards == obligation.cards
+                        && active.expected == obligation.expected
+                        && active.focus_identity == obligation.focus_identity
+                        && active.kind == obligation.kind
+                        && active.focus == obligation.focus
+                        && active.step == obligation.step
+                })
+                .map_or(PromiseId::UNASSIGNED, |active| active.promise);
+        }
+        obligation.promise = PromiseId(self.next_promise);
+        self.next_promise = self.next_promise.saturating_add(1);
+        self.provenance.push(PromiseProvenance {
+            id: obligation.promise,
+            created_turn: turn,
+            actor: obligation.actor,
+            focus: obligation.focus,
+            expected: obligation.expected,
+            kind: obligation.kind,
+        });
+        // One actor can have only one live interpretation for a particular
+        // step of a focus connection. More-specific rules run after the
+        // general connection scheduler, so a later interpretation replaces
+        // the earlier one atomically instead of leaving contradictory duties
+        // for action selection to reconcile.
+        self.cancel_where(turn, ConnectionTransitionReason::Superseded, |active| {
+            active.actor == obligation.actor
+                && active.focus == obligation.focus
+                && active.step == obligation.step
+        });
+        self.record(
+            turn,
+            &obligation,
+            ConnectionStatus::Pending,
+            ConnectionStatus::Pending,
+            ConnectionTransitionReason::Scheduled,
+        );
+        let promise = obligation.promise;
+        self.active.push(obligation);
+        promise
+    }
+
+    pub(super) fn cancel_where(
+        &mut self,
+        turn: u32,
+        reason: ConnectionTransitionReason,
+        mut predicate: impl FnMut(&ConnectionObligation) -> bool,
+    ) {
+        let mut retained = Vec::with_capacity(self.active.len());
+        for obligation in core::mem::take(&mut self.active) {
+            if predicate(&obligation) {
+                let status = match reason {
+                    ConnectionTransitionReason::FocusInvalidated => ConnectionStatus::Invalidated,
+                    ConnectionTransitionReason::Fixed => ConnectionStatus::AwaitingFix,
+                    _ => ConnectionStatus::Cancelled,
+                };
+                self.record(turn, &obligation, ConnectionStatus::Pending, status, reason);
+            } else {
+                retained.push(obligation);
+            }
+        }
+        self.active = retained;
+    }
+
+    /// Applies a public Fix to every obligation owned by `actor`. Candidate
+    /// mutation and lifecycle recording remain atomic inside the manager.
+    pub(super) fn repair_actor(
+        &mut self,
+        turn: u32,
+        actor: PlayerId,
+        mut should_remove: impl FnMut(CardId) -> bool,
+        mut replacement: impl FnMut(&ConnectionObligation) -> Option<CardId>,
+    ) {
+        let mut repaired = Vec::new();
+        for connection in &mut self.active {
+            if connection.actor != actor {
+                continue;
+            }
+            let before = connection.cards.len();
+            connection.cards.retain(|card| !should_remove(*card));
+            if connection.cards.is_empty() {
+                if let Some(next) = replacement(connection) {
+                    connection.cards.push(next);
+                }
+            }
+            if connection.cards.len() != before && !connection.cards.is_empty() {
+                repaired.push(connection.clone());
+            }
+        }
+        for connection in repaired {
+            self.record(
+                turn,
+                &connection,
+                ConnectionStatus::Pending,
+                ConnectionStatus::Pending,
+                ConnectionTransitionReason::Fixed,
+            );
+        }
+        self.cancel_where(turn, ConnectionTransitionReason::Fixed, |connection| {
+            connection.cards.is_empty()
+        });
+    }
+
+    /// Removes a card from incompatible connection alternatives after public
+    /// convention evidence establishes its exact identity. This is distinct
+    /// from a Fix: the original clue was not repaired; one branch of its
+    /// superposition became impossible.
+    pub(super) fn reveal_identity(
+        &mut self,
+        turn: u32,
+        actor: PlayerId,
+        card: CardId,
+        identity: Card,
+    ) {
+        let mut narrowed = Vec::new();
+        for connection in &mut self.active {
+            if connection.actor != actor
+                || connection.expected == identity
+                || !connection.cards.contains(&card)
+            {
+                continue;
+            }
+            connection.cards.retain(|candidate| *candidate != card);
+            if !connection.cards.is_empty() {
+                narrowed.push(connection.clone());
+            }
+        }
+        for connection in narrowed {
+            self.record(
+                turn,
+                &connection,
+                ConnectionStatus::Pending,
+                ConnectionStatus::Pending,
+                ConnectionTransitionReason::IdentityRevealed,
+            );
+        }
+        self.cancel_where(
+            turn,
+            ConnectionTransitionReason::IdentityRevealed,
+            |connection| connection.cards.is_empty(),
+        );
+    }
+
+    /// Applies Prompt precedence when a connection layer becomes active.
+    ///
+    /// A later clue can make one candidate Promptable while the layer waits
+    /// behind an earlier blind play. The original alternatives remain a valid
+    /// superposition, but prompted cards must precede untouched Finesse
+    /// candidates once the layer is due.
+    ///
+    /// <https://hanabi.github.io/level-1/#the-prompt>
+    pub(super) fn prioritize_active_prompts(
+        &mut self,
+        turn: u32,
+        mut is_promptable: impl FnMut(&ConnectionObligation, CardId) -> bool,
+    ) {
+        let active = self
+            .active
+            .iter()
+            .enumerate()
+            .filter(|(_, connection)| self.is_active(connection))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        let mut prioritized = Vec::new();
+        for index in active {
+            let connection = &mut self.active[index];
+            let first_prompt = connection
+                .cards
+                .iter()
+                .position(|card| is_promptable(connection, *card));
+            if first_prompt.is_none_or(|position| position == 0) {
+                continue;
+            }
+            connection
+                .cards
+                .rotate_left(first_prompt.expect("nonzero Prompt position exists"));
+            prioritized.push(connection.clone());
+        }
+        for connection in &prioritized {
+            self.record(
+                turn,
+                connection,
+                ConnectionStatus::Pending,
+                ConnectionStatus::Pending,
+                ConnectionTransitionReason::PromptPrioritized,
+            );
+        }
+    }
+
+    /// Prepends newly demonstrated blind plays to an existing Finesse.
+    ///
+    /// A later clue can layer one or more currently playable cards in front
+    /// of a connection that was already queued. Keeping that refinement on
+    /// the original promise preserves its provenance and makes advancement
+    /// release the layers in the same order in which they must be played.
+    pub(super) fn prepend_layers(
+        &mut self,
+        turn: u32,
+        promise: PromiseId,
+        layers: &[CardId],
+    ) -> Option<ConnectionObligation> {
+        if layers.is_empty() {
+            return self
+                .active
+                .iter()
+                .find(|connection| connection.promise == promise)
+                .cloned();
+        }
+        let connection = self
+            .active
+            .iter_mut()
+            .find(|connection| connection.promise == promise)?;
+        let mut cards = layers
+            .iter()
+            .copied()
+            .filter(|card| !connection.cards.contains(card))
+            .collect::<Vec<_>>();
+        if cards.is_empty() {
+            return Some(connection.clone());
+        }
+        cards.append(&mut connection.cards);
+        connection.cards = cards;
+        let updated = connection.clone();
+        self.record(
+            turn,
+            &updated,
+            ConnectionStatus::Pending,
+            ConnectionStatus::Pending,
+            ConnectionTransitionReason::LayerExtended,
+        );
+        Some(updated)
+    }
+
+    /// Removes a discarded candidate even when its obligation is blocked by
+    /// an earlier step, then invalidates every exhausted or discarded focus.
+    pub(super) fn discard(&mut self, turn: u32, player: PlayerId, card: CardId) {
+        for connection in &mut self.active {
+            if connection.actor != player {
+                continue;
+            }
+            if connection.cards.first() == Some(&card) {
+                connection.cards.clear();
+            } else {
+                connection.cards.retain(|candidate| *candidate != card);
+            }
+        }
+        self.cancel_where(
+            turn,
+            ConnectionTransitionReason::FocusInvalidated,
+            |connection| connection.cards.is_empty() || connection.focus == card,
+        );
+    }
+
+    pub(super) fn advance_play(
+        &mut self,
+        turn: u32,
+        player: PlayerId,
+        card: CardId,
+        identity: Card,
+        successful: bool,
+    ) -> ConnectionAdvance {
+        let mut result = ConnectionAdvance::default();
+        let active = self
+            .active
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| {
+                item.actor == player
+                    && !self.active.iter().any(|other| {
+                        other.focus == item.focus
+                            && other.step < item.step
+                            && !other.cards.is_empty()
+                    })
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        let mut transitions = Vec::new();
+        for index in active {
+            let connection = &mut self.active[index];
+            if connection.cards.first() != Some(&card) {
+                connection.cards.retain(|candidate| *candidate != card);
+                continue;
+            }
+            connection.cards.remove(0);
+            let obligation = connection.clone();
+            if identity == connection.expected || !successful {
+                result
+                    .released_candidates
+                    .extend(connection.cards.iter().copied());
+                connection.cards.clear();
+                transitions.push((
+                    obligation,
+                    if successful {
+                        ConnectionStatus::Satisfied
+                    } else {
+                        ConnectionStatus::Invalidated
+                    },
+                    if successful {
+                        ConnectionTransitionReason::PlayedExpectedCard
+                    } else {
+                        ConnectionTransitionReason::Misplayed
+                    },
+                ));
+            } else if connection.cards.is_empty() {
+                result.failed_focuses.push(connection.focus);
+                transitions.push((
+                    obligation,
+                    ConnectionStatus::Invalidated,
+                    ConnectionTransitionReason::PlayedAlternative,
+                ));
+            } else {
+                // A successful alternative is the public demonstration of a
+                // layered connection. The promise remains pending on its next
+                // candidate, but this state change must still be journaled:
+                // convention knowledge may now rule out a simultaneous direct
+                // interpretation of the focus.
+                transitions.push((
+                    obligation,
+                    ConnectionStatus::Pending,
+                    ConnectionTransitionReason::PlayedAlternative,
+                ));
+            }
+        }
+        for (obligation, status, reason) in transitions {
+            self.record(turn, &obligation, ConnectionStatus::Pending, status, reason);
+        }
+        // A card can disappear while a later step for the same focus is still
+        // blocked by an earlier step. It can no longer be a candidate when
+        // that later step activates, so purge it from every obligation rather
+        // than only the obligations that were active on this turn.
+        for connection in &mut self.active {
+            connection.cards.retain(|candidate| *candidate != card);
+        }
+        let failed = &result.failed_focuses;
+        self.active.retain(|connection| {
+            !connection.cards.is_empty()
+                && connection.focus != card
+                && !failed.contains(&connection.focus)
+        });
+        result
+    }
+
+    fn record(
+        &mut self,
+        turn: u32,
+        obligation: &ConnectionObligation,
+        from: ConnectionStatus,
+        to: ConnectionStatus,
+        reason: ConnectionTransitionReason,
+    ) {
+        self.transitions.push(ConnectionTransition {
+            promise: obligation.promise,
+            turn,
+            focus: obligation.focus,
+            actor: obligation.actor,
+            expected: obligation.expected,
+            focus_identity: obligation.focus_identity,
+            from,
+            to,
+            reason,
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hanabi_core::{Rank, Suit};
+
+    use super::*;
+
+    fn obligation(cards: Vec<CardId>) -> ConnectionObligation {
+        ConnectionObligation {
+            promise: PromiseId::UNASSIGNED,
+            actor: PlayerId::new(1),
+            cards,
+            expected: Card::new(Suit::Red, Rank::Two),
+            focus_identity: Card::new(Suit::Red, Rank::Three),
+            kind: HGroupConnectionKind::Prompt,
+            focus: CardId::new(9),
+            step: 0,
+        }
+    }
+
+    #[test]
+    fn deferred_prompt_requires_an_actionable_decline() {
+        let mut manager = ConnectionManager::default();
+        let mut visible = obligation(vec![CardId::new(5)]);
+        visible.kind = HGroupConnectionKind::Finesse;
+        let promise = manager.start(3, visible);
+        let mut fallback = obligation(vec![CardId::new(7)]);
+        fallback.actor = PlayerId::new(2);
+        manager.defer_connection(promise, fallback);
+        // A turn before the prerequisite plays is not an opportunity.
+        manager.resolve_deferred_connections(4, PlayerId::new(1), true, false, [0; 5], [0; 5]);
+        assert_eq!(manager.active[0].actor, PlayerId::new(1));
+        // Nor is an excused turn, even after the prerequisite plays.
+        manager.resolve_deferred_connections(
+            8,
+            PlayerId::new(1),
+            false,
+            false,
+            [1, 0, 0, 0, 0],
+            [1, 0, 0, 0, 0],
+        );
+        assert_eq!(manager.active[0].actor, PlayerId::new(1));
+        manager.resolve_deferred_connections(
+            12,
+            PlayerId::new(1),
+            true,
+            false,
+            [1, 0, 0, 0, 0],
+            [1, 0, 0, 0, 0],
+        );
+        assert_eq!(manager.active.len(), 1);
+        assert_eq!(manager.active[0].actor, PlayerId::new(2));
+        assert_eq!(manager.active[0].kind, HGroupConnectionKind::Prompt);
+    }
+
+    #[test]
+    fn demonstrated_visible_finesse_drops_the_possible_prompt() {
+        let mut manager = ConnectionManager::default();
+        let promise = manager.start(3, obligation(vec![CardId::new(5)]));
+        let mut fallback = obligation(vec![CardId::new(7)]);
+        fallback.actor = PlayerId::new(2);
+        manager.defer_connection(promise, fallback);
+        manager.advance_play(
+            4,
+            PlayerId::new(1),
+            CardId::new(5),
+            Card::new(Suit::Red, Rank::Two),
+            true,
+        );
+        manager.resolve_deferred_connections(
+            4,
+            PlayerId::new(1),
+            false,
+            false,
+            [1, 0, 0, 0, 0],
+            [2, 0, 0, 0, 0],
+        );
+        assert!(manager.deferred_connections.is_empty());
+        assert!(manager.active.is_empty());
+    }
+
+    #[test]
+    fn successful_connection_releases_alternatives_and_records_completion() {
+        let mut manager = ConnectionManager::default();
+        manager.start(3, obligation(vec![CardId::new(5), CardId::new(7)]));
+        let result = manager.advance_play(
+            4,
+            PlayerId::new(1),
+            CardId::new(5),
+            Card::new(Suit::Red, Rank::Two),
+            true,
+        );
+        assert_eq!(result.released_candidates, [CardId::new(7)]);
+        assert!(manager.is_empty());
+        assert_eq!(
+            manager.transitions().last().map(|transition| transition.to),
+            Some(ConnectionStatus::Satisfied)
+        );
+    }
+
+    #[test]
+    fn a_new_interpretation_supersedes_the_same_connection_step() {
+        let mut manager = ConnectionManager::default();
+        let original = obligation(vec![CardId::new(5), CardId::new(7)]);
+        manager.start(3, original.clone());
+        let replacement = ConnectionObligation {
+            cards: vec![CardId::new(8)],
+            expected: Card::new(Suit::Blue, Rank::One),
+            ..original
+        };
+
+        manager.start(3, replacement.clone());
+
+        assert_eq!(manager.len(), 1);
+        let active = manager.iter().next().expect("replacement remains active");
+        assert_eq!(active.cards, replacement.cards);
+        assert_eq!(active.expected, replacement.expected);
+        assert_ne!(active.promise, PromiseId::UNASSIGNED);
+        assert_eq!(
+            manager
+                .provenance(active.promise)
+                .map(|origin| origin.created_turn),
+            Some(3)
+        );
+        assert!(manager.validate().is_ok());
+        assert!(manager.transitions().iter().any(|transition| {
+            transition.reason == ConnectionTransitionReason::Superseded
+                && transition.to == ConnectionStatus::Cancelled
+        }));
+    }
+
+    #[test]
+    fn a_successful_layer_records_demonstration_without_completing_the_promise() {
+        let mut manager = ConnectionManager::default();
+        let focus = CardId::new(9);
+        manager.start(3, obligation(vec![CardId::new(5), CardId::new(7)]));
+
+        manager.advance_play(
+            4,
+            PlayerId::new(1),
+            CardId::new(5),
+            Card::new(Suit::Blue, Rank::One),
+            true,
+        );
+
+        assert_eq!(manager.len(), 1);
+        assert_eq!(
+            manager.iter().next().expect("connection remains").cards,
+            [CardId::new(7)]
+        );
+        assert_eq!(
+            manager.demonstrated_focus_identity(focus),
+            Some(Card::new(Suit::Red, Rank::Three))
+        );
+        assert!(manager.transitions().iter().any(|transition| {
+            transition.reason == ConnectionTransitionReason::PlayedAlternative
+                && transition.from == ConnectionStatus::Pending
+                && transition.to == ConnectionStatus::Pending
+        }));
+    }
+
+    #[test]
+    fn clue_matching_distinguishes_due_and_queued_layers() {
+        let mut manager = ConnectionManager::default();
+        let first = obligation(vec![CardId::new(5)]);
+        manager.start(3, first.clone());
+        manager.start(
+            3,
+            ConnectionObligation {
+                cards: vec![CardId::new(7)],
+                step: 1,
+                ..first
+            },
+        );
+
+        assert_eq!(
+            manager.match_clue(PlayerId::new(1), Clue::Suit(Suit::Red), &[CardId::new(5)]),
+            ConnectionClueMatch::ActiveRedundant
+        );
+        assert_eq!(
+            manager.match_clue(PlayerId::new(1), Clue::Suit(Suit::Red), &[CardId::new(7)]),
+            ConnectionClueMatch::LaterContinuation
+        );
+        assert_eq!(
+            manager.match_clue(PlayerId::new(0), Clue::Suit(Suit::Red), &[CardId::new(5)]),
+            ConnectionClueMatch::Unrelated
+        );
+    }
+
+    #[test]
+    fn newly_active_layer_prioritizes_a_prompt_over_a_finesse_candidate() {
+        let mut manager = ConnectionManager::default();
+        let first = obligation(vec![CardId::new(5)]);
+        manager.start(3, first.clone());
+        manager.start(
+            3,
+            ConnectionObligation {
+                cards: vec![CardId::new(7), CardId::new(9)],
+                step: 1,
+                ..first
+            },
+        );
+
+        manager.advance_play(
+            4,
+            PlayerId::new(1),
+            CardId::new(5),
+            Card::new(Suit::Red, Rank::Two),
+            true,
+        );
+        manager.prioritize_active_prompts(4, |_, card| card == CardId::new(9));
+        let later = manager
+            .iter()
+            .find(|connection| connection.step == 1)
+            .expect("later layer remains queued");
+        assert_eq!(later.cards, [CardId::new(9), CardId::new(7)]);
+        assert!(manager.is_active(later));
+        assert!(manager.transitions().iter().any(|transition| {
+            transition.promise == later.promise
+                && transition.reason == ConnectionTransitionReason::PromptPrioritized
+        }));
+    }
+
+    #[test]
+    fn historical_queue_state_survives_later_completion() {
+        let mut manager = ConnectionManager::default();
+        let red_two = Card::new(Suit::Red, Rank::Two);
+        let red_three = Card::new(Suit::Red, Rank::Three);
+        manager.start(3, obligation(vec![CardId::new(5)]));
+        manager.advance_play(5, PlayerId::new(1), CardId::new(5), red_two, true);
+
+        assert!(manager.identity_was_queued_at(red_two, 4));
+        assert!(manager.identity_was_queued_at(red_three, 4));
+        assert!(!manager.identity_was_queued_at(red_two, 5));
+    }
+}

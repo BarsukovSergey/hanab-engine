@@ -1,0 +1,127 @@
+use super::{
+    Action, ClueProposal, CluePurpose, ClueRecognition, ConventionRejectionReason, HGroupClueKind,
+    HGroupMoveKind, HGroupProfile, HGroupState, LogicalDeductions, PlayerView,
+    RejectedConventionAction, chop, focus, identity_of, prospective_team_clue_signal_kinds,
+};
+
+/// Classifies every legal clue excluded from the convention action set.
+/// Candidate generation remains the source of admissibility; this pass makes
+/// every exclusion inspectable instead of collapsing all failures to a
+/// missing action.
+pub(crate) fn h_group_rejected_clues_from_replay(
+    deductions: &LogicalDeductions,
+    _profile: HGroupProfile,
+    replay: &HGroupState,
+    admitted: &[Action],
+) -> Vec<RejectedConventionAction> {
+    let view = deductions.view();
+    let promptable = replay.promptable();
+    let gotten = replay.gotten_from(&promptable);
+    view.legal_actions()
+        .into_iter()
+        .filter_map(|action| {
+            let Action::Clue { target, clue } = action else {
+                return None;
+            };
+            if admitted.contains(&action) {
+                return None;
+            }
+            let hand = &view.hands[target.index()];
+            let touched = hand
+                .iter()
+                .filter(|card| card.identity.is_some_and(|identity| clue.matches(identity)))
+                .map(|card| card.id)
+                .collect::<Vec<_>>();
+            let adds_information = hand
+                .iter()
+                .any(|card| touched.contains(&card.id) && !card.clues.has_positive_clue(clue));
+            let reason = if super::stomps_unresolved_visible_prefix(view, replay, action) {
+                ConventionRejectionReason::RedundantOutcome
+            } else if adds_information {
+                let old_chop = chop(&replay.hands[target.index()], &gotten);
+                let Some(focus) = focus(&replay.hands[target.index()], &touched, old_chop, &gotten)
+                else {
+                    return Some(RejectedConventionAction {
+                        validation: None,
+                        action,
+                        reason: ConventionRejectionReason::NoFocus,
+                    });
+                };
+                let identity = identity_of(view, focus);
+                if gotten.contains(&focus)
+                    && identity.is_some()
+                    && replay.cards.facts.known_identity(focus) == identity
+                {
+                    ConventionRejectionReason::RepeatsKnownIdentity
+                } else if replay.cards.already_playing.contains(&focus)
+                    && touched.iter().all(|card| gotten.contains(card))
+                {
+                    ConventionRejectionReason::RedundantOutcome
+                } else {
+                    ConventionRejectionReason::NoConventionMeaning
+                }
+            } else {
+                ConventionRejectionReason::NoNewInformation
+            };
+            Some(RejectedConventionAction {
+                action,
+                reason,
+                validation: None,
+            })
+        })
+        .collect()
+}
+
+pub(in crate::h_group) fn recipient_replay_assessment(
+    view: &PlayerView,
+    profile: HGroupProfile,
+    candidate: &ClueProposal,
+) -> ClueRecognition {
+    let Action::Clue { target, clue } = candidate.action else {
+        return ClueRecognition::GeneratorProof;
+    };
+    let touched = view.hands[target.index()]
+        .iter()
+        .filter(|card| card.identity.is_some_and(|identity| clue.matches(identity)))
+        .map(|card| card.id)
+        .collect::<Vec<_>>();
+    let signals = prospective_team_clue_signal_kinds(view, profile, target, clue, &touched);
+    let interpretation = super::super::prospective::prospective_clue_primary_interpretation(
+        view, profile, target, clue, &touched,
+    );
+    if let Some(meaning) = &interpretation {
+        crate::diagnostics::record_meaning(view, candidate.action, meaning);
+    }
+    let primary = interpretation.map(|meaning| meaning.kind);
+    let recognized = match candidate.purpose() {
+        CluePurpose::Play => {
+            matches!(
+                primary,
+                Some(HGroupClueKind::Play | HGroupClueKind::PlayOrSave)
+            ) || signals.contains(&HGroupMoveKind::LieComponentFinesse)
+        }
+        CluePurpose::Save => matches!(
+            primary,
+            Some(HGroupClueKind::Save(_) | HGroupClueKind::PlayOrSave)
+        ),
+        CluePurpose::Fix => signals.contains(&HGroupMoveKind::FixClue),
+        CluePurpose::Tempo => signals.iter().any(|kind| {
+            matches!(
+                kind,
+                HGroupMoveKind::TempoClue | HGroupMoveKind::TempoClueChopMove
+            )
+        }),
+        CluePurpose::Advanced if candidate.move_kind() == Some(HGroupMoveKind::AnxietyPlay) => {
+            super::super::prospective::prospective_anxiety_play(
+                view, profile, target, clue, &touched,
+            )
+            .is_some()
+        }
+        CluePurpose::Advanced => !signals.is_empty(),
+    };
+    if recognized {
+        ClueRecognition::RecipientReplay
+    } else {
+        ClueRecognition::GeneratorProof
+    }
+}

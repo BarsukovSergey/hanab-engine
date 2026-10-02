@@ -1,0 +1,483 @@
+use hanabi_core::{Card, CardId, PlayerId};
+
+use super::{CardSet, HGroupMoveKind, HGroupSignal, IdentitySet};
+
+/// How a convention identity claim applies to its referenced cards.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum IdentityClaimRelation {
+    /// Every referenced card independently has this identity.
+    Each,
+    /// Exactly one referenced card has this identity, but the observer cannot
+    /// yet determine which one.
+    OneOf,
+}
+
+/// A normalized identity claim retained by current convention state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ConventionIdentityClaim {
+    pub(super) turn: u32,
+    pub(super) actor: PlayerId,
+    pub(super) target: Option<PlayerId>,
+    pub(super) source: HGroupMoveKind,
+    pub(super) cards: Vec<CardId>,
+    pub(super) identity: Card,
+    pub(super) relation: IdentityClaimRelation,
+}
+
+/// Current convention facts derived from the append-only explanation log.
+///
+/// `HGroupSignal` answers "why did we infer this?"; this type answers "what is
+/// true now?" Rules should query this index rather than searching old signals
+/// and accidentally treating a cancelled interpretation as live state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ConventionFacts {
+    fixed_cards: CardSet,
+    known_identities: [Option<Card>; 50],
+    known_conflicts: [bool; 50],
+    excluded_identities: [IdentitySet; 50],
+    demonstrated_layers: [Option<Card>; 50],
+    layer_conflicts: [bool; 50],
+    active_priority: CardSet,
+    /// Exact owner knowledge transferred by a Gentleman's Discard. This is a
+    /// live semantic fact, not something consumers should reconstruct from
+    /// the explanation journal.
+    exact_transfers: Vec<(CardId, Card)>,
+    identity_claims: Vec<ConventionIdentityClaim>,
+}
+
+impl Default for ConventionFacts {
+    fn default() -> Self {
+        Self {
+            fixed_cards: CardSet::default(),
+            known_identities: [None; 50],
+            known_conflicts: [false; 50],
+            excluded_identities: [IdentitySet::default(); 50],
+            demonstrated_layers: [None; 50],
+            layer_conflicts: [false; 50],
+            active_priority: CardSet::default(),
+            exact_transfers: Vec::new(),
+            identity_claims: Vec::new(),
+        }
+    }
+}
+
+impl ConventionFacts {
+    #[cfg(test)]
+    pub(super) fn from_signals(signals: &[HGroupSignal]) -> Self {
+        let mut facts = Self::default();
+        for signal in signals {
+            facts.apply_signal(signal);
+        }
+        facts
+    }
+
+    /// Incrementally materializes one explanation signal into current facts.
+    #[cfg(test)]
+    pub(super) fn apply_signal(&mut self, signal: &HGroupSignal) {
+        match signal.kind {
+            HGroupMoveKind::FixClue => {
+                self.set_fixed(&signal.cards, true);
+            }
+            HGroupMoveKind::PlayClue => {
+                self.set_fixed(&signal.cards, false);
+            }
+            HGroupMoveKind::Priority => {
+                self.set_priority(&signal.cards, true);
+            }
+            HGroupMoveKind::Retraction => {
+                self.set_priority(&signal.cards, false);
+            }
+            _ => {}
+        }
+
+        if signal.kind == HGroupMoveKind::DoubleBluff && signal.cards.len() == 3 {
+            self.supersede_provisional_focus(signal.cards[2], signal.turn);
+        } else {
+            self.apply_identity_effect(signal);
+        }
+    }
+
+    pub(super) fn set_fixed(&mut self, cards: &[CardId], fixed: bool) {
+        for card in cards {
+            if fixed {
+                self.fixed_cards.insert(*card);
+            } else {
+                self.fixed_cards.remove(card);
+            }
+        }
+    }
+
+    pub(super) fn set_priority(&mut self, cards: &[CardId], active: bool) {
+        for card in cards {
+            if active {
+                self.active_priority.insert(*card);
+            } else {
+                self.active_priority.remove(card);
+                // A Load Clue retracts the provisional Priority identity as
+                // well as its action flag. Other independent promises survive.
+                self.identity_claims.retain(|claim| {
+                    claim.source != HGroupMoveKind::Priority || !claim.cards.contains(card)
+                });
+                self.rebuild_known_identity(*card);
+            }
+        }
+    }
+
+    pub(super) fn supersede_provisional_focus(&mut self, focus: CardId, turn: u32) {
+        self.identity_claims.retain(|claim| {
+            !(claim.turn <= turn
+                && claim.cards.contains(&focus)
+                && matches!(
+                    claim.source,
+                    HGroupMoveKind::PlayClue | HGroupMoveKind::Context
+                ))
+        });
+        self.rebuild_known_identity(focus);
+    }
+
+    pub(super) fn apply_identity_effect(&mut self, signal: &HGroupSignal) {
+        // A Bluff signal records the blind-played identity, not the identity
+        // of its final focus card. Resolving it also supersedes any earlier
+        // provisional direct Play claim on that focus.
+        if signal.kind == HGroupMoveKind::Bluff && signal.cards.len() >= 2 {
+            self.apply_bluff_identity_effect(signal);
+            return;
+        }
+        let Some(identity) = signal.identity else {
+            return;
+        };
+        if signal.kind == HGroupMoveKind::Retraction {
+            let retracted = IdentitySet::singleton(identity);
+            for card in &signal.cards {
+                self.excluded_identities[card.index()] =
+                    self.excluded_identities[card.index()].union(retracted);
+            }
+            self.identity_claims.retain(|claim| {
+                claim.identity != identity
+                    || !claim.cards.iter().any(|card| signal.cards.contains(card))
+            });
+            for card in &signal.cards {
+                self.rebuild_known_identity(*card);
+            }
+            self.exact_transfers
+                .retain(|(card, claimed)| !signal.cards.contains(card) || *claimed != identity);
+            return;
+        }
+        if signal.kind == HGroupMoveKind::GentlemansDiscard {
+            for card in &signal.cards {
+                if !self.exact_transfers.contains(&(*card, identity)) {
+                    self.exact_transfers.push((*card, identity));
+                }
+            }
+        }
+        if signal.kind == HGroupMoveKind::EliminationRewrite {
+            // https://hanabi.github.io/extras/miscellaneous/#the-elimination-rewrite-for-1s
+            // The second discarded copy of a playable 1 invalidates the old
+            // positional OneOf claim before establishing a fresh claim over
+            // the cards that remain after the second discard.
+            self.identity_claims.retain(|claim| {
+                !(claim.target == signal.target
+                    && claim.identity == identity
+                    && matches!(
+                        claim.source,
+                        HGroupMoveKind::Elimination | HGroupMoveKind::EliminationRewrite
+                    ))
+            });
+        }
+        let ambiguous_connection = signal.cards.len() > 1
+            && matches!(
+                signal.kind,
+                HGroupMoveKind::SarcasticDiscard
+                    | HGroupMoveKind::Prompt
+                    | HGroupMoveKind::Finesse
+                    | HGroupMoveKind::ReverseFinesse
+                    | HGroupMoveKind::SelfFinesse
+                    | HGroupMoveKind::LayeredFinesse
+                    | HGroupMoveKind::HiddenFinesse
+                    | HGroupMoveKind::ClandestineFinesse
+                    | HGroupMoveKind::QueuedFinesse
+                    | HGroupMoveKind::AmbiguousFinesse
+            );
+        let relation = if ambiguous_connection
+            || matches!(
+                signal.kind,
+                HGroupMoveKind::Elimination
+                    | HGroupMoveKind::EliminationFinesse
+                    | HGroupMoveKind::EliminationRewrite
+            ) {
+            IdentityClaimRelation::OneOf
+        } else {
+            IdentityClaimRelation::Each
+        };
+        let claim = ConventionIdentityClaim {
+            turn: signal.turn,
+            actor: signal.actor,
+            target: signal.target,
+            source: signal.kind,
+            cards: signal.cards.clone(),
+            identity,
+            relation,
+        };
+        if !self.identity_claims.contains(&claim) {
+            self.identity_claims.push(claim);
+        }
+        if signal.kind == HGroupMoveKind::LayeredFinesse {
+            for card in signal.cards.iter().skip(1) {
+                merge_identity(
+                    &mut self.demonstrated_layers[card.index()],
+                    &mut self.layer_conflicts[card.index()],
+                    identity,
+                );
+            }
+        }
+        if relation == IdentityClaimRelation::OneOf {
+            return;
+        }
+        for card in &signal.cards {
+            self.excluded_identities[card.index()] =
+                self.excluded_identities[card.index()].without(IdentitySet::singleton(identity));
+            merge_identity(
+                &mut self.known_identities[card.index()],
+                &mut self.known_conflicts[card.index()],
+                identity,
+            );
+        }
+    }
+
+    pub(super) const fn fixed_cards(&self) -> &CardSet {
+        &self.fixed_cards
+    }
+
+    fn apply_bluff_identity_effect(&mut self, signal: &HGroupSignal) {
+        let focus = *signal.cards.last().expect("a Bluff has a focus");
+        self.identity_claims.retain(|claim| {
+            !(claim.source == HGroupMoveKind::PlayClue
+                && claim.turn <= signal.turn
+                && claim.cards.contains(&focus))
+        });
+        self.rebuild_known_identity(focus);
+        let mut blind = signal.clone();
+        blind.cards.truncate(1);
+        self.apply_identity_effect(&blind);
+    }
+
+    pub(super) fn known_identity(&self, card: CardId) -> Option<Card> {
+        self.known_identities[card.index()]
+    }
+
+    /// A currently retained claim that predates the clue being interpreted.
+    /// Inferences created by that clue cannot justify its own prerequisites.
+    pub(super) fn known_identity_before(&self, card: CardId, turn: u32) -> Option<Card> {
+        let mut identity = None;
+        let mut conflict = false;
+        for claim in self.identity_claims.iter().filter(|claim| {
+            claim.turn < turn
+                && claim.relation == IdentityClaimRelation::Each
+                && claim.cards.contains(&card)
+        }) {
+            merge_identity(&mut identity, &mut conflict, claim.identity);
+        }
+        identity
+    }
+
+    pub(super) const fn excluded_identities(&self, card: CardId) -> IdentitySet {
+        self.excluded_identities[card.index()]
+    }
+
+    pub(super) fn demonstrated_layer(&self, card: CardId) -> Option<Card> {
+        self.demonstrated_layers[card.index()]
+    }
+
+    pub(super) const fn active_priority(&self) -> &CardSet {
+        &self.active_priority
+    }
+
+    pub(super) fn is_exact_transfer(&self, card: CardId, identity: Card) -> bool {
+        self.exact_transfers.contains(&(card, identity))
+    }
+
+    pub(super) fn identity_claims(&self) -> &[ConventionIdentityClaim] {
+        &self.identity_claims
+    }
+
+    pub(super) fn validate(&self) -> Result<(), String> {
+        if self
+            .identity_claims()
+            .iter()
+            .any(|claim| claim.cards.is_empty())
+        {
+            return Err("convention identity claim has no candidate cards".to_owned());
+        }
+        Ok(())
+    }
+
+    fn rebuild_known_identity(&mut self, card: CardId) {
+        self.known_identities[card.index()] = None;
+        self.known_conflicts[card.index()] = false;
+        for claim in self.identity_claims.iter().filter(|claim| {
+            claim.relation == IdentityClaimRelation::Each && claim.cards.contains(&card)
+        }) {
+            merge_identity(
+                &mut self.known_identities[card.index()],
+                &mut self.known_conflicts[card.index()],
+                claim.identity,
+            );
+        }
+    }
+}
+
+fn merge_identity(slot: &mut Option<Card>, conflict: &mut bool, identity: Card) {
+    if *conflict {
+        return;
+    }
+    match *slot {
+        None => *slot = Some(identity),
+        Some(existing) if existing == identity => {}
+        Some(_) => {
+            *slot = None;
+            *conflict = true;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hanabi_core::{PlayerId, Rank, Suit};
+
+    use super::*;
+
+    #[test]
+    fn priority_retraction_removes_only_priority_identity_claims() {
+        let card = CardId::new(7);
+        let priority = Card::new(Suit::Blue, Rank::Four);
+        let independent = Card::new(Suit::Green, Rank::Two);
+        for other in [None, Some(independent)] {
+            let mut facts = ConventionFacts::default();
+            if let Some(identity) = other {
+                facts.apply_signal(&signal(HGroupMoveKind::Prompt, card, Some(identity)));
+            }
+            facts.apply_signal(&signal(HGroupMoveKind::Priority, card, Some(priority)));
+            facts.apply_signal(&signal(HGroupMoveKind::Retraction, card, None));
+            assert!(!facts.active_priority().contains(&card));
+            assert_eq!(facts.known_identity(card), other);
+            assert!(
+                facts
+                    .identity_claims()
+                    .iter()
+                    .all(|claim| claim.source != HGroupMoveKind::Priority)
+            );
+        }
+    }
+
+    #[test]
+    fn clue_prerequisites_exclude_same_turn_identity_claims() {
+        let card = CardId::new(10);
+        let identity = Card::new(Suit::Green, Rank::Four);
+        let facts = ConventionFacts::from_signals(&[signal(
+            HGroupMoveKind::PlayClue,
+            card,
+            Some(identity),
+        )]);
+        assert_eq!(facts.known_identity_before(card, 1), None);
+        assert_eq!(facts.known_identity_before(card, 2), Some(identity));
+    }
+
+    fn signal(kind: HGroupMoveKind, card: CardId, identity: Option<Card>) -> HGroupSignal {
+        HGroupSignal {
+            turn: 1,
+            actor: PlayerId::new(0),
+            target: None,
+            kind,
+            cards: vec![card],
+            identity,
+        }
+    }
+
+    #[test]
+    fn current_facts_are_distinct_from_signal_history() {
+        let card = CardId::new(3);
+        let red_one = Card::new(Suit::Red, Rank::One);
+        let signals = [
+            signal(HGroupMoveKind::FixClue, card, Some(red_one)),
+            signal(HGroupMoveKind::PlayClue, card, Some(red_one)),
+        ];
+        let facts = ConventionFacts::from_signals(&signals);
+        assert!(!facts.fixed_cards().contains(&card));
+        assert_eq!(facts.known_identity(card), Some(red_one));
+    }
+
+    #[test]
+    fn elimination_identity_is_retained_as_a_disjunction() {
+        let red_one = Card::new(Suit::Red, Rank::One);
+        let mut elimination = signal(
+            HGroupMoveKind::EliminationFinesse,
+            CardId::new(3),
+            Some(red_one),
+        );
+        elimination.cards.push(CardId::new(4));
+        let facts = ConventionFacts::from_signals(&[elimination]);
+
+        assert_eq!(facts.known_identity(CardId::new(3)), None);
+        assert_eq!(facts.known_identity(CardId::new(4)), None);
+        assert_eq!(
+            facts.identity_claims(),
+            &[ConventionIdentityClaim {
+                turn: 1,
+                actor: PlayerId::new(0),
+                target: None,
+                source: HGroupMoveKind::EliminationFinesse,
+                cards: vec![CardId::new(3), CardId::new(4)],
+                identity: red_one,
+                relation: IdentityClaimRelation::OneOf,
+            }]
+        );
+    }
+
+    #[test]
+    fn exact_transfer_is_materialized_as_current_truth() {
+        let card = CardId::new(7);
+        let identity = Card::new(Suit::Purple, Rank::Four);
+        let facts = ConventionFacts::from_signals(&[signal(
+            HGroupMoveKind::GentlemansDiscard,
+            card,
+            Some(identity),
+        )]);
+
+        assert!(facts.is_exact_transfer(card, identity));
+        assert!(!facts.is_exact_transfer(card, Card::new(Suit::Purple, Rank::Five)));
+    }
+
+    #[test]
+    fn layered_finesse_identity_is_retained_as_a_disjunction() {
+        let green_three = Card::new(Suit::Green, Rank::Three);
+        let mut layered = signal(
+            HGroupMoveKind::LayeredFinesse,
+            CardId::new(34),
+            Some(green_three),
+        );
+        layered.cards.push(CardId::new(30));
+        let facts = ConventionFacts::from_signals(&[layered]);
+
+        assert_eq!(facts.known_identity(CardId::new(34)), None);
+        assert_eq!(facts.known_identity(CardId::new(30)), None);
+        assert_eq!(
+            facts.identity_claims()[0].relation,
+            IdentityClaimRelation::OneOf
+        );
+        assert_eq!(facts.demonstrated_layer(CardId::new(30)), Some(green_three));
+    }
+
+    #[test]
+    fn retraction_turns_a_disproved_identity_into_negative_knowledge() {
+        let card = CardId::new(3);
+        let purple_two = Card::new(Suit::Purple, Rank::Two);
+        let facts = ConventionFacts::from_signals(&[
+            signal(HGroupMoveKind::Prompt, card, Some(purple_two)),
+            signal(HGroupMoveKind::Retraction, card, Some(purple_two)),
+        ]);
+
+        assert_eq!(facts.known_identity(card), None);
+        assert!(facts.excluded_identities(card).contains(purple_two));
+        assert!(facts.identity_claims().is_empty());
+    }
+}

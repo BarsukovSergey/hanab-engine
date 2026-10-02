@@ -1,0 +1,516 @@
+//! Draw allocation is strategic value, not a new card-identity promise.
+//!
+//! [Team Distribution Principle](https://hanabi.github.io/level-8/#team-distribution-principle)
+//! motivates both useful-workload handoffs and conditional chain scheduling.
+
+use super::{
+    Card, CardId, CluePurpose, CompiledClueAction, HGroupInferences, HGroupProfile, HGroupRuleId,
+    LogicalDeductions, PerspectiveDepth, PerspectiveProjector, ProspectiveTransition, Rank, Suit,
+    h_group_clue_candidates_from_replay, is_critical_save_identity, is_eventually_useful,
+    next_player, rule_enabled,
+};
+
+/// Conservative preference over a non-urgent direct clue, never a mandatory
+/// play or repair. Unknown draws stay blank. Every possible discarded identity
+/// must preserve the next player's ability to give the same clue.
+pub(super) fn discard_priority(
+    deductions: &LogicalDeductions,
+    inferred: &HGroupInferences,
+    profile: HGroupProfile,
+    candidates: &[CompiledClueAction],
+    discard: CardId,
+) -> Option<i32> {
+    let view = deductions.view();
+    super::ResourceSchedule::discard_then_clue(view.clue_tokens, view.turn)?;
+    let remaining_plays = 25_usize.saturating_sub(view.play_stacks.iter().map(Vec::len).sum());
+    if !rule_enabled(profile, HGroupRuleId::EndGame)
+        || view.deck_size < view.hands.len()
+        || view.deck_size + view.hands.len() <= remaining_plays + 1
+        || view.clue_tokens == 0
+        || view.clue_tokens >= super::MAX_CLUE_TOKENS
+        || !inferred.playable_now.is_empty()
+        || inferred.connection.is_some()
+        || inferred.must_clue.contains(&view.observer)
+        || candidates.iter().any(|candidate| {
+            candidate.purpose() == CluePurpose::Fix
+                || (candidate.is_urgent_save()
+                    && candidate.target() == next_player(view.observer, view.hands.len()))
+        })
+    {
+        return None;
+    }
+    let best = candidates
+        .iter()
+        .max_by_key(|candidate| candidate.score())?;
+    if !matches!(best.purpose(), CluePurpose::Play | CluePurpose::Save)
+        || (best.purpose() == CluePurpose::Play && !best.immediate_play())
+        || best.connection_steps() != 0
+    {
+        return None;
+    }
+    if (best.purpose() == CluePurpose::Save || best.score() < 425)
+        && unloaded_hand_handoff(deductions, inferred, profile, best, discard)
+    {
+        return Some(101 + i32::from(best.score()));
+    }
+    let missing = Suit::ALL
+        .into_iter()
+        .filter_map(|suit| {
+            let rank = Rank::ALL.get(view.play_stacks[suit.index()].len())?;
+            let identity = Card::new(suit, *rank);
+            let visible = view
+                .hands
+                .iter()
+                .flatten()
+                .any(|card| card.identity == Some(identity));
+            let known_own = inferred
+                .cards
+                .iter()
+                .any(|card| card.identities.len() == 1 && card.identities.contains(identity));
+            (!visible && !known_own && is_eventually_useful(view, identity)).then_some(identity)
+        })
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return None;
+    }
+    let next = next_player(view.observer, view.hands.len());
+    if best.target() == next {
+        return None;
+    }
+    // No draw is predicted: prefer this drawer only if every missing
+    // connector is no slower here, and at least one is strictly faster.
+    let mut improved = false;
+    for connector in &missing {
+        let schedules = completion_times_after_clue(deductions, profile, best, *connector)?;
+        if schedules.0 > schedules.1 {
+            return None;
+        }
+        improved |= schedules.0 < schedules.1;
+    }
+    if !improved {
+        return None;
+    }
+    let identities = super::chop_safety::discard_domain(deductions, inferred, profile, discard)?;
+    if identities.is_empty()
+        || missing
+            .iter()
+            .any(|connector| identities.contains(*connector))
+        || identities.iter().any(|identity| {
+            is_eventually_useful(view, identity)
+                && (identity.rank == Rank::Five || is_critical_save_identity(view, identity))
+        })
+    {
+        return None;
+    }
+    if !equivalent_clue_handoff(deductions, profile, best, discard, identities) {
+        return None;
+    }
+    // No current play is available (guarded above). This chooses who gives
+    // the same funded clue before its recipient's turn, not whether to save.
+    Some(101 + i32::from(best.score()))
+}
+
+/// Prefer drawing into the hand with less known useful work, but only when
+/// the same direct clue can move one seat later without
+/// delaying its recipient. This is a scheduling tiebreak, not a bonus for every
+/// discard or permission to sacrifice a needed card.
+pub(super) fn unloaded_hand_handoff(
+    deductions: &LogicalDeductions,
+    inferred: &HGroupInferences,
+    profile: HGroupProfile,
+    best: &CompiledClueAction,
+    discard: CardId,
+) -> bool {
+    let view = deductions.view();
+    let next = next_player(view.observer, view.hands.len());
+    let clued = inferred.clued_or_promised();
+    let own_work = inferred
+        .cards
+        .iter()
+        .filter(|card| {
+            clued.contains(&card.card)
+                && card
+                    .identities
+                    .iter()
+                    .any(|identity| is_eventually_useful(view, identity))
+        })
+        .count();
+    let next_work = view.hands[next.index()]
+        .iter()
+        .filter(|card| {
+            card.identity.is_some_and(|identity| {
+                is_eventually_useful(view, identity)
+                    && (clued.contains(&card.id)
+                        || !view.hands.iter().flatten().any(|other| {
+                            other.id != card.id
+                                && clued.contains(&other.id)
+                                && (other.identity == Some(identity)
+                                    || inferred.cards.iter().any(|note| {
+                                        note.card == other.id
+                                            && note.identities
+                                                == crate::IdentitySet::singleton(identity)
+                                    }))
+                        }))
+            })
+        })
+        .count();
+    if best.target() == next || own_work >= next_work {
+        return false;
+    }
+    let Some(domain) = super::chop_safety::discard_domain(deductions, inferred, profile, discard)
+    else {
+        return false;
+    };
+    if domain.is_empty()
+        || domain.iter().any(|identity| {
+            is_eventually_useful(view, identity)
+                && !view
+                    .hands
+                    .iter()
+                    .flatten()
+                    .any(|held| held.id != discard && held.identity == Some(identity))
+        })
+    {
+        return false;
+    }
+    equivalent_clue_handoff(deductions, profile, best, discard, domain)
+}
+
+fn equivalent_clue_handoff(
+    deductions: &LogicalDeductions,
+    profile: HGroupProfile,
+    best: &CompiledClueAction,
+    discard: CardId,
+    domain: crate::IdentitySet,
+) -> bool {
+    let view = deductions.view();
+    let next = next_player(view.observer, view.hands.len());
+    let Some(outcome) = super::clue_outcome::scheduled_clue_outcome(view, profile, best) else {
+        return false;
+    };
+    // Outcomes contain *new* commitments relative to each giver's baseline.
+    // A retained, exact owner-known successor can therefore disappear from
+    // the delta when its owner becomes the giver. Compare cumulative
+    // commitments, without filling in any unknown face.
+    let team = super::compiled_baseline_team(view, profile);
+    let known = (0..view.hands.len())
+        .filter_map(|player| {
+            let owner = super::PlayerId::new(u8::try_from(player).ok()?);
+            let projection = team.projection(owner)?;
+            Some(
+                projection
+                    .inferred
+                    .cards
+                    .iter()
+                    .filter_map(|note| {
+                        let identity = (note.identities.len() == 1)
+                            .then(|| note.identities.iter().next())
+                            .flatten()?;
+                        is_eventually_useful(view, identity)
+                            .then_some(super::ActionCommitment::exact(note.card, owner, identity))
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+    for identity in domain.iter() {
+        let after = ProspectiveTransition::discard(view, view.observer, discard, identity);
+        let Some((d, replay)) = PerspectiveProjector::new(&after, profile)
+            .project(next, PerspectiveDepth::NestedRecipients)
+        else {
+            return false;
+        };
+        let notes = super::infer_h_group_from_replay(&d, replay.clone(), profile);
+        if !super::ActionWindow::from_inferences(d.view(), &notes).can_give_clue() {
+            return false;
+        }
+        let candidates = h_group_clue_candidates_from_replay(&d, profile, &replay);
+        let Some(same) = candidates
+            .iter()
+            .find(|candidate| candidate.action == best.action)
+        else {
+            return false;
+        };
+        // Admission belongs to the later giver, but compare both outcomes
+        // from the original observer. Re-rooting the value at the giver hides
+        // their cards a second time and can erase what the recipient sees.
+        let Some(later) = super::clue_outcome::scheduled_clue_outcome(&after, profile, same) else {
+            return false;
+        };
+        // Known-trash collateral is not a protected future point. Discard
+        // elimination can identify that trash between the two clue timings;
+        // improved trash knowledge must not invalidate an otherwise identical
+        // Save. Unknown faces remain relevant to this comparison.
+        let useful_protection = |cards: &[CardId]| {
+            cards
+                .iter()
+                .copied()
+                .filter(|card| {
+                    super::identity_of(view, *card)
+                        .is_none_or(|identity| is_eventually_useful(view, identity))
+                })
+                .collect::<Vec<_>>()
+        };
+        if cumulative_public_actions(&later, &known) != cumulative_public_actions(&outcome, &known)
+            || later.owner_actions != outcome.owner_actions
+            || useful_protection(&later.protected_cards)
+                != useful_protection(&outcome.protected_cards)
+            || later.new_connections != outcome.new_connections
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn cumulative_public_actions(
+    outcome: &super::LineOutcome,
+    prior_known: &[super::ActionCommitment],
+) -> Vec<super::ActionCommitment> {
+    let mut actions = outcome.public_actions.clone();
+    actions.extend(prior_known.iter().copied().filter(|known| {
+        outcome.clued_superpositions.iter().any(|note| {
+            note.card == known.card
+                && note.owner == known.owner
+                && note.identities == known.identities
+        })
+    }));
+    actions.sort_unstable_by_key(|action| (action.card.index(), action.owner.index()));
+    actions.dedup();
+    actions
+}
+
+pub(super) fn completion_times_after_clue(
+    deductions: &LogicalDeductions,
+    profile: HGroupProfile,
+    clue_action: &CompiledClueAction,
+    connector: Card,
+) -> Option<(usize, usize)> {
+    let hanabi_core::Action::Clue { target, clue } = clue_action.action else {
+        return None;
+    };
+    let view = deductions.view();
+    let touched = view.hands[target.index()]
+        .iter()
+        .filter(|card| card.identity.is_some_and(|identity| clue.matches(identity)))
+        .map(|card| card.id)
+        .collect::<Vec<_>>();
+    let mut after = ProspectiveTransition::clue(view, target, clue, &touched);
+    // Both alternatives contain one discard and this clue. Their net token
+    // change is zero. The reserved offsets in completion_times are unchanged.
+    after.clue_tokens = view.clue_tokens;
+    let d = LogicalDeductions::new(after).ok()?;
+    let inferred = super::infer_h_group(&d, profile);
+    completion_times(&d, &inferred, profile, connector)
+}
+
+/// Conditional earliest completion offsets of the longest jointly funded
+/// visible chain prefix if the connector is drawn now or
+/// by the next seat. This is a scheduling heuristic, not a prediction of the
+/// draw or a convention inference. Both alternatives reserve turns 0 and 1
+/// for the discard and the interchangeable clue. Unclued visible successors
+/// are eligible, but cost an additional clue turn before they can play.
+pub(super) fn completion_times(
+    deductions: &LogicalDeductions,
+    inferred: &HGroupInferences,
+    profile: HGroupProfile,
+    connector: Card,
+) -> Option<(usize, usize)> {
+    let view = deductions.view();
+    let players = view.hands.len();
+    let projector = PerspectiveProjector::new(view, profile);
+    let mut busy = vec![0, 1];
+    for offset in 2..players {
+        let actor =
+            super::PlayerId::new(u8::try_from((view.observer.index() + offset) % players).ok()?);
+        let (d, replay) = projector.project(actor, PerspectiveDepth::NestedRecipients)?;
+        let notes = super::decision::infer_h_group_from_replay(&d, replay, profile);
+        if !super::ActionWindow::from_inferences(d.view(), &notes).is_free() {
+            busy.push(offset);
+        }
+    }
+    let mut suffix = Vec::new();
+    let owner_notes = (0..players)
+        .map(|player| {
+            let actor = super::PlayerId::new(u8::try_from(player).ok()?);
+            let (d, replay) = projector.project(actor, PerspectiveDepth::NestedRecipients)?;
+            Some(super::infer_h_group_from_replay(&d, replay, profile))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    for rank in Rank::ALL.iter().skip(usize::from(connector.rank.number())) {
+        let identity = Card::new(connector.suit, *rank);
+        let mut owners = Vec::new();
+        for (player, hand) in view.hands.iter().enumerate() {
+            for card in hand {
+                let known_own = player == view.observer.index()
+                    && inferred.cards.iter().any(|note| {
+                        note.card == card.id
+                            && note.identities.len() == 1
+                            && note.identities.contains(identity)
+                    });
+                if card.identity == Some(identity) || known_own {
+                    let exact_clue = owner_notes[player].cards.iter().any(|note| {
+                        note.card == card.id
+                            && note.identities == crate::IdentitySet::singleton(identity)
+                    });
+                    owners.push(ScheduledCard {
+                        seat: (player + players - view.observer.index()) % players,
+                        needs_clue: !known_own && !exact_clue,
+                    });
+                }
+            }
+        }
+        if owners.is_empty() {
+            break; // Do not invent the location of an unseen higher card.
+        }
+        suffix.push(owners);
+    }
+    if suffix.is_empty() {
+        return None;
+    }
+    let finish = |drawer, prefix| {
+        let mut chain = vec![vec![ScheduledCard {
+            seat: drawer,
+            needs_clue: true,
+        }]];
+        chain.extend(suffix.iter().take(prefix).cloned());
+        schedule_chain(
+            &chain,
+            players,
+            drawer,
+            drawer,
+            &busy,
+            usize::from(view.clue_tokens),
+        )
+    };
+    // A later ambiguous successor may need an additional clue we cannot
+    // currently fund. It must not erase an earlier, funded scheduling
+    // advantage (e.g. separate y3/y4 owners). Compare the same prefix in
+    // both alternatives; never credit an unfunded tail or invent a refund.
+    (1..=suffix.len())
+        .rev()
+        .find_map(|prefix| Some((finish(0, prefix)?, finish(1, prefix)?)))
+}
+
+#[derive(Clone, Copy)]
+struct ScheduledCard {
+    seat: usize,
+    needs_clue: bool,
+}
+
+fn schedule_chain(
+    chain: &[Vec<ScheduledCard>],
+    players: usize,
+    after: usize,
+    clue_after: usize,
+    busy: &[usize],
+    clues: usize,
+) -> Option<usize> {
+    let Some((cards, rest)) = chain.split_first() else {
+        return Some(after);
+    };
+    cards
+        .iter()
+        .filter_map(|card| {
+            let mut occupied = busy.to_vec();
+            let mut ready = after;
+            let mut remaining_clues = clues;
+            let mut last_clue = clue_after;
+            if card.needs_clue {
+                remaining_clues = remaining_clues.checked_sub(1)?;
+                // Once the predecessor has been announced, a later clue can
+                // prepare its successor before the predecessor physically plays.
+                let clue_turn = (clue_after + 1..64)
+                    .find(|turn| turn % players != card.seat && !occupied.contains(turn))?;
+                occupied.push(clue_turn);
+                ready = ready.max(clue_turn);
+                last_clue = clue_turn;
+            }
+            let play_turn = (ready + 1..64)
+                .find(|turn| turn % players == card.seat && !occupied.contains(turn))?;
+            occupied.push(play_turn);
+            schedule_chain(
+                rest,
+                players,
+                play_turn,
+                last_clue,
+                &occupied,
+                remaining_clues,
+            )
+        })
+        .min()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn handoff_keeps_exact_owner_knowledge_but_not_lost_promises() {
+        let identity = Card::new(Suit::Yellow, Rank::Four);
+        let prior = super::super::ActionCommitment::exact(
+            CardId::new(2),
+            super::super::PlayerId::new(0),
+            identity,
+        );
+        let mut retained = super::super::LineOutcome::default();
+        retained
+            .clued_superpositions
+            .push(super::super::CluedCardSuperposition {
+                card: prior.card,
+                owner: prior.owner,
+                identities: prior.identities,
+            });
+        let mut newly_counted = retained.clone();
+        newly_counted.public_actions.push(prior);
+        assert_eq!(
+            cumulative_public_actions(&retained, &[prior]),
+            cumulative_public_actions(&newly_counted, &[prior])
+        );
+        retained.clued_superpositions[0].identities =
+            prior
+                .identities
+                .union(crate::IdentitySet::singleton(Card::new(
+                    Suit::Green,
+                    Rank::Four,
+                )));
+        assert_ne!(
+            cumulative_public_actions(&retained, &[prior]),
+            cumulative_public_actions(&newly_counted, &[prior])
+        );
+    }
+
+    #[test]
+    fn scheduler_requires_a_clue_and_respects_reserved_actions() {
+        let chain = vec![vec![ScheduledCard {
+            seat: 0,
+            needs_clue: true,
+        }]];
+        assert_eq!(schedule_chain(&chain, 4, 0, 0, &[0, 1], 0), None);
+        assert_eq!(schedule_chain(&chain, 4, 0, 0, &[0, 1], 1), Some(4));
+        assert_eq!(schedule_chain(&chain, 4, 0, 0, &[0, 1, 4], 1), Some(8));
+    }
+
+    #[test]
+    fn scheduler_chooses_the_faster_visible_successor_copy() {
+        let chain = vec![
+            vec![ScheduledCard {
+                seat: 0,
+                needs_clue: true,
+            }],
+            vec![
+                ScheduledCard {
+                    seat: 0,
+                    needs_clue: false,
+                },
+                ScheduledCard {
+                    seat: 1,
+                    needs_clue: true,
+                },
+            ],
+        ];
+        assert_eq!(schedule_chain(&chain, 4, 0, 0, &[0, 1], 2), Some(5));
+        assert_eq!(schedule_chain(&chain, 4, 0, 0, &[0, 1], 1), Some(8));
+    }
+}

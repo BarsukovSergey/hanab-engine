@@ -1,0 +1,104 @@
+use crate::ConventionPolicyTier;
+
+/// Structured comparison key for convention actions. Numeric priority remains
+/// available for planner diagnostics, but semantic categories are compared
+/// explicitly by H-Group action selection.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ActionPreference {
+    policy_tier: ConventionPolicyTier,
+    advances_terminal_plan: bool,
+    within_category: i32,
+    play_order: Option<core::cmp::Reverse<usize>>,
+    pub(crate) teammate_play_priority: bool,
+}
+
+impl ActionPreference {
+    pub(crate) const fn new(within_category: i32, advances_terminal_plan: bool) -> Self {
+        Self {
+            policy_tier: ConventionPolicyTier::Admitted,
+            advances_terminal_plan,
+            within_category,
+            play_order: None,
+            teammate_play_priority: false,
+        }
+    }
+
+    pub(crate) const fn with_play_order(mut self, order: Option<usize>) -> Self {
+        self.play_order = match order {
+            Some(order) => Some(core::cmp::Reverse(order)),
+            None => None,
+        };
+        self
+    }
+
+    pub(crate) const fn with_teammate_play_priority(mut self, value: bool) -> Self {
+        self.teammate_play_priority = value;
+        self
+    }
+
+    /// Only compares two scheduled plays; clues and discards are unaffected.
+    pub(crate) fn compare_play_order(self, other: Self) -> core::cmp::Ordering {
+        self.play_order
+            .zip(other.play_order)
+            .map_or(core::cmp::Ordering::Equal, |(left, right)| left.cmp(&right))
+    }
+
+    pub(crate) const fn set_policy_tier(&mut self, policy_tier: ConventionPolicyTier) {
+        self.policy_tier = policy_tier;
+    }
+
+    pub(crate) const fn with_policy_tier(mut self, tier: ConventionPolicyTier) -> Self {
+        self.policy_tier = tier;
+        self
+    }
+
+    #[must_use]
+    pub const fn policy_tier(self) -> ConventionPolicyTier {
+        self.policy_tier
+    }
+
+    #[must_use]
+    pub const fn advances_terminal_plan(self) -> bool {
+        self.advances_terminal_plan
+    }
+
+    #[must_use]
+    pub const fn within_category(self) -> i32 {
+        self.within_category
+    }
+}
+
+/// Named terminal-progress components. The scalar encoding remains available
+/// for diagnostics; decision ordering consumes the structured preference.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct TerminalPlanProgress {
+    discard_threshold: i32,
+    clue_value: i32,
+}
+
+impl TerminalPlanProgress {
+    pub(super) const fn within_category(self) -> i32 {
+        100 + self.clue_value
+    }
+
+    pub(super) const fn new(discard_threshold: i32, clue_value: i32) -> Self {
+        Self {
+            discard_threshold,
+            clue_value,
+        }
+    }
+
+    pub(super) const fn encoded_priority(self) -> i32 {
+        101 + self.discard_threshold + self.clue_value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_plan_progress_is_a_distinct_comparison_dimension() {
+        assert!(ActionPreference::new(1, true) > ActionPreference::new(10_000, false));
+    }
+}

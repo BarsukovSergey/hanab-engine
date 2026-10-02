@@ -1,0 +1,424 @@
+# H-Group architecture
+
+The H-Group implementation is a public-history reducer followed by a decision
+pipeline. Its central rule is that convention interpretation never receives
+simulator truth.
+
+## Data flow
+
+```text
+PlayerView
+   |
+   v
+LogicalDeductions             convention-free identity domains
+   |
+   v
+H-Group history reducer
+   |-- HistoricalView         identities legal at the event's turn
+   |-- HGroupTurnContext      explicit before/after event snapshots
+   |-- RuleSpec               phase and dependency metadata
+   |-- RuleProposal           audited per-rule transition record
+   |-- ConventionTransitionResult  causal record for one public event
+   |-- ConventionTransitionDelta   exact card-fact and epistemic changes
+   |-- ConventionJournal      incremental facts plus explanation history
+   |-- ProvenancedCardSet     source-owned materialized card facts
+   |-- ConnectionManager      Prompt/Finesse lifecycle state machine
+   |-- HGroupSignal           append-only explanation log
+   |-- ConventionFacts        relational current convention truth
+   |-- CardKnowledgeEffect    typed identity/promise/status change
+   |-- ConventionKnowledge   event-sourced owner-knowledge program and provenance index
+   |-- ConventionConstraintGraph relational OneOf/connection constraints
+   |-- ActionSchedule         unified live play/discard commitments
+   |-- StackTimeline          clue/current/before-player stack horizons
+   |-- ClueInterpretationPlan one Play/Save/Fix/5CM/Stall precedence result
+   |-- ClueInterpretationHypothesis identity-correlated connection/fix branch
+   |-- FixObligations         conditional and unconditional repair duties
+   |-- TeamConventionSnapshot coherent lazy per-player epistemic overlays
+   |-- InterpretationHypotheses correlated whole-state alternatives
+   `-- ActorBeliefBefore      acting player's pre-event knowledge
+   |
+   v
+EpistemicState               observer-owned identity domains and provenance
+   |
+   v
+ConventionConstraints        hard required/admissible actions
+   |
+   v
+typed candidates / rejections / recipient assessments
+   |
+   v
+LineOutcome                  actions, protection, trash, and connections
+   |
+   v
+ConditionalPlan             projected steps and dependency frontier
+   |
+   v
+blank-card plan summary / exact endgame solver
+```
+
+The giver, recipient, and hypothetical analyzer all use `PerspectiveProjector`.
+Projection depth is an enum, not a boolean, so a call site must explicitly
+request either observer-only interpretation or nested recipient modeling.
+`ConditionalObserverProjection` records convention-promised identities used to
+model another observer. These are assumptions, not observations; symbolic
+`ProjectionEvidence.assumptions` retains their turn, source, modeled observer,
+card, and identity. The original legal `PlayerView` is never modified.
+
+## Boundary responsibilities
+
+- `history_reducer.rs` owns the mutable replay state and separate clue, play,
+  discard, and draw handlers. An event's immutable input and mutable outcome are
+  separate. Post-event recognizers still receive only `HGroupRuleEffects`;
+  moving the dispatcher does not change their execution order or authority.
+- `hanabi-core::public_transition` owns token refunds, play termination, and
+  final-round advancement shared by simulator and blank-card transitions. Their
+  identity visibility and draw representation remain separate.
+- `turn_context.rs` owns temporal access. A historical rule cannot ask for an
+  identity revealed by a future play, discard, or draw. `ActorBeliefBefore`
+  groups the acting player's pre-event discard knowledge so a visible card face
+  cannot be substituted for what that actor knew.
+- `action_schedule.rs` is the unified read model for direct plays, active
+  connections, forced plays, and required discards. `StackTimeline` labels stack
+  heights as clue-time, current, or before a named player's turn; code
+  projecting a future forced play cannot silently use current stack heights.
+- `claims.rs` is the observer-safe exact-identity and Good Touch claim boundary.
+  Relational `OneOf` claims never become exact claims on every candidate card.
+- `connection.rs` is the sole mutation boundary for delayed connections. It
+  records starts, completions, invalidations, fixes, displacement, and
+  supersession with a turn and reason. Every lifecycle has a stable `PromiseId`
+  and immutable provenance, including its creation turn, actor, focus, expected
+  identity, and connection kind. It also removes stale candidates from blocked
+  later layers and rejects duplicate obligations.
+- `ConnectionPlanningContext` in `h_group.rs` is the shared read-only planner
+  for a clue's delayed connection. It distinguishes cards promptable before the
+  clue from cards touched by the current clue, simulates every focus identity
+  without mutation, and commits the selected branch exactly once. Its event turn
+  is explicit rather than inferred from a partially updated clue list.
+- Every clue retains a `ClueInterpretationHypothesis` for each possible Play
+  identity. Connection steps and required Fixes stay attached to that identity
+  instead of being flattened into independent unions. `FixObligations` may
+  retain several conditional repairs; action selection activates only the
+  conditions visible in its observer's state.
+- `ledger.rs` owns provenance for materialized card facts through
+  `ProvenancedCardSet`. A fact can have independent event, rule, and `PromiseId`
+  sources; retracting a promise removes only the consequences it established.
+  Materialized sets are compact read indexes, not independent sources of truth.
+- `primary.rs` is the one primary clue-precedence resolver. Fixes, 5 Chop Moves,
+  low-score 5 handling, stalls, saves, and ordinary Play meanings are resolved
+  once before secondary connections and named explanations run.
+- `effects.rs` owns `ConventionJournal` and reduces recognized journal effects
+  idempotently. Materialized rule changes are committed at the rule boundary,
+  where the ledger attaches the rule source and records an exact delta; direct
+  mutation of an unsourced final state fails validation.
+- `facts.rs` separates current truth from history. `HGroupSignal` explains why
+  something was inferred and remains available to recognizers needing
+  cross-event causality; `ConventionFacts` is what downstream code queries for
+  live semantic state, including exact knowledge transfers. Ambiguous identities
+  are retained as relational `OneOf` claims rather than being incorrectly copied
+  onto every candidate card.
+- `model.rs` owns `ConventionCardState`, the canonical grouping for clue, play,
+  discard, invalidation, and fact state associated with cards.
+- `epistemic.rs` is the strategic representation of identity domains one named
+  observer may retain, including the provenance of each domain. Action
+  obligations remain in the canonical convention state instead of being copied
+  into a second, independently mutable status aggregate. It deliberately exposes
+  neither deck order nor simulator truth. This canonical owner card read model
+  is shared by production analysis and regression serialization; serializers do
+  not recalculate its logical identities, convention identities, provenance,
+  obligations, positional state, or derived convention-only trash.
+- `knowledge_effects.rs` owns the immutable, event-sourced `ConventionKnowledge`
+  program, its per-card provenance index, and its pure reducer. The
+  owner-knowledge compiler records each identity restriction, reinterpretation,
+  promise, typed fact change, and play obligation at the semantic mutation that
+  caused it. It no longer diffs one final card note and guesses a source
+  afterward. Owner projection applies the ordered effects to logical domains
+  without recognizing convention moves a second time. Ordinary inference cannot
+  widen a domain; only a typed Fix/reinterpretation may replace it.
+- `ConventionKnowledgeCompiler` in `interpretation/knowledge.rs` applies owner
+  knowledge in named, ordered passes: replay closure, established and promised
+  Good Touch, transfer/ejection reinterpretations, connection promises, current
+  focus, forced plays, and implicit saves. A new inference belongs in one pass
+  rather than an unstructured final-note sweep.
+- `constraint_graph.rs` is the single bridge from convention state to exact
+  world constraints. Per-card domains, unresolved relational `OneOf` claims, and
+  ordered connection alternatives are retained symbolically. A claim
+  demonstrated by a revealed card excludes that identity from its surviving
+  candidates instead of incorrectly forcing one of them to inherit it.
+  Independent disjunctions remain factored. World counting traverses them
+  lazily, pruning contradictory masks and stopping at the world/work limit; it
+  never materializes their Cartesian product. An empty factor means no
+  consistent world, not unrestricted knowledge.
+- `compiled_line.rs` compiles observer-relative named-line counts, playable
+  cards, positional anchors, and conflicting interpretations once per clue
+  classification. `line_state.rs` supplies the shared pure commitment read
+  model. Strategic scoring consumes this evidence instead of scanning signal
+  history and selecting a fresh interpretation.
+- Prospective and exact-observation caches return immutable shared handles.
+  Prospective cache identity is the complete source position plus profile, not
+  the address of a temporary `PlayerView`. Nested scopes restore their
+  predecessor; cache state is not persistent convention truth.
+- `outcome.rs` retains clue consequences before strategy converts genuine
+  preferences to numeric ordering. Giver-visible team coverage and
+  owner-relative promised-action and clued-card-superposition equivalence for
+  Clarity comparisons remain separate projections of one outcome.
+- `rule_engine.rs` owns ordered post-event execution. Real replay and
+  prospective transitions both enter this registry through the same history
+  reducer. Each `RuleSpec` declares its semantic phase and dependencies, and
+  diagnostic reductions retain every non-empty contribution as an audited
+  `RuleProposal` transition record in the event's `ConventionTransitionResult`;
+  `rules.rs` proves every level has exactly one valid execution path.
+  Recognizers mutate only through the single `HGroupRuleEffects` capability, and
+  the resulting delta is the authoritative account of what that transaction
+  changed.
+- `event_reducer.rs` owns the mutable capability passed to recognizers.
+  `RuleExecutionContext` binds an immutable turn context, observer view, and
+  profile into one value, preventing mismatched temporal or perspective
+  arguments at the dispatch boundary.
+- `identity.rs` and `hand.rs` own the shared identity, trash, playability,
+  focus, chop, and finesse-position semantics used by giver, recipient, and
+  planner paths.
+- `constraints.rs` separates semantic obligations from utility. Urgent clues,
+  connection responses, required discards, and must-clue states restrict the
+  action set before numeric strategy priorities are compared. Planner actions
+  also carry a lexicographic `ConventionPolicyTier`, so a heuristic number
+  cannot outweigh a required action.
+- `perspective.rs` owns observer projection and hypothetical public transitions.
+  `TeamConventionSnapshot` groups lazy observer overlays for one coherent public
+  position, so candidate consumers share lifecycle state.
+- `prospective.rs` applies a proposed action once and shares its cached team
+  snapshot between primary-meaning recognition, signal inspection, hazard
+  checks, and strategic evaluation.
+- `information_value.rs` compares valid alternative Fixes using the recipient's
+  before/after identity domains. It prioritizes action certainty on
+  convention-promised cards, estimated future clue savings, and identities
+  weighted by play timing and criticality; color over rank is only a final
+  tie-break for identical touch sets.
+- `decision.rs` builds the one canonical action analysis consumed by direct
+  selection and planning.
+- `candidate.rs` gives each admitted clue a semantic purpose, recognition
+  evidence, and named value components. `RecipientReplay` records direct
+  recognition by the shared reducer; `GeneratorProof` is explicit for meanings
+  that legitimately branch after the recipient sees the giver's hidden hand.
+  Every excluded legal clue receives a typed rejection reason.
+- `candidate_pipeline.rs` makes admission stages explicit in the type system:
+  semantically admitted candidates become recipient-assessed candidates and only
+  then become causally compared, ranked candidates. The assessment is explicitly
+  either `RecipientReplay` or `GeneratorProof`.
+- `interpretation.rs` owns observer-relative clue meaning, convention card
+  inference, and convention-admissible clue generation.
+- `plan.rs` distinguishes `ProjectedAction` from authoritative replay actions
+  and stores projected consequences in dependency-linked `PlanStep` nodes.
+  `symbolic_line.rs` builds this `ConditionalPlan`; new draws remain blank and
+  projection stops at an explicit frontier before the plan is summarized.
+  `ProjectionEvidence` retains the actual steps, stopping frontier, actor
+  windows, and token ledger in the planner result and live diagnostics. Discards
+  also retain typed Save Principle violations, assessed from the deciding
+  observer's information before the card leaves the hand. Critical cards, unique
+  2s, and unique immediately/delayed-playable cards are protected; an unknown
+  potential duplicate is not a replacement. Every modeled branch's loss remains
+  visible beyond common-horizon trimming. A line without these violations
+  outranks one with them regardless of heuristic priority; if every candidate
+  has violations, selection remains explicitly degraded rather than pretending
+  there is a safe line. These are model-relative safety findings, not proofs
+  over unmodeled hidden identities. A separate bottom-deck-risk consequence
+  records a needed identity discarded without a known replacement, even when its
+  predecessors are not ready. These losses outrank protection/efficiency
+  bonuses. Unknown discards remain unresolved possible hazards, not executed
+  actions or guaranteed losses; strategic risks are compared only at a shared
+  horizon so longer forecasts are not punished merely for reaching uncertainty.
+  A strategically selected unresolved discard extends that risk horizon by one
+  action, without credit for its token or draw. An unsearched leaf-policy
+  fallback does not extend it unless a convention requires the discard:
+  otherwise a deeper choice could still find a productive alternative. Live
+  diagnostics expose the lost identity, unresolved discard card, and
+  `requiredProtection` / `strategicallySelected` decision evidence. Conditional
+  alternatives name their observer, hidden-card assumption, enabling step,
+  concrete follow-up clue, deadline, and independent funding. They never add
+  guaranteed plays or merge mutually exclusive identities into ordinary steps.
+- Symbolic clues touch only cards whose match is known. Blank cards receive
+  neither positive nor negative clue information: omitting an unknown touch does
+  not prove a non-match. Candidate previews and executed forecasts share this
+  transition. Forecasts no longer enumerate hypothetical touch subsets; the
+  conditional-evidence representation remains available, but ordinary blank-card
+  forecasts leave `clueBranches` empty. A play or discard of a new unresolved
+  draw stops the forecast before awarding resources, even if a convention tells
+  the hypothetical player to try that card. This is a partial known-card
+  forecast, not a prediction of the draw or a guarantee over all possible future
+  clue outcomes.
+- Hypothetical teammates use the root's candidate admission and endpoint
+  comparator with one level of strategic lookahead. Those candidate forecasts
+  use the convention policy as their leaf evaluator, with a 32-action bound;
+  they do not recursively launch unlimited planning. Completing a connection
+  makes its focus available, not automatically mandatory: explicit obligations
+  and required policy tiers still constrain the search.
+- Every projected turn has a resource checkpoint. Different-length lines can be
+  compared at a common elapsed turn without deleting their tails. Conditional
+  comparisons require agreement across all branch pairs; possible later strikes
+  remain a separate risk dimension. Developed-card comparisons against a play
+  can spend surplus tokens, but cannot waive save pressure or unrelated hand
+  congestion. This is an evaluation preference, not a score guarantee.
+- `projection_requirements.rs` compiles Priority/Charm uncertainty requirements
+  alongside inference. The projector assesses these declared dependencies and
+  records supported, conditional (with a witness when available), or
+  contradicted results; it does not rescan convention signals to rediscover
+  those rules.
+- `ActionWindow` derives scheduling commitments from the existing inference read
+  model. `ResourceSchedule` checks prefix funding and token caps for plans, clue
+  handoffs, and terminal-five funding. The frontier's reserve remains a bounded
+  heuristic, not an exhaustive scheduling proof.
+- Planner comparisons retain named deciding dimensions, distinguish equivalent
+  from incomparable endpoints, and expose preference cycles. Structured
+  `ActionPreference` is the single ordering value, including policy tier;
+  redundant scalar/tier fields have been removed. Diagnostics derive numeric
+  values from it. Canonical action order, not enumeration order, resolves final
+  symbolic ties. Exact-search results retain their outcome statistics rather
+  than fabricating symbolic pairwise explanations.
+- `frontier_value.rs` keeps conditional successor opportunities separate from
+  secured plays. After a stack advances, it can test whether a compatible card
+  already hidden in the planner's hand would let the next free teammate give an
+  admitted Play Clue. The temporary assumption never enters the actual line or
+  shared knowledge, and blank draws are not assigned identities. With equal
+  recorded progress and safety, this opportunity can outweigh a surplus clue
+  token. Each line must cover its own bounded near-term reserve: a productive
+  clue when a visible or checked conditional opportunity supports one, exposed
+  critical chops, mandatory repairs, and any consecutive-save pressure. This is
+  a strategic tiebreaker, not a probability estimate or exhaustive proof that
+  every future clue need is funded.
+- Draw allocation compares each missing connector conditionally, without
+  assigning an identity to the next draw. A drawer must be no slower for every
+  connector and faster for at least one. Compare the longest jointly funded
+  visible chain prefix; an unfunded tail does not erase earlier progress.
+  Independently, an unloaded hand may take the draw instead of a teammate with
+  useful work queued. This handoff applies to Saves as well as Plays. Deferring
+  a Play or Save Clue requires a funded, semantically equivalent handoff before
+  the recipient's turn in every remaining discard-identity case. Known-trash
+  collateral does not count as lost protection, and owner knowledge—not merely
+  two literal clues—determines whether a successor needs another clue. Handoff
+  comparisons retain previously exact owner-known commitments whose domains
+  survive the clue. Comparing only each giver's new-action delta can otherwise
+  mistake a retained successor for lost progress.
+- Save-pressure fallback comparisons cannot reward leaving more current critical
+  chops exposed merely to avoid the possible follow-up cost of a Save. Such a
+  trade-off remains incomparable on pressure and uses the other evidence.
+- `hypothesis.rs` owns mutually exclusive whole-history interpretations. Each
+  alternative retains its own connections, promises, and identity claims, so
+  ordinary and empathy readings cannot be merged card-by-card.
+- Declining a longer clue line does not establish an exact card identity. The
+  former inverse-planning deduction was removed: comparing chain lengths alone
+  does not prove that an alternative was preferable or unavailable. Its
+  replacement is a separate, lower-order-model-based stage that checks complete
+  compatible hands and records resource-neutral substitution witnesses. Failed
+  or incomplete checks leave the domain unchanged. See
+  [inverse planning](inverse-planning.md) for the proof contract and
+  limitations.
+- `recognition.rs` is now only the level-gated registry surface and shared
+  imports. Cohesive modules own Basic moves, Tempo and emergency discards, Chop
+  Moves, Bluffs, advanced connections, special discards, Trash moves, late-game
+  rules, and Extras. Observer knowledge derivation and candidate validation
+  likewise live in focused `interpretation/` modules. `h_group.rs` retains
+  connection scheduling; the event dispatcher lives in `history_reducer.rs`.
+- `transition.rs` is the production causal boundary. Every retained public event
+  has an exact compact `ConventionTransitionDelta` of materialized card facts
+  and owner-knowledge effects; rule proposals also retain exact card
+  replacements rather than comparing collection lengths. Strategic evaluation
+  consumes these deltas. Human-readable signals remain explanations and
+  recognizer history rather than an alternative source of current decision
+  truth.
+- `strategic_value.rs` compares structured `LineOutcome` values. It may use
+  teammate identities visible to the giver for team coverage, but Clarity uses
+  only each card owner's `EpistemicState`.
+
+Shared card and hand semantics live in focused modules. New rule families go in
+a focused recognition module and register with the one rule engine; they do not
+create a second interpretation path.
+
+## Bounded requests
+
+`analyze_position_with_control` shares one explicit `AnalysisControl` across
+compiler checkpoints, factored world counting/materialization, symbolic steps,
+and exact nodes. It supports cancellation, a deadline, and a work limit; the
+ordinary entry point uses unlimited request control plus the normal exact
+world/node limits. Request cancellation returns an error, never a decision based
+on only some candidates. A convention compilation and frontier assessment are
+currently atomic, so a deadline is cooperative, not a hard latency bound.
+
+Exact search runs before symbolic continuation work when its gate admits a
+proof. If exact search exhausts its own node/depth limit, all symbolic
+candidates are evaluated. `exact_status` and `exact_nodes` retain the abort
+reason and work already spent; an interrupted request is not an exhaustive
+proof.
+
+## Invariants
+
+Every completed replay reduction validates that:
+
+- an active connection has at least one candidate;
+- every active connection was scheduled through the lifecycle manager;
+- the same actor/focus/step obligation is not duplicated; and
+- every connection candidate is still in the promised actor's hand;
+- every discard-now entry is unique;
+- every relational identity claim has at least one candidate card;
+- every clue has exactly one hypothesis for each Play identity, no duplicate
+  identity branch, and no empty connection step;
+- every conditional Fix points back to the clue identity hypothesis that created
+  it;
+- exact transferred knowledge is materialized in current facts rather than
+  reconstructed from the diagnostic signal log;
+- every active connection has registered promise provenance; and
+- every materialized clue, protection, play, chop-move, and forced-play fact has
+  at least one typed source;
+- every promise-sourced retraction names registered promise provenance; and
+- proposals are phase ordered, non-empty, tied to the event turn, and form a
+  unique partition of post-event signals.
+- every owner-knowledge effect references a live card and occurs in exactly one
+  public transition delta;
+- every owner-knowledge effect is attached to the transition named by its
+  provenance turn, and the per-card provenance index exactly matches the ordered
+  effect program;
+- ordinary knowledge effects only narrow identity domains; replacement requires
+  explicit reinterpretation provenance; and
+- pure owner projection reproduces the convention compiler's result without
+  recognizing clue meaning again.
+
+Architecture properties additionally require that leaked own-hand truth does not
+change an observer's `EpistemicState`, and that candidate signal and hazard
+inspection share one prospective convention snapshot. They also run all expert
+replays through every observer, prove canonical focus domains cannot be widened
+by owner projection, and exercise generated legal histories.
+Module-name/source-string assertions have been removed: those did not prove
+behavior or enforce ownership. Exact website-link documentation checks remain.
+
+The `game-p4v0s415.json` expert replay regression runs these checks for every
+prefix and every observer. Temporal tests separately assert that future own-card
+reveals and future draws cannot affect an earlier interpretation. Perspective
+tests should construct hypotheses through `PerspectiveProjector` rather than
+manually editing a recipient view. Architecture properties additionally verify
+that the incremental facts equal a complete journal reduction, every legal clue
+is exactly one of admitted or rejected, and a resolved-world hypothetical clue
+produces the same recipient convention state as the corresponding real event.
+Convention expectations are grounded in reviewed replay positions; legacy
+hand-built convention histories have been removed. Self-play reproductions and
+invariant-only completion checks are separate from optimal-move assertions. See
+[test provenance](testing.md) for the retained categories and coverage gaps.
+
+## Adding a convention rule
+
+1. Identify the documented level and add or reuse its `HGroupRuleId` gate.
+2. Read only the required side of `HGroupTurnContext`; use `HistoricalView` for
+   old identity questions.
+3. Register the family with the executable rule engine, emit typed public and
+   owner-knowledge effects with their causal source, and use `ConnectionManager`
+   for connection changes.
+4. Add current query state to `ConventionFacts` rather than searching the signal
+   log at decision time.
+5. Express mandatory behavior as a `ConventionConstraints` rule. Use a numeric
+   priority only for a genuine strategic preference among actions in the same
+   `ConventionPolicyTier`.
+6. Test giver and recipient interpretations, prospective/retrospective
+   equivalence, hidden-truth noninterference when relevant, and at least one
+   human-reviewed replay prefix. Do not manufacture a scenario and treat the
+   engine's current interpretation as its expected answer.
+
+These boundaries are deliberately stricter than a collection of move-specific
+helpers: most past bugs came from one interpretation path updating only part of
+the shared state or consulting information from the wrong observer or time.

@@ -1,0 +1,123 @@
+//! Level-gated H-Group rule recognizers.
+//!
+//! Recognizers inspect one public-history event and emit semantic effects into
+//! the shared reducer state. Replay orchestration and shared card semantics
+//! remain in the parent module.
+
+use super::{
+    BluffTargetKind, Card, CardId, CardSet, Clue, ClueFacts, ConnectionManager,
+    ConnectionObligation, ConnectionTransitionReason, ConventionJournal, HGroupClueInterpretation,
+    HGroupClueKind, HGroupConnectionKind, HGroupMoveKind, HGroupRuleEffects, HGroupSaveKind,
+    HGroupTurnContext, HGroupTurnSnapshot, IdentitySet, MAX_CLUE_TOKENS, ObservedEvent,
+    ObservedHistoryEntry, PlayerId, PlayerView, PromiseId, Rank, RequiredFix, bluff_play_connects,
+    bluff_target_kind_at, bluff_target_order_is_legal, card_is_trash, chop, finesse_position_id,
+    five_chop_moved_card, five_pulled_card, focus, has_higher_basic_priority, identity_of,
+    identity_set, is_card_identity_accounted_trash, is_critical_save_identity, is_playable_at,
+    is_playable_now, is_trash_at, next_player, protected_cards, push_signal, was_clued_before,
+};
+
+mod advanced;
+mod advanced_bluffs;
+mod basic;
+mod bluffs;
+mod chop_moves;
+mod extras;
+mod late_game;
+mod order_chop;
+mod special_discards;
+mod tempo;
+mod trash;
+pub(super) use advanced::{
+    apply_elimination_effects, apply_elimination_resolution_effects, apply_five_tech_effects,
+    apply_out_of_order_effects,
+};
+pub(super) use advanced_bluffs::{
+    apply_context_effects, apply_double_bluff_effects, apply_duplication_effects,
+    apply_intermediate_bluff_effects,
+};
+pub(super) use basic::{apply_level_three_effects, apply_level_two_effects};
+pub(super) use bluffs::{apply_bluff_effects, apply_resolved_bluff_effects};
+pub(super) use chop_moves::apply_chop_move_effects;
+pub(super) use extras::lie_component_fix_connection;
+pub(super) use extras::{apply_extra_effects, apply_max_special_effects};
+pub(super) use late_game::{
+    apply_charm_effects, apply_ignition_effects, apply_phantom_effects, apply_priority_effects,
+    apply_unnecessary_move_effects, retract_loaded_priority,
+};
+pub(super) use order_chop::apply_order_chop_move_effects;
+pub(super) use special_discards::{apply_special_finesse_discard_effects, apply_transfer_effects};
+pub(super) use tempo::{
+    apply_emergency_discard_effects, apply_positional_effects, apply_stall_effects,
+    apply_tempo_effects,
+};
+pub(super) use trash::{
+    apply_ejection_discharge_effects, apply_trash_connection_refinements, apply_trash_effects,
+};
+
+fn same_turn_signal(signals: &ConventionJournal, turn: u32, kind: HGroupMoveKind) -> bool {
+    signals.has_at_turn(turn, kind)
+}
+
+/// Counts unassigned ranks in a prospective Finesse. Previously
+/// clued exact connectors are Prompts and therefore do not count toward the
+/// thresholds for a 4 Charm or 5 Color Ejection. Visible connections in other
+/// hands also do not require blind plays in the reacting player's hand.
+/// Source: <https://hanabi.github.io/level-23/#the-4-charm>
+/// Source: <https://hanabi.github.io/level-16/#the-5-color-ejection-5ce>
+pub(super) fn unassigned_finesse_ranks(
+    view: &PlayerView,
+    giver: PlayerId,
+    actor: PlayerId,
+    focus_identity: Card,
+    stack_heights: [u8; 5],
+    explicitly_clued: &CardSet,
+    turn: u32,
+) -> usize {
+    // Interpret the clue using the hands and literal facts that existed then.
+    // Later connector plays/draws must not turn an ordinary delayed clue into
+    // a 5 Color Ejection and retract an established connector identity.
+    let historical;
+    let view = if turn < view.turn {
+        historical = super::chop_safety::before_historical_turn(view, turn);
+        &historical
+    } else {
+        view
+    };
+    let height = stack_heights[focus_identity.suit.index()];
+    ((height + 1)..focus_identity.rank.number())
+        .filter(|rank| {
+            let needed = Card::new(focus_identity.suit, Rank::ALL[usize::from(*rank - 1)]);
+            !view.hands[actor.index()].iter().any(|card| {
+                explicitly_clued.contains(&card.id)
+                    && was_clued_before(view, turn, card.id)
+                    && (card.identity == Some(needed)
+                        || IdentitySet::from_mask(card.clues.identity_mask())
+                            == IdentitySet::singleton(needed))
+            }) && !view.hands.iter().enumerate().any(|(player, hand)| {
+                // The giver cannot build the clue's connection through
+                // identities hidden in their own hand. Another observer's
+                // ability to see those cards does not change this.
+                if player == actor.index() || player == giver.index() {
+                    return false;
+                }
+                // A visible face alone is not a connector: it must be a
+                // Prompt, or reachable through successful finesse layers.
+                hand.iter().any(|card| {
+                    explicitly_clued.contains(&card.id)
+                        && was_clued_before(view, turn, card.id)
+                        && (card.identity == Some(needed)
+                            || IdentitySet::from_mask(card.clues.identity_mask())
+                                == IdentitySet::singleton(needed))
+                }) || super::interpretation::visible_finesse_connects_at(
+                    hand,
+                    needed,
+                    None,
+                    explicitly_clued,
+                    &CardSet::default(),
+                    true,
+                    stack_heights,
+                )
+            })
+        })
+        .count()
+}

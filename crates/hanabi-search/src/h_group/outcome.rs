@@ -1,0 +1,271 @@
+use hanabi_core::{Card, CardId, PlayerId};
+
+use super::IdentitySet;
+
+/// One future action established by a clue under a particular observer's
+/// knowledge. A singleton identity domain is deterministic; a larger domain
+/// records a promise without pretending that the owner knows its identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ActionCommitment {
+    pub(super) card: CardId,
+    pub(super) owner: PlayerId,
+    pub(super) identities: IdentitySet,
+}
+
+/// The complete identity superposition that a card's owner retains after a
+/// clue line. Clarity may compare two lines only when these domains agree
+/// for every explicitly or invisibly clued card.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct CluedCardSuperposition {
+    pub(super) card: CardId,
+    pub(super) owner: PlayerId,
+    pub(super) identities: IdentitySet,
+}
+
+/// What a clue causes one recipient to do with a card. This is deliberately
+/// behavioral: convention principles such as Good Touch care whether a player
+/// will try to play a duplicate, not merely whether two physical cards share
+/// an identity in the giver's view.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum RecipientCardDisposition {
+    PlayNow,
+    PlayAfterConnection,
+    KnownTrash,
+    Protected,
+}
+
+/// One causal, owner-relative consequence of a compiled clue.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct RecipientCardConsequence {
+    pub(super) card: CardId,
+    pub(super) owner: PlayerId,
+    pub(super) identities: IdentitySet,
+    pub(super) disposition: RecipientCardDisposition,
+}
+
+impl ActionCommitment {
+    pub(super) const fn exact(card: CardId, owner: PlayerId, identity: Card) -> Self {
+        Self {
+            card,
+            owner,
+            identities: IdentitySet::singleton(identity),
+        }
+    }
+}
+
+/// A clue's change to one owner's knowledge, including negative information.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct KnowledgeChange {
+    pub(super) owner: PlayerId,
+    pub(super) card: CardId,
+    pub(super) before: IdentitySet,
+    pub(super) after: IdentitySet,
+}
+
+/// Protection must hold through the owner's next decision, not only at clue time.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ProtectionEffect {
+    pub(super) owner: PlayerId,
+    pub(super) card: CardId,
+    pub(super) deadline: u32,
+}
+
+/// Structured semantic result of a clue line. Strategic principles compare
+/// this object before converting genuine preferences to numeric ordering.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct LineOutcome {
+    pub(super) knowledge_changes: Vec<KnowledgeChange>,
+    pub(super) newly_playable: Vec<(PlayerId, CardId)>,
+    pub(super) protection: Vec<ProtectionEffect>,
+    /// Protecting the old chop exposes a more valuable needed card. A
+    /// strategic cost, not grounds to reinterpret or reject the convention.
+    pub(super) worsened_chop_exposure: bool,
+    /// Publicly secured actions, used for team coverage and tempo.
+    pub(super) public_actions: Vec<ActionCommitment>,
+    /// Actions known by each card's owner, used for Clarity equivalence.
+    pub(super) owner_actions: Vec<ActionCommitment>,
+    /// Owner-visible identity domains for every clued card after the line.
+    pub(super) clued_superpositions: Vec<CluedCardSuperposition>,
+    pub(super) protected_cards: Vec<CardId>,
+    pub(super) known_trash: Vec<CardId>,
+    /// Trash whose identity is demonstrated to its owner by the immediate
+    /// actor's safe, convention-required response (e.g. Unknown Trash Discharge).
+    pub(super) demonstrated_trash: Vec<CardId>,
+    /// Canonical behavioral consequences. Aggregate metrics are derived from
+    /// this collection instead of separately reinterpreting card identities.
+    pub(super) recipient_consequences: Vec<RecipientCardConsequence>,
+    pub(super) new_connections: usize,
+    /// Number of actions in the line as interpreted by the clue recipient.
+    /// Other observer projections remain useful for owner knowledge, but must
+    /// not inflate Teamwork coverage with mutually incompatible readings.
+    pub(super) action_coverage: usize,
+    /// Cards obtained per clue, excluding automatic already-clued successors.
+    /// This is distinct from scheduled play coverage: a Save can obtain a
+    /// card without scheduling a play, and a clue can unlock older promises.
+    pub(super) clue_efficiency: usize,
+    /// Potential new acquisitions whose identities remain unavailable. Zero
+    /// demonstrated value with these dependencies is unresolved, not a 0-for-1 proof.
+    pub(super) unresolved_acquisitions: Vec<CardId>,
+    /// Total cards secured by the canonical named convention line.
+    pub(super) convention_action_count: Option<usize>,
+    /// Blind-play steps established by the canonical named interpretation.
+    /// This differs from a focus card's raw distance from its stack when a
+    /// Layered or Clandestine Finesse crosses suits.
+    pub(super) convention_connection_steps: Option<usize>,
+}
+
+impl LineOutcome {
+    /// Same protection and public line, but strictly more of that line is
+    /// understood by card owners. No card's clued domain may become broader
+    /// or incomparable, and no extra connection complexity is introduced.
+    pub(super) fn strictly_improves_owner_knowledge(&self, other: &Self) -> bool {
+        self.public_actions == other.public_actions
+            && self.protected_cards == other.protected_cards
+            && self.known_trash == other.known_trash
+            && self.new_connections <= other.new_connections
+            && self.owner_actions.len() > other.owner_actions.len()
+            && other
+                .owner_actions
+                .iter()
+                .all(|action| self.owner_actions.contains(action))
+            && self.clued_superpositions.len() == other.clued_superpositions.len()
+            && other.clued_superpositions.iter().all(|prior| {
+                self.clued_superpositions.iter().any(|now| {
+                    now.card == prior.card
+                        && now.owner == prior.owner
+                        && !now.identities.is_empty()
+                        && now.identities.intersection(prior.identities) == now.identities
+                })
+            })
+    }
+
+    pub(super) fn play_consequences(&self) -> impl Iterator<Item = &RecipientCardConsequence> {
+        self.recipient_consequences.iter().filter(|consequence| {
+            matches!(
+                consequence.disposition,
+                RecipientCardDisposition::PlayNow | RecipientCardDisposition::PlayAfterConnection
+            )
+        })
+    }
+
+    pub(super) fn protects(&self, card: CardId) -> bool {
+        self.recipient_consequences.iter().any(|consequence| {
+            consequence.card == card
+                && consequence.disposition == RecipientCardDisposition::Protected
+        })
+    }
+
+    pub(super) fn normalize(&mut self) {
+        let key =
+            |commitment: &ActionCommitment| (commitment.card.index(), commitment.owner.index());
+        self.public_actions.sort_unstable_by_key(key);
+        self.public_actions.dedup();
+        self.owner_actions.sort_unstable_by_key(key);
+        self.owner_actions.dedup();
+        self.clued_superpositions
+            .sort_unstable_by_key(|knowledge| (knowledge.card.index(), knowledge.owner.index()));
+        self.clued_superpositions.dedup();
+        self.protected_cards
+            .sort_unstable_by_key(|card| card.index());
+        self.protected_cards.dedup();
+        self.known_trash.sort_unstable_by_key(|card| card.index());
+        self.known_trash.dedup();
+        self.recipient_consequences
+            .sort_unstable_by_key(|consequence| {
+                (
+                    consequence.owner.index(),
+                    consequence.card.index(),
+                    consequence.disposition as u8,
+                )
+            });
+        self.recipient_consequences.dedup();
+    }
+
+    pub(super) fn covered_players(&self) -> usize {
+        let mut players = self
+            .play_consequences()
+            .map(|consequence| consequence.owner)
+            .collect::<Vec<_>>();
+        players.sort_unstable_by_key(|player| player.index());
+        players.dedup();
+        players.len()
+    }
+
+    pub(super) fn first_action_distance(&self, current: PlayerId, player_count: usize) -> usize {
+        self.play_consequences()
+            .map(|consequence| {
+                let distance =
+                    (consequence.owner.index() + player_count - current.index()) % player_count;
+                if distance == 0 {
+                    player_count
+                } else {
+                    distance
+                }
+            })
+            .min()
+            .unwrap_or(player_count)
+    }
+
+    pub(super) fn has_same_clarity_outcome(&self, other: &Self) -> bool {
+        self.owner_actions == other.owner_actions
+            && self.clued_superpositions == other.clued_superpositions
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hanabi_core::{Rank, Suit};
+
+    use super::*;
+
+    #[test]
+    fn clarity_requires_identical_clued_card_superpositions() {
+        let card = CardId::new(3);
+        let owner = PlayerId::new(1);
+        let action = ActionCommitment::exact(card, owner, Card::new(Suit::Red, Rank::Three));
+        let mut direct = LineOutcome {
+            owner_actions: vec![action],
+            clued_superpositions: vec![CluedCardSuperposition {
+                card,
+                owner,
+                identities: IdentitySet::singleton(Card::new(Suit::Red, Rank::Three)),
+            }],
+            ..LineOutcome::default()
+        };
+        direct.normalize();
+        let mut ambiguous = direct.clone();
+        ambiguous.clued_superpositions[0].identities =
+            IdentitySet::singleton(Card::new(Suit::Red, Rank::Three))
+                .union(IdentitySet::singleton(Card::new(Suit::Red, Rank::Four)));
+
+        assert!(!direct.has_same_clarity_outcome(&ambiguous));
+        assert!(direct.has_same_clarity_outcome(&direct.clone()));
+    }
+
+    #[test]
+    fn behavioral_consequences_drive_team_coverage() {
+        let playing = PlayerId::new(1);
+        let protected = PlayerId::new(2);
+        let outcome = LineOutcome {
+            recipient_consequences: vec![
+                RecipientCardConsequence {
+                    card: CardId::new(1),
+                    owner: playing,
+                    identities: IdentitySet::singleton(Card::new(Suit::Red, Rank::One)),
+                    disposition: RecipientCardDisposition::PlayNow,
+                },
+                RecipientCardConsequence {
+                    card: CardId::new(2),
+                    owner: protected,
+                    identities: IdentitySet::singleton(Card::new(Suit::Blue, Rank::Five)),
+                    disposition: RecipientCardDisposition::Protected,
+                },
+            ],
+            ..LineOutcome::default()
+        };
+
+        assert_eq!(outcome.covered_players(), 1);
+        assert_eq!(outcome.first_action_distance(PlayerId::new(0), 4), 1);
+        assert!(outcome.protects(CardId::new(2)));
+    }
+}

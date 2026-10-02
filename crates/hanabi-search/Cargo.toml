@@ -1,0 +1,18 @@
+[package]
+name = "hanabi-search"
+version = "0.1.0"
+description = "Belief-state planning and convention inference for Hanabi Engine"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hanabi-core = { path = "../hanabi-core" }
+
+[dev-dependencies]
+hanabi-protocol = { path = "../hanabi-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

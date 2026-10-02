@@ -1,0 +1,571 @@
+//! Recorded engine-failure reproductions, not validated optimal games.
+//! See docs/testing.md for the provenance and assertion policy.
+use hanabi_protocol::HanabiLiveReplay;
+use hanabi_search::{HGroupProfile, InformationSet, SupportedConvention, WorldCount};
+
+/// User-reviewed p4v0s28 turn 1 (September 10): Alice's own b1/y1 layer
+/// cannot connect her clue to Donald's y4, even though Bob can see it.
+/// <https://hanabi.github.io/level-23/#the-4-charm>
+#[test]
+fn four_charm_ignores_connectors_in_the_clue_givers_hand() {
+    let replay = HanabiLiveReplay::from_json(
+        r#"{"seed":"p4v0s28","players":["Alice","Bob","Cathy","Donald"],"actions":[{"type":3,"target":3,"value":4}]}"#,
+    ).unwrap();
+    let state = replay.state_at_turn(1).unwrap();
+    let bob = hanabi_core::PlayerId::new(1);
+    let fourth_position = hanabi_core::CardId::new(4);
+    for observer in [hanabi_core::PlayerId::new(0), bob] {
+        let view = state.view_for(observer).unwrap();
+        let information = InformationSet::new(&view).unwrap();
+        let analysis =
+            SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+        let hanabi_search::ConventionInferences::HGroup(ref inferred) = analysis.inferences else {
+            unreachable!();
+        };
+        assert!(
+            inferred.signals.iter().any(|signal| {
+                signal.turn == 0
+                    && signal.kind == hanabi_search::HGroupMoveKind::Charm
+                    && signal.target == Some(bob)
+                    && signal.cards.contains(&fourth_position)
+            }),
+            "observer {observer:?}: {inferred:#?}"
+        );
+        if observer == bob {
+            assert_eq!(
+                analysis.preferred_action,
+                Some(hanabi_core::Action::Play(fourth_position))
+            );
+        }
+    }
+}
+
+/// A Fix must actually repair the recipient's interpretation, not just match
+/// a repair obligation seen by the giver. Here 4s instead promises a false r4.
+/// <https://hanabi.github.io/level-3/#the-fix-clue>
+#[test]
+fn a_fix_candidate_must_pass_recipient_safety_validation() {
+    let replay =
+        HanabiLiveReplay::from_json(include_str!("fixtures/self-play-p4v0s22.json")).unwrap();
+    let state = replay.state_at_turn(22).unwrap();
+    let view = state.view_for(state.current_player()).unwrap();
+    let information = InformationSet::new(&view).unwrap();
+    let analysis =
+        SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+    let bad_fix = hanabi_core::Action::Clue {
+        target: hanabi_core::PlayerId::new(0),
+        clue: hanabi_core::Clue::Rank(hanabi_core::Rank::Four),
+    };
+    assert!(
+        analysis
+            .actions
+            .iter()
+            .all(|candidate| candidate.action != bad_fix),
+        "{analysis:#?}"
+    );
+}
+
+/// A connection's blind play cannot become a new Priority signal merely
+/// because the history reducer has advanced the connection after that play.
+/// <https://hanabi.github.io/level-25/#the-priority-prompt--the-priority-finesse>
+#[test]
+fn completing_a_blind_play_does_not_retroactively_trigger_priority() {
+    let replay =
+        HanabiLiveReplay::from_json(include_str!("fixtures/self-play-p4v0s16-priority.json"))
+            .unwrap();
+    let state = replay.state_at_turn(4).unwrap();
+    let view = state.view_for(hanabi_core::PlayerId::new(1)).unwrap();
+    let information = InformationSet::new(&view).unwrap();
+    let analysis =
+        SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+    let hanabi_search::ConventionInferences::HGroup(inferred) = analysis.inferences else {
+        unreachable!();
+    };
+    assert!(
+        !inferred.signals.iter().any(|signal| {
+            signal.turn == 3 && signal.kind == hanabi_search::HGroupMoveKind::Priority
+        }),
+        "{inferred:#?}"
+    );
+}
+
+/// Recorded p4v0s6 turn 47, not an optimal-move oracle. Bob's unclued chop
+/// is actually g5, but a 5 clue can still be a Save from his perspective.
+/// <https://hanabi.github.io/beginner/5-save/>
+/// <https://hanabi.github.io/beginner/clue-interpretation/#clue-interpretation-algorithm>
+#[test]
+fn playable_five_on_chop_remains_admissible_as_a_five_save() {
+    let replay =
+        HanabiLiveReplay::from_json(include_str!("fixtures/self-play-p4v0s6.json")).unwrap();
+    // Red on turn 37 moves both unclued cards to its right, including an
+    // actual g1. A different observer must not dismiss the move merely
+    // because another chop-moved card is visibly the duplicate y4.
+    let after_chop_move = replay.state_at_turn(37).unwrap();
+    for observer in [0, 1, 2, 3] {
+        let view = after_chop_move
+            .view_for(hanabi_core::PlayerId::new(observer))
+            .unwrap();
+        let information = InformationSet::new(&view).unwrap();
+        let analysis =
+            SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+        let hanabi_search::ConventionInferences::HGroup(inferred) = analysis.inferences else {
+            unreachable!();
+        };
+        for card in [18, 26] {
+            assert!(
+                inferred
+                    .chop_moved
+                    .contains(&hanabi_core::CardId::new(card)),
+                "observer {observer}, card {card}"
+            );
+        }
+    }
+    let state = replay.state_at_turn(46).unwrap();
+    let view = state.view_for(state.current_player()).unwrap();
+    let information = InformationSet::new(&view).unwrap();
+    let analysis =
+        SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+    let save = hanabi_core::Action::Clue {
+        target: hanabi_core::PlayerId::new(1),
+        clue: hanabi_core::Clue::Rank(hanabi_core::Rank::Five),
+    };
+    assert!(
+        analysis
+            .actions
+            .iter()
+            .any(|candidate| candidate.action == save),
+        "{analysis:#?}"
+    );
+}
+
+#[test]
+fn donald_completes_the_opening_layer_instead_of_fixing_a_projected_branch() {
+    let replay =
+        HanabiLiveReplay::from_json(include_str!("fixtures/self-play-p4v0s10-fix.json")).unwrap();
+    let state = replay.state_at_turn(3).unwrap();
+    let view = state.view_for(state.current_player()).unwrap();
+    let information = InformationSet::new(&view).unwrap();
+    let analysis =
+        SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+    assert!(
+        analysis
+            .actions
+            .iter()
+            .any(|candidate| candidate.action
+                == hanabi_core::Action::Play(hanabi_core::CardId::new(15))),
+        "{analysis:#?}"
+    );
+}
+
+#[test]
+fn cathys_turn_23_repairs_alices_layer_with_purple() {
+    let replay =
+        HanabiLiveReplay::from_json(include_str!("fixtures/self-play-p4v0s10-fix.json")).unwrap();
+    let state = replay.state_at_turn(22).unwrap();
+    let view = state.view_for(state.current_player()).unwrap();
+    let information = InformationSet::new(&view).unwrap();
+    let analysis =
+        SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+    assert_eq!(
+        analysis.preferred_action,
+        Some(hanabi_core::Action::Clue {
+            target: hanabi_core::PlayerId::new(0),
+            clue: hanabi_core::Clue::Suit(hanabi_core::Suit::Purple)
+        }),
+        "{analysis:#?}"
+    );
+    // Rank 3 focuses the other slot; it does not repair the blind-play note.
+    assert!(!analysis.actions.iter().any(|candidate| candidate.action
+        == hanabi_core::Action::Clue {
+            target: hanabi_core::PlayerId::new(0),
+            clue: hanabi_core::Clue::Rank(hanabi_core::Rank::Three),
+        }));
+    for (clue, remains_due) in [
+        (hanabi_core::Clue::Suit(hanabi_core::Suit::Purple), false),
+        (hanabi_core::Clue::Rank(hanabi_core::Rank::Three), true),
+    ] {
+        let mut after = state.clone();
+        after
+            .apply(hanabi_core::Action::Clue {
+                target: hanabi_core::PlayerId::new(0),
+                clue,
+            })
+            .unwrap();
+        let owner = after.view_for(hanabi_core::PlayerId::new(0)).unwrap();
+        let information = InformationSet::new(&owner).unwrap();
+        let analysis =
+            SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+        let hanabi_search::ConventionInferences::HGroup(inferred) = analysis.inferences else {
+            panic!("expected H-Group")
+        };
+        assert_eq!(
+            inferred.playable_now.contains(&hanabi_core::CardId::new(2)),
+            remains_due,
+            "{clue:?}: {inferred:#?}"
+        );
+    }
+}
+
+#[test]
+fn recipient_fallback_cannot_reintroduce_a_known_duplicate_red_one() {
+    let replay = HanabiLiveReplay::from_json(r#"{"seed":"p4v0s10","players":["Alice","Bob","Cathy","Donald"],"actions":[{"type":2,"target":2,"value":0}]}"#).unwrap();
+    let state = replay.state_at_turn(1).unwrap();
+    let view = state.view_for(state.current_player()).unwrap();
+    let information = InformationSet::new(&view).unwrap();
+    let analysis =
+        SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+    let bad_clue = hanabi_core::Action::Clue {
+        target: hanabi_core::PlayerId::new(3),
+        clue: hanabi_core::Clue::Suit(hanabi_core::Suit::Red),
+    };
+    assert!(
+        analysis
+            .actions
+            .iter()
+            .all(|candidate| candidate.action != bad_clue),
+        "{analysis:#?}"
+    );
+}
+
+#[test]
+fn opening_yellow_cannot_prompt_its_newly_touched_collateral() {
+    let replay = HanabiLiveReplay::from_json(r#"{"seed":"p4v0s7","players":["Alice","Bob","Cathy","Donald"],"actions":[{"type":2,"target":3,"value":1}]}"#).unwrap();
+    let state = replay.state_at_turn(0).unwrap();
+    let view = state.view_for(state.current_player()).unwrap();
+    let information = InformationSet::new(&view).unwrap();
+    let analysis =
+        SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+    let bad_clue = hanabi_core::Action::Clue {
+        target: hanabi_core::PlayerId::new(3),
+        clue: hanabi_core::Clue::Suit(hanabi_core::Suit::Yellow),
+    };
+    assert!(
+        analysis
+            .actions
+            .iter()
+            .all(|candidate| candidate.action != bad_clue),
+        "{analysis:#?}"
+    );
+    let state = replay.state_at_turn(1).unwrap();
+    for observer in 0..4 {
+        let view = state
+            .view_for(hanabi_core::PlayerId::new(observer))
+            .unwrap();
+        let information = InformationSet::new(&view).unwrap();
+        let analysis =
+            SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+        let hanabi_search::ConventionInferences::HGroup(inferred) = analysis.inferences else {
+            panic!("expected H-Group")
+        };
+        assert!(
+            !inferred.signals.iter().any(|signal| signal.turn == 0
+                && signal.kind == hanabi_search::HGroupMoveKind::Prompt
+                && signal.cards.contains(&hanabi_core::CardId::new(14))),
+            "observer {observer}: {inferred:#?}"
+        );
+    }
+}
+
+#[test]
+fn low_score_five_save_protects_bobs_shifted_chop() {
+    let replay =
+        HanabiLiveReplay::from_json(include_str!("fixtures/self-play-p4v0s15.json")).unwrap();
+    let mut state = replay.state_at_turn(8).unwrap();
+    let save = hanabi_core::Action::Clue {
+        target: hanabi_core::PlayerId::new(1),
+        clue: hanabi_core::Clue::Rank(hanabi_core::Rank::Five),
+    };
+    let view = state.view_for(state.current_player()).unwrap();
+    let information = InformationSet::new(&view).unwrap();
+    let analysis =
+        SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+    // The reported bug was a missing Save candidate, not proof that this
+    // action is strategically optimal against every alternative.
+    assert!(
+        analysis
+            .actions
+            .iter()
+            .any(|candidate| candidate.action == save),
+        "{analysis:#?}"
+    );
+    state.apply(save).unwrap();
+    let view = state.view_for(state.current_player()).unwrap();
+    let information = InformationSet::new(&view).unwrap();
+    let analysis =
+        SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+    let hanabi_search::ConventionInferences::HGroup(inferred) = analysis.inferences else {
+        panic!("expected H-Group")
+    };
+    assert!(
+        inferred
+            .cards
+            .iter()
+            .find(|card| card.card == hanabi_core::CardId::new(5))
+            .unwrap()
+            .saved
+    );
+    assert!(
+        !inferred
+            .signals
+            .iter()
+            .any(|signal| signal.turn == 8
+                && signal.kind == hanabi_search::HGroupMoveKind::FiveStall)
+    );
+}
+
+#[test]
+fn good_touch_exclusion_survives_a_gentlemans_discard() {
+    let replay =
+        HanabiLiveReplay::from_json(include_str!("fixtures/self-play-p4v0s15.json")).unwrap();
+    let state = replay.state_at_turn(48).unwrap();
+    let view = state.view_for(hanabi_core::PlayerId::new(0)).unwrap();
+    let information = InformationSet::new(&view).unwrap();
+    let analysis =
+        SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+    let hanabi_search::ConventionInferences::HGroup(inferred) = analysis.inferences else {
+        panic!("expected H-Group");
+    };
+    let blue_four = hanabi_core::Card::new(hanabi_core::Suit::Blue, hanabi_core::Rank::Four);
+    assert!(inferred.signals.iter().any(|signal| signal.turn == 47
+        && signal.kind == hanabi_search::HGroupMoveKind::GentlemansDiscard
+        && signal.cards == [hanabi_core::CardId::new(41)]
+        && signal.identity == Some(blue_four)));
+    assert_eq!(
+        inferred
+            .cards
+            .iter()
+            .find(|card| card.card == hanabi_core::CardId::new(41))
+            .unwrap()
+            .identities
+            .iter()
+            .collect::<Vec<_>>(),
+        vec![blue_four]
+    );
+    for id in [19, 21] {
+        assert!(
+            !inferred
+                .cards
+                .iter()
+                .find(|card| card.card == hanabi_core::CardId::new(id))
+                .unwrap()
+                .identities
+                .contains(blue_four)
+        );
+    }
+    assert_ne!(
+        information.world_count_up_to(&analysis.belief_constraints, 1),
+        WorldCount::Exact(0)
+    );
+}
+
+#[test]
+fn off_position_visible_one_does_not_delay_cathys_finesse() {
+    let replay =
+        HanabiLiveReplay::from_json(include_str!("fixtures/self-play-p4v0s20.json")).unwrap();
+    let state = replay.state_at_turn(10).unwrap();
+    let view = state.view_for(state.current_player()).unwrap();
+    let information = InformationSet::new(&view).unwrap();
+    let analysis =
+        SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+    assert_eq!(
+        analysis.preferred_action,
+        Some(hanabi_core::Action::Play(hanabi_core::CardId::new(11))),
+        "{analysis:#?}"
+    );
+    let hanabi_search::ConventionInferences::HGroup(inferred) = analysis.inferences else {
+        panic!("expected H-Group");
+    };
+    assert_eq!(
+        inferred
+            .connection
+            .map(|connection| (connection.card, connection.identity)),
+        Some((
+            hanabi_core::CardId::new(11),
+            hanabi_core::Card::new(hanabi_core::Suit::Yellow, hanabi_core::Rank::One),
+        ))
+    );
+}
+
+#[test]
+fn independently_known_prompt_connector_does_not_force_an_ambiguous_card_first() {
+    for (json, turn) in [
+        (include_str!("fixtures/self-play-p4v0s107.json"), 48),
+        (include_str!("fixtures/self-play-p4v0s116.json"), 38),
+    ] {
+        let replay = HanabiLiveReplay::from_json(json).unwrap();
+        let state = replay.state_at_turn(turn).unwrap();
+        let view = state.view_for(state.current_player()).unwrap();
+        let information = InformationSet::new(&view).unwrap();
+        let analysis =
+            SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+        assert_ne!(
+            information.world_count_up_to(&analysis.belief_constraints, 1),
+            WorldCount::Exact(0),
+            "turn {turn}: {json}"
+        );
+    }
+}
+
+#[test]
+fn a_save_must_not_knowingly_touch_a_useful_duplicate() {
+    let replay =
+        HanabiLiveReplay::from_json(include_str!("fixtures/self-play-p4v0s34.json")).unwrap();
+    let state = replay.state_at_turn(25).unwrap();
+    let view = state.view_for(state.current_player()).unwrap();
+    let information = InformationSet::new(&view).unwrap();
+    let analysis =
+        SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+    let bad = hanabi_core::Action::Clue {
+        target: hanabi_core::PlayerId::new(2),
+        clue: hanabi_core::Clue::Rank(hanabi_core::Rank::Four),
+    };
+    assert!(
+        analysis
+            .actions
+            .iter()
+            .all(|candidate| candidate.action != bad)
+    );
+}
+
+#[test]
+fn a_clue_cannot_continue_the_connection_it_just_created() {
+    let replay =
+        HanabiLiveReplay::from_json(include_str!("fixtures/self-play-p4v0s20.json")).unwrap();
+    let state = replay.state_at_turn(13).unwrap();
+    let view = state.view_for(state.current_player()).unwrap();
+    let information = InformationSet::new(&view).unwrap();
+    let analysis =
+        SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+    let hanabi_search::ConventionInferences::HGroup(inferred) = analysis.inferences else {
+        panic!("expected H-Group");
+    };
+    assert!(!inferred.signals.iter().any(|signal| signal.turn == 10
+        && signal.kind == hanabi_search::HGroupMoveKind::ContinuationClue));
+}
+
+#[test]
+fn transfer_and_clarity_do_not_invent_duplicate_cards() {
+    for (json, turn) in [
+        (include_str!("fixtures/self-play-p4v0s4.json"), 43),
+        (include_str!("fixtures/self-play-p4v0s12.json"), 26),
+        (include_str!("fixtures/self-play-p4v0s16-endgame.json"), 61),
+        (include_str!("fixtures/self-play-p4v0s24.json"), 51),
+        (include_str!("fixtures/self-play-p4v0s37.json"), 53),
+        (include_str!("fixtures/self-play-p4v0s56.json"), 40),
+        (include_str!("fixtures/self-play-p4v0s18.json"), 37),
+    ] {
+        let replay = HanabiLiveReplay::from_json(json).unwrap();
+        let state = replay.state_at_turn(turn).unwrap();
+        let view = state.view_for(state.current_player()).unwrap();
+        let information = InformationSet::new(&view).unwrap();
+        let analysis =
+            SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+        assert_ne!(
+            information.world_count_up_to(&analysis.belief_constraints, 1),
+            WorldCount::Exact(0),
+            "turn {turn}: {json}"
+        );
+    }
+}
+
+/// Diagnostic reproduction, not an expert assertion about optimal play.
+#[test]
+#[ignore = "Unresolved giver/recipient Clarity disagreement: blue at turn 50 swaps the two blue identities"]
+fn self_play_blue_clarity_disagreement_remains_unresolved() {
+    let replay =
+        HanabiLiveReplay::from_json(include_str!("fixtures/self-play-p4v0s44.json")).unwrap();
+    let state = replay.state_at_turn(59).unwrap();
+    let view = state.view_for(state.current_player()).unwrap();
+    let information = InformationSet::new(&view).unwrap();
+    let analysis =
+        SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+    assert_ne!(
+        information.world_count_up_to(&analysis.belief_constraints, 1),
+        WorldCount::Exact(0)
+    );
+}
+
+#[test]
+fn public_clues_and_forced_discards_do_not_leave_impossible_elimination_claims() {
+    for (json, turn) in [
+        (include_str!("fixtures/self-play-p4v0s11.json"), 35),
+        (include_str!("fixtures/self-play-p4v0s29.json"), 36),
+    ] {
+        let replay = HanabiLiveReplay::from_json(json).unwrap();
+        let state = replay.state_at_turn(turn).unwrap();
+        let view = state.view_for(state.current_player()).unwrap();
+        let information = InformationSet::new(&view).unwrap();
+        let analysis =
+            SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+        assert_ne!(
+            information.world_count_up_to(&analysis.belief_constraints, 1),
+            WorldCount::Exact(0)
+        );
+    }
+}
+
+#[test]
+fn impossible_clue_obligation_retains_an_emergency_action() {
+    let replay =
+        HanabiLiveReplay::from_json(include_str!("fixtures/self-play-p4v0s25.json")).unwrap();
+    let state = replay.state_at_turn(23).unwrap();
+    let view = state.view_for(state.current_player()).unwrap();
+    let information = InformationSet::new(&view).unwrap();
+    let analysis =
+        SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+    assert!(!analysis.actions.is_empty());
+    assert!(
+        analysis
+            .actions
+            .iter()
+            .all(|candidate| view.legal_actions().contains(&candidate.action))
+    );
+}
+
+#[test]
+fn recorded_hard_three_bluff_keeps_a_consistent_belief() {
+    let replay =
+        HanabiLiveReplay::from_json(include_str!("fixtures/self-play-p4v0s14.json")).unwrap();
+    let state = replay.state_at_turn(16).unwrap();
+    let view = state.view_for(state.current_player()).unwrap();
+    let information = InformationSet::new(&view).unwrap();
+    let analysis =
+        SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+    assert_ne!(
+        information.world_count_up_to(&analysis.belief_constraints, 1),
+        WorldCount::Exact(0)
+    );
+}
+
+#[test]
+fn pending_connection_does_not_remove_required_clues() {
+    let replay =
+        HanabiLiveReplay::from_json(include_str!("fixtures/self-play-p4v0s16.json")).unwrap();
+    let state = replay.state_at_turn(23).unwrap();
+    let view = state.view_for(state.current_player()).unwrap();
+    let information = InformationSet::new(&view).unwrap();
+    let analysis =
+        SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+    assert!(!analysis.actions.is_empty());
+    assert!(
+        analysis
+            .actions
+            .iter()
+            .any(|candidate| Some(candidate.action) == analysis.preferred_action)
+    );
+}
+
+#[test]
+fn discarding_two_trash_ones_does_not_promise_a_third_copy() {
+    let replay =
+        HanabiLiveReplay::from_json(include_str!("fixtures/self-play-p4v0s5.json")).unwrap();
+    let state = replay.state_at_turn(51).unwrap();
+    let view = state.view_for(state.current_player()).unwrap();
+    let information = InformationSet::new(&view).unwrap();
+    let analysis =
+        SupportedConvention::HGroup(HGroupProfile::Max).analyze(information.deductions());
+    assert_ne!(
+        information.world_count_up_to(&analysis.belief_constraints, 4096),
+        WorldCount::Exact(0)
+    );
+}
