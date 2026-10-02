@@ -58,6 +58,7 @@ def write_trace(root: Path, expected_response: dict[str, Any]) -> None:
     game = {
         "schemaVersion": 1,
         "tableID": 7,
+        "generation": 12,
         "playerNames": ["Bot", "Alice"],
         "ourPlayerIndex": 0,
         "spectating": False,
@@ -65,7 +66,7 @@ def write_trace(root: Path, expected_response: dict[str, Any]) -> None:
         "options": {"variantName": "No Variant"},
         "configSnapshot": {"schemaVersion": 1, "hGroupLevel": "3"},
     }
-    (root / "tables" / "7" / "game.json").write_text(
+    (root / "tables" / "7" / "game-000012.json").write_text(
         json.dumps(game),
         encoding="utf-8",
     )
@@ -92,7 +93,7 @@ def write_trace(root: Path, expected_response: dict[str, Any]) -> None:
         "responseHash": semantic_response_fingerprint(expected_response),
         "status": "sent",
     }
-    (root / "tables" / "7" / "decisions.jsonl").write_text(
+    (root / "tables" / "7" / "decisions-000012.jsonl").write_text(
         json.dumps(record) + "\n",
         encoding="utf-8",
     )
