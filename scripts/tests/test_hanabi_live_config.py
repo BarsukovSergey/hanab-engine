@@ -49,7 +49,7 @@ class BotConfigStoreTests(unittest.TestCase):
         self.assertEqual(snapshot.h_group_level, "3")
         self.assertEqual(updated.h_group_level, "max")
         with self.assertRaises(FrozenInstanceError):
-            snapshot.h_group_level = "4"  # type: ignore[misc]
+            setattr(snapshot, "h_group_level", "4")
 
     def test_rejects_unknown_schema_version(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
