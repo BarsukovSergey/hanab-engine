@@ -14,6 +14,7 @@ from hanabi_live_journal import (
     game_record,
     semantic_response_fingerprint,
 )
+from hanabi_live_turn_trace import normalize_turn_trace
 
 TRACE_SCHEMA_VERSION = 1
 
@@ -153,6 +154,18 @@ class TraceRecorder:
         self._write_json(path, response)
         context["responseHash"] = semantic_response_fingerprint(response)
         context["response"] = self._relative(path)
+        turn_trace_path = self._decision_path(context, "turn-trace.json")
+        self._write_json(
+            turn_trace_path,
+            normalize_turn_trace(
+                decision_key=context["decisionKey"],
+                snapshot_path=context["snapshot"],
+                response_path=context["response"],
+                response_hash=context["responseHash"],
+                response=response,
+            ),
+        )
+        context["turnTrace"] = self._relative(turn_trace_path)
         self._record_event(
             "engineResponse",
             context,
@@ -160,6 +173,7 @@ class TraceRecorder:
                 "attempt": attempt,
                 "response": self._relative(path),
                 "responseHash": context["responseHash"],
+                "turnTrace": context["turnTrace"],
             },
         )
 
@@ -208,6 +222,8 @@ class TraceRecorder:
         }
         if "response" in context:
             decision_record["response"] = context["response"]
+        if "turnTrace" in context:
+            decision_record["turnTrace"] = context["turnTrace"]
         self._append_jsonl(
             context["decisionsPath"],
             decision_record,
