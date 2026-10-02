@@ -578,6 +578,24 @@ class BotConcurrencyTests(unittest.TestCase):
         finally:
             bot.shutdown()
 
+    def test_saved_level_is_not_passed_when_h_group_is_disabled(self) -> None:
+        bot, _socket = make_bot(
+            RecordingEngine,
+            engine_command=[
+                "fake-engine",
+                "live-session",
+                "--convention",
+                "none",
+            ],
+        )
+        try:
+            bot.persistent_config = bridge.PersistentBotConfig(h_group_level="3")
+            bot.handle_init(init_message(7))
+            command = bot._engine_command_for_game(bot.games[7])
+            self.assertNotIn("--h-group-level", command)
+        finally:
+            bot.shutdown()
+
     def test_uses_initial_snapshot_then_only_new_actions(self) -> None:
         bot, socket = make_bot(RecordingEngine)
         try:
