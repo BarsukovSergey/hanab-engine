@@ -56,18 +56,13 @@ def semantic_response_fingerprint(response: dict[str, Any]) -> str:
 
 
 def history_fingerprint(snapshot: dict[str, Any]) -> str:
-    """Fingerprint the replay-relevant public state, excluding live table identity."""
+    """Fingerprint semantic public history, excluding transport/session identity."""
+    players = snapshot.get("playerNames", [])
     replay_state = {
-        key: snapshot[key]
-        for key in (
-            "playerNames",
-            "ourPlayerIndex",
-            "spectating",
-            "replay",
-            "options",
-            "actions",
-        )
-        if key in snapshot
+        "playerCount": len(players) if isinstance(players, list) else players,
+        "ourPlayerIndex": snapshot.get("ourPlayerIndex"),
+        "options": snapshot.get("options", {}),
+        "actions": snapshot.get("actions", []),
     }
     return json_fingerprint(replay_state)
 
