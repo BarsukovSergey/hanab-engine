@@ -25,6 +25,7 @@ from hanabi_live_engine import (
     validate_engine_binary,
 )
 from hanabi_live_game import LiveGame
+from hanabi_live_journal import DecisionKey, decision_key
 from hanabi_live_trace import TraceRecorder, close_log_file, configure_log_file, log
 
 if TYPE_CHECKING:
@@ -494,15 +495,18 @@ class HanabiEngineBot:
                 or not game.action_list_loaded
                 or game.terminal
                 or game.current_player != int(game.our_player_index)
-                or game.last_decided_turn == game.turn
                 or game.in_flight
             ):
                 return
-            game.in_flight = True
             turn = int(game.turn)
             action_count = len(game.actions)
             generation = int(game.generation)
             snapshot = game.snapshot(action_count)
+            key = decision_key(table_id, turn, snapshot)
+            if game.last_decision_key == key:
+                return
+            config_snapshot = game.config_snapshot.to_record()
+            game.in_flight = True
         try:
             self.executor.submit(
                 self._decide,
@@ -510,7 +514,9 @@ class HanabiEngineBot:
                 turn,
                 action_count,
                 generation,
+                key,
                 snapshot,
+                config_snapshot,
             )
         except RuntimeError:
             with self.lock:
@@ -524,7 +530,9 @@ class HanabiEngineBot:
         turn: int,
         action_count: int,
         generation: int,
+        key: DecisionKey,
         snapshot: dict[str, Any],
+        config_snapshot: dict[str, Any],
     ) -> None:
         trace_context = None
         try:
@@ -535,6 +543,7 @@ class HanabiEngineBot:
                 action_count,
                 generation,
                 snapshot,
+                config_snapshot,
             )
             engine_response = self._request_action(
                 table_id,
@@ -546,7 +555,13 @@ class HanabiEngineBot:
             if not isinstance(action_value, dict):
                 raise EngineProcessError("engine response action is not a JSON object")
             action = action_value
-            current = self._send_current_action(table_id, turn, generation, action)
+            current = self._send_current_action(
+                table_id,
+                turn,
+                generation,
+                key,
+                action,
+            )
             if not current:
                 log(f"Discarding stale engine result for table {table_id}, turn {turn}.")
                 if trace_context is not None:
@@ -580,18 +595,30 @@ class HanabiEngineBot:
                     game.in_flight = False
 
     def _send_current_action(
-        self, table_id: int, turn: int, generation: int, action: dict[str, Any]
+        self,
+        table_id: int,
+        turn: int,
+        generation: int,
+        expected_key: DecisionKey,
+        action: dict[str, Any],
     ) -> bool:
-        """Serialize validation and submission against session/level/turn updates."""
+        """Serialize submission against the exact public history it was planned for."""
         with self.lock:
             game = self.games.get(table_id)
+            if game is None:
+                return False
+            current_key = decision_key(
+                table_id,
+                int(game.turn),
+                game.snapshot(len(game.actions)),
+            )
             if (
-                game is None
-                or game.generation != generation
+                game.generation != generation
                 or game.turn != turn
+                or current_key != expected_key
                 or game.current_player != game.our_player_index
                 or game.terminal
-                or game.last_decided_turn == turn
+                or game.last_decision_key == expected_key
                 or self.stop_event.is_set()
             ):
                 return False
@@ -599,7 +626,7 @@ class HanabiEngineBot:
                 raise EngineProcessError("engine response targets the wrong table")
             log(f"Table {table_id}, turn {turn}: sending {action}")
             self.send("action", action)
-            game.last_decided_turn = turn
+            game.last_decision_key = expected_key
             return True
 
     def _request_action(

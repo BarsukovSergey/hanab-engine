@@ -17,6 +17,12 @@ class GameConfigSnapshot:
     schema_version: int
     h_group_level: str | None
 
+    def to_record(self) -> dict[str, Any]:
+        return {
+            "schemaVersion": self.schema_version,
+            "hGroupLevel": self.h_group_level,
+        }
+
 
 @dataclass(frozen=True)
 class PersistentBotConfig:

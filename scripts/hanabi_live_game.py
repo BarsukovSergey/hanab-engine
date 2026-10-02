@@ -5,6 +5,7 @@ from typing import Any
 
 from hanabi_live_config import GameConfigSnapshot
 from hanabi_live_engine import EngineSession
+from hanabi_live_journal import DecisionKey
 
 @dataclass
 class LiveGame:
@@ -28,7 +29,7 @@ class LiveGame:
     current_player: int = 0
     terminal: bool = False
     in_flight: bool = False
-    last_decided_turn: int | None = None
+    last_decision_key: DecisionKey | None = None
     synced_actions: int = 0
     engine_initialized: bool = False
     engine: EngineSession | None = None
@@ -49,7 +50,7 @@ class LiveGame:
         self.current_player = 0
         self.terminal = False
         self.in_flight = False
-        self.last_decided_turn = None
+        self.last_decision_key = None
         for action in actions:
             self.update_progress(action)
 

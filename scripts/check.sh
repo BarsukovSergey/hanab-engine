@@ -177,8 +177,9 @@ run_check 'Python compilation' .venv/bin/python -m compileall -q scripts
 echo 'Running Python tests...'
 run_check 'Python tests' .venv/bin/python -W error::ResourceWarning -m unittest discover -s scripts/tests -v
 
-echo 'Checking the Hanabi Live bot CLI...'
+echo 'Checking the Hanabi Live CLIs...'
 run_check 'Bot CLI' bash -c '.venv/bin/python scripts/hanabi_live_bot.py --help >/dev/null'
+run_check 'Parity CLI' bash -c '.venv/bin/python scripts/hanabi_live_verify.py --help >/dev/null'
 
 echo 'Checking workspace-wide dead public code...'
 run_check 'Dead public code' cargo +1.97.1 hawk check \

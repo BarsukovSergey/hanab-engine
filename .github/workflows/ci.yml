@@ -48,8 +48,10 @@ jobs:
       - name: Run Python tests
         run: .venv/bin/python -W error::ResourceWarning -m unittest discover -s scripts/tests -v
 
-      - name: Check Hanabi Live bot CLI
-        run: .venv/bin/python scripts/hanabi_live_bot.py --help >/dev/null
+      - name: Check Hanabi Live CLIs
+        run: |
+          .venv/bin/python scripts/hanabi_live_bot.py --help >/dev/null
+          .venv/bin/python scripts/hanabi_live_verify.py --help >/dev/null
 
   quality:
     name: Build, test, and lint
