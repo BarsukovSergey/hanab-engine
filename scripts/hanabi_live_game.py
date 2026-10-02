@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from hanabi_live_config import GameConfigSnapshot
 from hanabi_live_engine import EngineSession
 
 @dataclass
@@ -16,8 +17,12 @@ class LiveGame:
     replay: bool
     options: dict[str, Any]
     generation: int
-    h_group_level: str | None
+    config_snapshot: GameConfigSnapshot
     actions: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def h_group_level(self) -> str | None:
+        return self.config_snapshot.h_group_level
     action_list_loaded: bool = False
     turn: int = 0
     current_player: int = 0
