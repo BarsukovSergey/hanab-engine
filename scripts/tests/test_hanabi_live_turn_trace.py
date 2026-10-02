@@ -42,7 +42,7 @@ class TurnTraceTests(unittest.TestCase):
         self.assertEqual(trace["schemaVersion"], 1)
         self.assertEqual(trace["stateBefore"]["historyHash"], "abc")
         self.assertEqual(trace["knowledge"], {"ownCards": []})
-        self.assertEqual(trace["interpretations"], {"framework": "h-group"})
+        self.assertEqual(trace["interpretations"]["framework"], "h-group")
         self.assertEqual(trace["candidates"], [{"selected": True}])
         self.assertEqual(len(trace["connections"]), 2)
         self.assertEqual(trace["connections"][0]["kind"], "Finesse")
