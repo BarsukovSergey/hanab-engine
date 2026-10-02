@@ -86,12 +86,14 @@ def decision_key(
 
 def game_record(
     table_id: int,
+    generation: int,
     snapshot: dict[str, Any],
     config_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "schemaVersion": JOURNAL_SCHEMA_VERSION,
         "tableID": table_id,
+        "generation": generation,
         "playerNames": snapshot.get("playerNames", []),
         "ourPlayerIndex": snapshot.get("ourPlayerIndex"),
         "spectating": snapshot.get("spectating", False),
