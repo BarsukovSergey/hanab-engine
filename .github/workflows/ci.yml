@@ -48,13 +48,15 @@ jobs:
       - name: Run Python tests
         run: .venv/bin/python -W error::ResourceWarning -m unittest discover -s scripts/tests -v
 
-      - name: Check Hanabi Live bot CLI
-        run: .venv/bin/python scripts/hanabi_live_bot.py --help >/dev/null
+      - name: Check Hanabi Live CLIs
+        run: |
+          .venv/bin/python scripts/hanabi_live_bot.py --help >/dev/null
+          .venv/bin/python scripts/hanabi_live_verify.py --help >/dev/null
 
   quality:
-    name: Build, test, and lint
+    name: Fast build, lint, and checks
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
 
     steps:
       - name: Check out repository
@@ -74,11 +76,6 @@ jobs:
       - name: Install formatting dependencies
         run: npm ci --ignore-scripts
 
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@7b8d4719ee4aaa279bdf55df38dacb9ebfe12a6c # v2.87.6
-        with:
-          tool: nextest@0.9.143
-
       - name: Install Python development dependencies
         run: |
           python3 -m venv .venv
@@ -93,8 +90,8 @@ jobs:
             https://github.com/astral-sh/hawk/releases/download/0.1.10/cargo-hawk-installer.sh \
             | sh
 
-      - name: Build, test, and lint
-        run: scripts/check.sh
+      - name: Build, lint, and fast checks
+        run: scripts/check.sh --fast
 
   exhaustive-h-group-profiles:
     name: Exhaustive H-Group profile matrix

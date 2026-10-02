@@ -5,31 +5,49 @@ Updated: 2026-10-02
 ## Current work
 
 - Milestone: M1 - working hanab.live baseline
-- Branch: `m1/persistent-config`
-- Draft PR: #1
+- Current branch: `m1/journal-parity`
+- Current draft PR: #2
 - Base: `main`
 - Upstream baseline: `Zamiell/hanabi-engine@be00e7852571258af7847af35646c3571f620c64`
 
-## Implemented in PR #1
+## Merged
+
+PR #1 (`dfe94f4`) established:
 
 - versioned persistent bot configuration
-- atomic JSON persistence
-- immutable per-game configuration snapshot
-- sticky H-Group level for future games
-- config commands ignored during active play
-- adapter-level suppression of outbound `chat` and `chatPM` while playing
-- focused regression tests
-- dedicated live-bridge CI job
+- immutable per-game configuration snapshots
+- sticky H-Group level
+- pregame-only config mutation
+- config/chat freeze beginning at `tableStart`
+- hard adapter-level no-table-talk gate during play
+- focused live-bridge CI
 
-## Validation
+## PR #2
 
-The inherited full Rust quality job is not a reliable baseline signal yet: the pinned upstream replay suite has tests that exceed the existing 120-second per-test limit and the job reaches its 20-minute timeout. The minimum-Rust and exhaustive H-Group profile jobs have passed on this baseline.
+Implemented:
 
-The dedicated live-bridge job is the authoritative CI signal for the Python-only M1 changes until the inherited full-suite timeout is repaired.
+- canonical semantic public-history fingerprints
+- `DecisionKey(table, turn, history_hash)`
+- stale-result rejection when public history changes without a turn change
+- generation-scoped GameRecord and DecisionRecord journals
+- frozen config stored with each live game record
+- semantic engine-response fingerprints that ignore transport table IDs
+- deterministic replay verifier using a fresh engine session for each recorded decision
+- parity CLI and regression tests
+
+## Validation policy
+
+Normal pull-request CI runs:
+
+- minimum supported Rust check
+- fast build/lint/docs/dead-code validation
+- exhaustive H-Group profile matrix
+- dedicated live-bridge Python type/compile/test/CLI checks
+
+The inherited ordinary full Rust replay suite is currently excluded from routine PR CI because the pinned upstream baseline contains replay tests that exceed its existing per-test/job time limits. `scripts/check.sh` without `--fast` remains available for manual/full regression work while that baseline issue is repaired.
 
 ## Next
 
-1. Get the focused live-bridge checks green.
-2. Merge PR #1.
-3. Start M1 journal/history fingerprint work on a new branch.
-4. Add deterministic live-to-replay parity verification.
+1. Merge PR #2 after current focused CI is green.
+2. Normalize existing planner/trace diagnostics into the stable M1 TurnTrace skeleton.
+3. Run M1 acceptance checklist and tag the baseline.

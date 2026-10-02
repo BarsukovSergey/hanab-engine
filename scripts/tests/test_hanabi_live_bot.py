@@ -386,11 +386,68 @@ class BotConcurrencyTests(unittest.TestCase):
                 self.assertFalse(probe.is_alive())
 
             action = {"tableID": 7, "type": 0, "target": 0}
+            key = bridge.decision_key(
+                7,
+                game.turn,
+                game.snapshot(len(game.actions)),
+            )
             with mock.patch.object(socket, "send", side_effect=send):
-                self.assertFalse(bot._send_current_action(7, game.turn, game.generation - 1, action))
-                self.assertTrue(bot._send_current_action(7, game.turn, game.generation, action))
-                self.assertFalse(bot._send_current_action(7, game.turn, game.generation, action))
+                self.assertFalse(
+                    bot._send_current_action(
+                        7,
+                        game.turn,
+                        game.generation - 1,
+                        key,
+                        action,
+                    )
+                )
+                self.assertTrue(
+                    bot._send_current_action(
+                        7,
+                        game.turn,
+                        game.generation,
+                        key,
+                        action,
+                    )
+                )
+                self.assertFalse(
+                    bot._send_current_action(
+                        7,
+                        game.turn,
+                        game.generation,
+                        key,
+                        action,
+                    )
+                )
             self.assertEqual(acquired, [False])
+        finally:
+            bot.shutdown()
+
+    def test_submission_rejects_same_turn_after_public_history_changes(self) -> None:
+        bot, socket = make_bot(RecordingEngine)
+        try:
+            bot.handle_init(init_message(7))
+            game = bot.games[7]
+            key = bridge.decision_key(
+                7,
+                game.turn,
+                game.snapshot(len(game.actions)),
+            )
+            game.actions.append(
+                {"type": "draw", "playerIndex": 1, "order": 42}
+            )
+            action = {"tableID": 7, "type": 0, "target": 0}
+
+            self.assertFalse(
+                bot._send_current_action(
+                    7,
+                    game.turn,
+                    game.generation,
+                    key,
+                    action,
+                )
+            )
+            self.assertEqual(socket.actions(), [])
         finally:
             bot.shutdown()
 
@@ -761,11 +818,18 @@ class BotConcurrencyTests(unittest.TestCase):
                 request_path = next(table_directory.glob("*.request.json"))
                 response_path = next(table_directory.glob("*.response.json"))
                 result_path = next(table_directory.glob("*.result.json"))
+                game_path = next(table_directory.glob("game-*.json"))
+                decisions_path = next(table_directory.glob("decisions-*.jsonl"))
 
                 snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
                 request = json.loads(request_path.read_text(encoding="utf-8"))
                 response = json.loads(response_path.read_text(encoding="utf-8"))
                 result = json.loads(result_path.read_text(encoding="utf-8"))
+                game_record = json.loads(game_path.read_text(encoding="utf-8"))
+                decisions = [
+                    json.loads(line)
+                    for line in decisions_path.read_text(encoding="utf-8").splitlines()
+                ]
                 events = [
                     json.loads(line)
                     for line in (recorder.run_directory / "events.jsonl")
@@ -779,6 +843,21 @@ class BotConcurrencyTests(unittest.TestCase):
                 self.assertEqual(response["action"]["tableID"], 7)
                 self.assertEqual(response["planning"]["phase"], "symbolic")
                 self.assertEqual(result["status"], "sent")
+                self.assertEqual(game_record["tableID"], 7)
+                self.assertEqual(
+                    game_record["configSnapshot"]["schemaVersion"],
+                    1,
+                )
+                self.assertEqual(len(decisions), 1)
+                self.assertEqual(decisions[0]["status"], "sent")
+                self.assertEqual(
+                    decisions[0]["decisionKey"]["historyHash"],
+                    result["decisionKey"]["historyHash"],
+                )
+                self.assertEqual(
+                    decisions[0]["responseHash"],
+                    result["responseHash"],
+                )
                 self.assertEqual(
                     [event["kind"] for event in events],
                     [
