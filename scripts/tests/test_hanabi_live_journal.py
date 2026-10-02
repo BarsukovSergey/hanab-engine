@@ -36,6 +36,17 @@ class JournalFingerprintTests(unittest.TestCase):
             history_fingerprint(snapshot(99)),
         )
 
+    def test_history_fingerprint_ignores_names_and_replay_transport_flags(self) -> None:
+        first = snapshot()
+        second = snapshot()
+        second["playerNames"] = ["X", "Y"]
+        second["spectating"] = True
+        second["replay"] = True
+        self.assertEqual(
+            history_fingerprint(first),
+            history_fingerprint(second),
+        )
+
     def test_history_fingerprint_is_independent_of_object_key_order(self) -> None:
         first = snapshot()
         second = dict(reversed(list(first.items())))
