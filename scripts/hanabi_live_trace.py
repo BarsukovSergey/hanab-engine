@@ -96,11 +96,17 @@ class TraceRecorder:
             table_directory.mkdir(parents=True, exist_ok=True)
             snapshot_path = table_directory / f"{stem}.snapshot.json"
             self._write_json(snapshot_path, snapshot)
-            game_path = table_directory / "game.json"
+            game_path = table_directory / f"game-{generation:06d}.json"
+            decisions_path = table_directory / f"decisions-{generation:06d}.jsonl"
             if not game_path.exists():
                 self._write_json(
                     game_path,
-                    game_record(table_id, snapshot, config_snapshot),
+                    game_record(
+                        table_id,
+                        generation,
+                        snapshot,
+                        config_snapshot,
+                    ),
                 )
             key = decision_key(table_id, turn, snapshot)
             context = {
@@ -112,6 +118,7 @@ class TraceRecorder:
                 "historyHash": key.history_hash,
                 "decisionKey": key.to_record(),
                 "snapshot": self._relative(snapshot_path),
+                "decisionsPath": decisions_path,
                 "stem": stem,
                 "tableDirectory": table_directory,
             }
@@ -202,7 +209,7 @@ class TraceRecorder:
         if "response" in context:
             decision_record["response"] = context["response"]
         self._append_jsonl(
-            context["tableDirectory"] / "decisions.jsonl",
+            context["decisionsPath"],
             decision_record,
         )
         self._record_event(
