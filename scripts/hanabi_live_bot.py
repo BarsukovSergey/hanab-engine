@@ -697,6 +697,8 @@ class HanabiEngineBot:
 
     def _engine_command_for_game(self, game: LiveGame) -> list[str]:
         command = self.engine_command.copy()
+        if self.default_h_group_level is None:
+            return command
         level = game.h_group_level
         if level is None:
             return command
