@@ -520,6 +520,25 @@ class BotConcurrencyTests(unittest.TestCase):
         finally:
             bot.shutdown()
 
+    def test_adapter_blocks_all_chat_commands_while_playing(self) -> None:
+        bot, socket = make_bot(RecordingEngine)
+        try:
+            bot.handle_init(init_message(7))
+            before = list(socket.messages)
+
+            bot.send("chat", {"msg": "blocked", "room": "lobby"})
+            bot.send(
+                "chatPM",
+                {"msg": "blocked", "recipient": "Alice", "room": "lobby"},
+            )
+
+            self.assertEqual(socket.messages, before)
+
+            bot.send("loaded", {"tableID": 7})
+            self.assertEqual(socket.messages[-1], 'loaded {"tableID":7}')
+        finally:
+            bot.shutdown()
+
     def test_level_message_validates_sender_value_and_convention(self) -> None:
         bot, socket = make_bot(RecordingEngine)
         try:
