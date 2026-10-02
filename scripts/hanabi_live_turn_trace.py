@@ -23,6 +23,12 @@ def normalize_turn_trace(
 ) -> dict[str, Any]:
     """Normalize the existing engine diagnostics into the stable M1 trace shape."""
     planning = _mapping(response.get("planning"))
+    interpretations = _mapping(response.get("conventionInferences"))
+    connections: list[Any] = []
+    active_connection = interpretations.get("connection")
+    if isinstance(active_connection, dict):
+        connections.append(active_connection)
+    connections.extend(_list(interpretations.get("connectionPromises")))
     return {
         "schemaVersion": TURN_TRACE_SCHEMA_VERSION,
         "decisionKey": decision_key,
@@ -31,12 +37,12 @@ def normalize_turn_trace(
             "historyHash": decision_key.get("historyHash"),
         },
         "knowledge": _mapping(response.get("logicalDeductions")),
-        "interpretations": _mapping(response.get("conventionInferences")),
+        "interpretations": interpretations,
         "hypotheses": [],
-        "connections": [],
+        "connections": connections,
         "chosenAction": response.get("action"),
         "candidates": _list(planning.get("rootActions")),
-        "rejectionReasons": [],
+        "rejectionReasons": _list(planning.get("comparisons")),
         "complexity": None,
         "risk": None,
         "provenance": {
