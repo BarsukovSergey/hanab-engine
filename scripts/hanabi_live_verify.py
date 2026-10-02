@@ -112,7 +112,7 @@ def verify_trace(
                 decisions_path.read_text(encoding="utf-8").splitlines(),
                 start=1,
             ):
-            record = json.loads(line)
+                record = json.loads(line)
                 if not isinstance(record, dict):
                     raise ValueError(
                         f"{decisions_path}:{line_number} must contain a JSON object"
