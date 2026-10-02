@@ -24,10 +24,17 @@ class TurnTraceTests(unittest.TestCase):
             response={
                 "action": {"tableID": 7, "type": 0, "target": 3},
                 "logicalDeductions": {"ownCards": []},
-                "conventionInferences": {"framework": "h-group"},
+                "conventionInferences": {
+                    "framework": "h-group",
+                    "connection": {"card": 2, "kind": "Finesse"},
+                    "connectionPromises": [
+                        {"cards": [2, 3], "identity": {"rank": 2}},
+                    ],
+                },
                 "planning": {
                     "phase": "symbolic",
                     "rootActions": [{"selected": True}],
+                    "comparisons": [{"reason": "ConventionPriority"}],
                 },
             },
         )
@@ -37,8 +44,13 @@ class TurnTraceTests(unittest.TestCase):
         self.assertEqual(trace["knowledge"], {"ownCards": []})
         self.assertEqual(trace["interpretations"], {"framework": "h-group"})
         self.assertEqual(trace["candidates"], [{"selected": True}])
+        self.assertEqual(len(trace["connections"]), 2)
+        self.assertEqual(trace["connections"][0]["kind"], "Finesse")
         self.assertEqual(trace["chosenAction"]["target"], 3)
-        self.assertEqual(trace["rejectionReasons"], [])
+        self.assertEqual(
+            trace["rejectionReasons"],
+            [{"reason": "ConventionPriority"}],
+        )
         self.assertIsNone(trace["complexity"])
         self.assertIsNone(trace["risk"])
         self.assertEqual(trace["provenance"]["responseHash"], "def")
