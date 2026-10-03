@@ -1860,8 +1860,7 @@ fn schedule_connection(
             for distance in 0..search_len {
                 let candidate_index = (actor_index + distance) % hands.len();
                 let actor = PlayerId::new(
-                    u8::try_from(candidate_index)
-                        .expect("standard Hanabi has at most six players"),
+                    u8::try_from(candidate_index).expect("standard Hanabi has at most six players"),
                 );
                 if actor == giver {
                     continue;
@@ -1960,8 +1959,7 @@ fn schedule_connection(
             for distance in 0..search_len {
                 let candidate_index = (actor_index + distance) % hands.len();
                 let actor = PlayerId::new(
-                    u8::try_from(candidate_index)
-                        .expect("standard Hanabi has at most six players"),
+                    u8::try_from(candidate_index).expect("standard Hanabi has at most six players"),
                 );
                 if (target == actor && !recipient_can_self_finesse) || giver == actor {
                     continue;
