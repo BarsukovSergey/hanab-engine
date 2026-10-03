@@ -1859,7 +1859,7 @@ pub(super) fn subjective_view_before_action(
             entry
         })
         .collect::<Vec<_>>();
-    let mut play_stacks: [Vec<(CardId, Card)>; 5] = std::array::from_fn(|_| Vec::new());
+    let mut play_stacks = vec![Vec::<(CardId, Card)>::new(); 5];
     let mut discard_pile = Vec::new();
     let mut clue_tokens = MAX_CLUE_TOKENS;
     let mut strikes = 0;
