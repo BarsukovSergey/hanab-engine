@@ -817,6 +817,7 @@ class BotConcurrencyTests(unittest.TestCase):
                 snapshot_path = next(table_directory.glob("*.snapshot.json"))
                 request_path = next(table_directory.glob("*.request.json"))
                 response_path = next(table_directory.glob("*.response.json"))
+                turn_trace_path = next(table_directory.glob("*.turn-trace.json"))
                 result_path = next(table_directory.glob("*.result.json"))
                 game_path = next(table_directory.glob("game-*.json"))
                 decisions_path = next(table_directory.glob("decisions-*.jsonl"))
@@ -824,6 +825,7 @@ class BotConcurrencyTests(unittest.TestCase):
                 snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
                 request = json.loads(request_path.read_text(encoding="utf-8"))
                 response = json.loads(response_path.read_text(encoding="utf-8"))
+                turn_trace = json.loads(turn_trace_path.read_text(encoding="utf-8"))
                 result = json.loads(result_path.read_text(encoding="utf-8"))
                 game_record = json.loads(game_path.read_text(encoding="utf-8"))
                 decisions = [
@@ -842,6 +844,14 @@ class BotConcurrencyTests(unittest.TestCase):
                 self.assertEqual(request["kind"], "initialize")
                 self.assertEqual(response["action"]["tableID"], 7)
                 self.assertEqual(response["planning"]["phase"], "symbolic")
+                self.assertEqual(turn_trace["schemaVersion"], 1)
+                self.assertEqual(turn_trace["knowledge"], {"ownCards": []})
+                self.assertEqual(
+                    turn_trace["interpretations"]["framework"],
+                    "h-group",
+                )
+                self.assertEqual(turn_trace["chosenAction"]["tableID"], 7)
+                self.assertEqual(turn_trace["provenance"]["planningPhase"], "symbolic")
                 self.assertEqual(result["status"], "sent")
                 self.assertEqual(game_record["tableID"], 7)
                 self.assertEqual(
@@ -850,6 +860,10 @@ class BotConcurrencyTests(unittest.TestCase):
                 )
                 self.assertEqual(len(decisions), 1)
                 self.assertEqual(decisions[0]["status"], "sent")
+                self.assertEqual(
+                    decisions[0]["turnTrace"],
+                    turn_trace_path.relative_to(recorder.run_directory).as_posix(),
+                )
                 self.assertEqual(
                     decisions[0]["decisionKey"]["historyHash"],
                     result["decisionKey"]["historyHash"],
