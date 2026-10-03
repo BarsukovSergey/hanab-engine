@@ -962,12 +962,13 @@ fn identity_labels(identities: IdentitySet) -> String {
 }
 
 fn identity_label(identity: Card) -> String {
-    let suit = match identity.suit {
-        Suit::Red => 'r',
-        Suit::Yellow => 'y',
-        Suit::Green => 'g',
-        Suit::Blue => 'b',
-        Suit::Purple => 'p',
+    let suit = match identity.suit.value() {
+        0 => 'r',
+        1 => 'y',
+        2 => 'g',
+        3 => 'b',
+        4 => 'p',
+        _ => '?',
     };
     format!("{suit}{}", identity.rank.number())
 }
