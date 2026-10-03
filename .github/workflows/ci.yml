@@ -95,6 +95,7 @@ jobs:
 
   exhaustive-h-group-profiles:
     name: Exhaustive H-Group profile matrix
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
