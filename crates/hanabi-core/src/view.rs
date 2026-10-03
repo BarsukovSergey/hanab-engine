@@ -1,6 +1,7 @@
 use crate::{
     Action, Card, CardId, Clue, ClueColorId, ClueRank, FullState, GameEvent, GameStatus,
-    GenericClue, MAX_CLUE_TOKENS, PlayerId, Rank, Suit, VariantSpec,
+    GenericClue, MAX_CLUE_TOKENS, PhysicalAction, PlayerId, Rank, StandardClueError, Suit,
+    VariantSpec,
 };
 
 /// Objective positive and negative clue facts attached to one physical card.
@@ -8,127 +9,158 @@ use crate::{
 /// source of truth.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct ClueFacts {
-    positive_suits: u8,
-    negative_suits: u8,
-    positive_ranks: u8,
-    negative_ranks: u8,
+    positive_suits: [u64; 4],
+    negative_suits: [u64; 4],
+    positive_ranks: [u64; 4],
+    negative_ranks: [u64; 4],
 }
 
 impl ClueFacts {
-    /// Whether an identity is consistent with direct positive and negative clues.
+    /// Whether a No Variant identity satisfies direct standard clue facts.
     #[must_use]
     pub fn allows(&self, card: Card) -> bool {
-        let suit = 1 << card.suit.index();
-        let rank = 1 << card.rank.index();
-        (self.positive_suits == 0 || self.positive_suits & suit != 0)
-            && self.negative_suits & suit == 0
-            && (self.positive_ranks == 0 || self.positive_ranks & rank != 0)
-            && self.negative_ranks & rank == 0
+        let suit = u64::from(card.suit.value());
+        let rank = u64::from(card.rank.value());
+        (self.positive_suits == [0; 4] || Self::contains(self.positive_suits, suit))
+            && !Self::contains(self.negative_suits, suit)
+            && (self.positive_ranks == [0; 4] || Self::contains(self.positive_ranks, rank))
+            && !Self::contains(self.negative_ranks, rank)
     }
 
-    /// Bit set of all 25 standard identities allowed by these direct clues.
+    /// Bit set of standard identities allowed by direct standard clue facts.
     /// Identity bits use [`Card::index`] order.
     #[must_use]
     pub fn identity_mask(self) -> u32 {
-        let allowed_suits = if self.positive_suits == 0 {
+        let suits = if self.positive_suits == [0; 4] {
             0b1_1111
         } else {
-            self.positive_suits
-        } & !self.negative_suits;
-        let allowed_ranks = if self.positive_ranks == 0 {
+            self.positive_suits[0].to_le_bytes()[0] & 0b1_1111
+        } & !self.negative_suits[0].to_le_bytes()[0];
+        let ranks = if self.positive_ranks == [0; 4] {
             0b1_1111
         } else {
-            self.positive_ranks
-        } & !self.negative_ranks;
-
+            (self.positive_ranks[0].to_le_bytes()[0] >> 1) & 0b1_1111
+        } & !(self.negative_ranks[0].to_le_bytes()[0] >> 1);
         (0..5).fold(0, |mask, suit| {
-            mask | ((u32::from(allowed_suits & (1 << suit) != 0) * u32::from(allowed_ranks))
-                << (suit * 5))
+            mask | ((u32::from(suits & (1 << suit) != 0) * u32::from(ranks)) << (suit * 5))
         })
     }
 
-    /// Direct clue mask in the active universe's [`crate::IdentityId`] order.
-    /// Legacy clue values name clue colors/ranks, whose physical touches come
-    /// from the variant rather than from a card's suit/rank equality.
+    /// Direct physical clue mask in the active universe's identity order.
+    /// Each positive clue must touch; every negative clue must miss.
     #[must_use]
     pub fn identity_mask_in(self, variant: &VariantSpec) -> u64 {
-        if self.is_empty() {
-            return variant
-                .identities()
-                .identities()
-                .iter()
-                .fold(0, |mask, identity| mask | (1_u64 << identity.id.value()));
-        }
         variant
             .identities()
             .identities()
             .iter()
             .fold(0, |mask, identity| {
-                let colors = (0_u8..5).fold(0_u8, |bits, value| {
-                    bits | (u8::from(
-                        (self.positive_suits | self.negative_suits) & (1 << value) != 0
-                            && variant
-                                .touches(identity.id, GenericClue::Color(ClueColorId::new(value))),
-                    ) << value)
-                });
-                let ranks = (0_u8..5).fold(0_u8, |bits, value| {
-                    bits | (u8::from(
-                        (self.positive_ranks | self.negative_ranks) & (1 << value) != 0
-                            && variant
-                                .touches(identity.id, GenericClue::Rank(ClueRank::new(value + 1))),
-                    ) << value)
-                });
-                let allows = (self.positive_suits == 0 || self.positive_suits & colors != 0)
-                    && self.negative_suits & colors == 0
-                    && (self.positive_ranks == 0 || self.positive_ranks & ranks != 0)
-                    && self.negative_ranks & ranks == 0;
+                let colors_match = |value| {
+                    variant.touches(identity.id, GenericClue::Color(ClueColorId::new(value)))
+                };
+                let ranks_match =
+                    |value| variant.touches(identity.id, GenericClue::Rank(ClueRank::new(value)));
+                let allows = Self::all_match(self.positive_suits, colors_match)
+                    && Self::all_match(self.negative_suits, |value| !colors_match(value))
+                    && Self::all_match(self.positive_ranks, ranks_match)
+                    && Self::all_match(self.negative_ranks, |value| !ranks_match(value));
                 mask | (u64::from(allows) << identity.id.value())
             })
     }
 
-    /// Records a direct positive clue fact.
+    /// Records a direct positive standard clue fact.
     pub fn add_positive_clue(&mut self, clue: Clue) {
         self.record(clue, true);
     }
 
-    /// Records a direct negative clue fact.
+    /// Records a direct negative standard clue fact.
     pub fn add_negative_clue(&mut self, clue: Clue) {
         self.record(clue, false);
     }
 
-    /// Whether this card was positively touched by `clue`.
-    #[must_use]
-    pub fn has_positive_clue(self, clue: Clue) -> bool {
-        match clue {
-            Clue::Suit(value) => self.positive_suits & (1 << value.index()) != 0,
-            Clue::Rank(value) => self.positive_ranks & (1 << value.index()) != 0,
-        }
+    /// Records a direct positive physical clue fact.
+    pub(crate) fn add_positive_physical_clue(&mut self, clue: GenericClue) {
+        self.record_physical(clue, true);
     }
 
-    /// Whether this card was negatively excluded by `clue`.
+    /// Records a direct negative physical clue fact.
+    pub(crate) fn add_negative_physical_clue(&mut self, clue: GenericClue) {
+        self.record_physical(clue, false);
+    }
+
+    /// Whether this card was positively touched by a standard clue.
+    #[must_use]
+    pub fn has_positive_clue(self, clue: Clue) -> bool {
+        self.has_positive_physical_clue(clue.into())
+    }
+
+    /// Whether this card was negatively excluded by a standard clue.
     #[must_use]
     pub fn has_negative_clue(self, clue: Clue) -> bool {
-        match clue {
-            Clue::Suit(value) => self.negative_suits & (1 << value.index()) != 0,
-            Clue::Rank(value) => self.negative_ranks & (1 << value.index()) != 0,
-        }
+        self.has_negative_physical_clue(clue.into())
+    }
+
+    /// Whether this card was positively touched by a physical clue.
+    #[must_use]
+    pub fn has_positive_physical_clue(self, clue: GenericClue) -> bool {
+        let (bits, value) = match clue {
+            GenericClue::Color(color) => (self.positive_suits, color.value()),
+            GenericClue::Rank(rank) => (self.positive_ranks, rank.value()),
+        };
+        Self::contains(bits, u64::from(value))
+    }
+
+    /// Whether this card was negatively excluded by a physical clue.
+    #[must_use]
+    pub fn has_negative_physical_clue(self, clue: GenericClue) -> bool {
+        let (bits, value) = match clue {
+            GenericClue::Color(color) => (self.negative_suits, color.value()),
+            GenericClue::Rank(rank) => (self.negative_ranks, rank.value()),
+        };
+        Self::contains(bits, u64::from(value))
     }
 
     #[must_use]
     pub const fn is_empty(self) -> bool {
-        self.positive_suits == 0
-            && self.negative_suits == 0
-            && self.positive_ranks == 0
-            && self.negative_ranks == 0
+        const fn empty(bits: [u64; 4]) -> bool {
+            bits[0] | bits[1] | bits[2] | bits[3] == 0
+        }
+        empty(self.positive_suits)
+            && empty(self.negative_suits)
+            && empty(self.positive_ranks)
+            && empty(self.negative_ranks)
     }
 
     pub(crate) fn record(&mut self, clue: Clue, positive: bool) {
-        match (clue, positive) {
-            (Clue::Suit(value), true) => self.positive_suits |= 1 << value.index(),
-            (Clue::Suit(value), false) => self.negative_suits |= 1 << value.index(),
-            (Clue::Rank(value), true) => self.positive_ranks |= 1 << value.index(),
-            (Clue::Rank(value), false) => self.negative_ranks |= 1 << value.index(),
+        self.record_physical(clue.into(), positive);
+    }
+
+    pub(crate) fn record_physical(&mut self, clue: GenericClue, positive: bool) {
+        let (bits, value) = match (clue, positive) {
+            (GenericClue::Color(color), true) => (&mut self.positive_suits, color.value()),
+            (GenericClue::Color(color), false) => (&mut self.negative_suits, color.value()),
+            (GenericClue::Rank(rank), true) => (&mut self.positive_ranks, rank.value()),
+            (GenericClue::Rank(rank), false) => (&mut self.negative_ranks, rank.value()),
+        };
+        bits[usize::from(value / 64)] |= 1 << (value % 64);
+    }
+
+    fn contains(bits: [u64; 4], value: u64) -> bool {
+        bits[usize::try_from(value / 64).expect("u8 clue label")] & (1 << (value % 64)) != 0
+    }
+
+    fn all_match(bits: [u64; 4], matches: impl Fn(u8) -> bool) -> bool {
+        for (index, mut word) in bits.into_iter().enumerate() {
+            while word != 0 {
+                let value = u8::try_from(index * 64 + word.trailing_zeros() as usize)
+                    .expect("u8 clue label");
+                if !matches(value) {
+                    return false;
+                }
+                word &= word - 1;
+            }
         }
+        true
     }
 }
 
@@ -143,11 +175,11 @@ pub struct ObservedCard {
 
 /// A history event projected for one player.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum ObservedEvent {
+pub enum ObservedEvent<C = Clue> {
     Clued {
         giver: PlayerId,
         target: PlayerId,
-        clue: Clue,
+        clue: C,
         touched: Vec<CardId>,
         untouched: Vec<CardId>,
     },
@@ -172,14 +204,14 @@ pub enum ObservedEvent {
 
 /// A turn-numbered observed event.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct ObservedHistoryEntry {
+pub struct ObservedHistoryEntry<C = Clue> {
     pub turn: u32,
-    pub event: ObservedEvent,
+    pub event: ObservedEvent<C>,
 }
 
 /// Everything one player is legally permitted to observe.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct PlayerView {
+pub struct PlayerView<C = Clue> {
     /// Public physical rules and identity ordering; contains no deal or hidden cards.
     pub variant: VariantSpec,
     pub observer: PlayerId,
@@ -193,7 +225,143 @@ pub struct PlayerView {
     pub strikes: u8,
     pub final_turns_remaining: Option<u8>,
     pub status: GameStatus,
-    pub history: Vec<ObservedHistoryEntry>,
+    pub history: Vec<ObservedHistoryEntry<C>>,
+}
+
+impl<C> ObservedEvent<C> {
+    /// Maps only the public clue label, preserving identities and observer redaction.
+    pub(crate) fn map_clue<D>(self, map: impl FnOnce(C) -> D) -> ObservedEvent<D> {
+        match self {
+            Self::Clued {
+                giver,
+                target,
+                clue,
+                touched,
+                untouched,
+            } => ObservedEvent::Clued {
+                giver,
+                target,
+                clue: map(clue),
+                touched,
+                untouched,
+            },
+            Self::Played {
+                player,
+                card,
+                identity,
+                successful,
+            } => ObservedEvent::Played {
+                player,
+                card,
+                identity,
+                successful,
+            },
+            Self::Discarded {
+                player,
+                card,
+                identity,
+            } => ObservedEvent::Discarded {
+                player,
+                card,
+                identity,
+            },
+            Self::Drew {
+                player,
+                card,
+                identity,
+            } => ObservedEvent::Drew {
+                player,
+                card,
+                identity,
+            },
+        }
+    }
+}
+
+impl PlayerView<GenericClue> {
+    /// Converts public clue labels to the legacy No Variant domain.
+    /// Physical meaning is equivalent for No Variant only.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any clue cannot be represented without losing its label.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if a previously checked clue conversion becomes inconsistent.
+    pub fn try_standard(self) -> Result<PlayerView, StandardClueError> {
+        let history = self
+            .history
+            .into_iter()
+            .map(|entry| {
+                if let ObservedEvent::Clued { clue, .. } = &entry.event {
+                    Clue::try_from(*clue)?;
+                }
+                Ok(ObservedHistoryEntry {
+                    turn: entry.turn,
+                    event: entry
+                        .event
+                        .map_clue(|clue| Clue::try_from(clue).expect("checked clue domain")),
+                })
+            })
+            .collect::<Result<Vec<_>, StandardClueError>>()?;
+        Ok(PlayerView {
+            variant: self.variant,
+            observer: self.observer,
+            current_player: self.current_player,
+            turn: self.turn,
+            hands: self.hands,
+            deck_size: self.deck_size,
+            play_stacks: self.play_stacks,
+            discard_pile: self.discard_pile,
+            clue_tokens: self.clue_tokens,
+            strikes: self.strikes,
+            final_turns_remaining: self.final_turns_remaining,
+            status: self.status,
+            history,
+        })
+    }
+}
+
+impl<C> PlayerView<C> {
+    /// Legal physical actions, using only visible target identities and the
+    /// public variant. Returns no actions for a nonacting observer or ended game.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if a core-constructed view violates its player-count invariant.
+    #[must_use]
+    pub fn legal_physical_actions(&self) -> Vec<PhysicalAction> {
+        if self.observer != self.current_player || self.status != GameStatus::InProgress {
+            return Vec::new();
+        }
+        let hand = &self.hands[self.observer.index()];
+        let mut actions = Vec::new();
+        actions.extend(hand.iter().map(|card| PhysicalAction::Play(card.id)));
+        if self.clue_tokens < MAX_CLUE_TOKENS {
+            actions.extend(hand.iter().map(|card| PhysicalAction::Discard(card.id)));
+        }
+        if self.clue_tokens > 0 {
+            for (index, hand) in self.hands.iter().enumerate() {
+                if index == self.observer.index() {
+                    continue;
+                }
+                let target = PlayerId::new(u8::try_from(index).expect("validated player count"));
+                let identities = hand
+                    .iter()
+                    .filter_map(|card| card.identity)
+                    .filter_map(|card| self.variant.identities().id_for(card.suit, card.rank))
+                    .collect::<Vec<_>>();
+                actions.extend(
+                    self.variant
+                        .legal_clues(&identities)
+                        .into_iter()
+                        .map(|clue| PhysicalAction::Clue { target, clue }),
+                );
+            }
+        }
+        actions
+    }
 }
 
 impl PlayerView {
@@ -257,7 +425,9 @@ impl PlayerView {
 }
 
 impl FullState {
-    /// Projects authoritative state into the legal observation for `observer`.
+    /// Projects state using legacy No Variant clue labels. Returns `None` for
+    /// an invalid observer or a history containing an unrepresentable clue.
+    /// Use [`Self::physical_view_for`] for arbitrary physical variants.
     ///
     /// # Panics
     ///
@@ -265,10 +435,17 @@ impl FullState {
     /// invariant.
     #[must_use]
     pub fn view_for(&self, observer: PlayerId) -> Option<PlayerView> {
-        self.build_view(observer)
+        self.physical_view_for(observer)?.try_standard().ok()
     }
 
-    fn build_view(&self, observer: PlayerId) -> Option<PlayerView> {
+    /// Projects authoritative history with generic physical clue labels.
+    /// Own-hand and own-draw identities remain hidden.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if a full state violates its card-location invariant.
+    #[must_use]
+    pub fn physical_view_for(&self, observer: PlayerId) -> Option<PlayerView<GenericClue>> {
         if observer.index() >= usize::from(self.num_players()) {
             return None;
         }
@@ -331,7 +508,11 @@ impl FullState {
     }
 }
 
-fn observed_event(state: &FullState, observer: PlayerId, event: &GameEvent) -> ObservedEvent {
+fn observed_event(
+    state: &FullState,
+    observer: PlayerId,
+    event: &GameEvent<GenericClue>,
+) -> ObservedEvent<GenericClue> {
     match event {
         GameEvent::Clued {
             giver,

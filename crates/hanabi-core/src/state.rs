@@ -2,8 +2,8 @@ use core::fmt;
 use std::collections::VecDeque;
 
 use crate::{
-    Action, Card, CardId, Clue, ClueFacts, ObservedEvent, ObservedHistoryEntry, PlayerId,
-    PlayerView, Rank, Suit, VariantSpec,
+    Action, Card, CardId, Clue, ClueFacts, GenericClue, ObservedEvent, ObservedHistoryEntry,
+    PhysicalAction, PlayerId, PlayerView, Rank, StandardClueError, Suit, VariantSpec,
 };
 
 pub const MAX_CLUE_TOKENS: u8 = 8;
@@ -39,11 +39,11 @@ pub enum GameStatus {
 /// An authoritative event. Unlike an observed event, a draw can be resolved
 /// through the state's private card table.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum GameEvent {
+pub enum GameEvent<C = Clue> {
     Clued {
         giver: PlayerId,
         target: PlayerId,
-        clue: Clue,
+        clue: C,
         touched: Vec<CardId>,
         untouched: Vec<CardId>,
     },
@@ -64,16 +64,16 @@ pub enum GameEvent {
 
 /// One event associated with a game turn.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HistoryEntry {
+pub struct HistoryEntry<C = Clue> {
     pub turn: u32,
-    pub event: GameEvent,
+    pub event: GameEvent<C>,
 }
 
 /// The result of applying one player action.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TurnResult {
+pub struct TurnResult<A = Action> {
     pub actor: PlayerId,
-    pub action: Action,
+    pub action: A,
     pub drawn: Option<CardId>,
     pub status: GameStatus,
 }
@@ -97,7 +97,7 @@ pub struct FullState {
     turn: u32,
     final_turns_remaining: Option<u8>,
     status: GameStatus,
-    history: Vec<HistoryEntry>,
+    history: Vec<HistoryEntry<GenericClue>>,
     clue_facts: Vec<ClueFacts>,
 }
 
@@ -115,14 +115,14 @@ pub struct WorldTemplate {
     discard_pile: Vec<CardId>,
     draw_pile: VecDeque<CardId>,
     observed_cards: Vec<(CardId, Option<Card>, ClueFacts)>,
-    observed_history: Vec<ObservedHistoryEntry>,
+    observed_history: Vec<ObservedHistoryEntry<GenericClue>>,
     clue_tokens: u8,
     strikes: u8,
     current_player: PlayerId,
     turn: u32,
     final_turns_remaining: Option<u8>,
     status: GameStatus,
-    history: Vec<HistoryEntry>,
+    history: Vec<HistoryEntry<GenericClue>>,
     clue_facts: Vec<ClueFacts>,
 }
 
@@ -302,8 +302,57 @@ impl FullState {
     }
 
     #[must_use]
-    pub fn history(&self) -> &[HistoryEntry] {
+    pub fn history(&self) -> &[HistoryEntry<GenericClue>] {
         &self.history
+    }
+
+    /// Converts the authoritative history to legacy No Variant clue labels.
+    /// This is a derived compatibility projection, never a second history.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a clue is outside the standard label domain.
+    pub fn standard_history(&self) -> Result<Vec<HistoryEntry>, StandardClueError> {
+        self.history
+            .iter()
+            .map(|entry| {
+                Ok(HistoryEntry {
+                    turn: entry.turn,
+                    event: match &entry.event {
+                        GameEvent::Clued {
+                            giver,
+                            target,
+                            clue,
+                            touched,
+                            untouched,
+                        } => GameEvent::Clued {
+                            giver: *giver,
+                            target: *target,
+                            clue: (*clue).try_into()?,
+                            touched: touched.clone(),
+                            untouched: untouched.clone(),
+                        },
+                        GameEvent::Played {
+                            player,
+                            card,
+                            successful,
+                        } => GameEvent::Played {
+                            player: *player,
+                            card: *card,
+                            successful: *successful,
+                        },
+                        GameEvent::Discarded { player, card } => GameEvent::Discarded {
+                            player: *player,
+                            card: *card,
+                        },
+                        GameEvent::Drew { player, card } => GameEvent::Drew {
+                            player: *player,
+                            card: *card,
+                        },
+                    },
+                })
+            })
+            .collect()
     }
 
     #[must_use]
@@ -391,6 +440,44 @@ impl FullState {
         }
     }
 
+    /// Legal physical actions in deterministic order: plays, discards, then
+    /// target-player order with each variant's legal color and rank clue order.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the state's player or identity invariants are broken.
+    #[must_use]
+    pub fn legal_physical_actions(&self) -> Vec<PhysicalAction> {
+        if self.is_terminal() {
+            return Vec::new();
+        }
+        let own_hand = &self.hands[self.current_player.index()];
+        let mut actions = Vec::new();
+        actions.extend(own_hand.iter().copied().map(PhysicalAction::Play));
+        if self.clue_tokens < MAX_CLUE_TOKENS {
+            actions.extend(own_hand.iter().copied().map(PhysicalAction::Discard));
+        }
+        if self.clue_tokens > 0 {
+            for (index, hand) in self.hands.iter().enumerate() {
+                if index == self.current_player.index() {
+                    continue;
+                }
+                let target = PlayerId::new(u8::try_from(index).expect("validated player count"));
+                let identities = hand
+                    .iter()
+                    .map(|card| self.identity_id(*card))
+                    .collect::<Vec<_>>();
+                actions.extend(
+                    self.variant
+                        .legal_clues(&identities)
+                        .into_iter()
+                        .map(|clue| PhysicalAction::Clue { target, clue }),
+                );
+            }
+        }
+        actions
+    }
+
     /// Applies one complete player action and any resulting draw.
     ///
     /// # Errors
@@ -402,6 +489,29 @@ impl FullState {
     /// Panics only if a previously validated state violates an internal
     /// location or final-round invariant.
     pub fn apply(&mut self, action: Action) -> Result<TurnResult, RuleError> {
+        let result = self.apply_physical(action.into())?;
+        Ok(TurnResult {
+            actor: result.actor,
+            action,
+            drawn: result.drawn,
+            status: result.status,
+        })
+    }
+
+    /// Applies a variant-aware physical action, including any resulting draw.
+    /// Clue legality and touching are determined solely by the variant spec.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RuleError` for illegal actions without mutating the state.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if a validated state violates an internal invariant.
+    pub fn apply_physical(
+        &mut self,
+        action: PhysicalAction,
+    ) -> Result<TurnResult<PhysicalAction>, RuleError> {
         self.validate_action(action)?;
 
         let actor = self.current_player;
@@ -409,8 +519,8 @@ impl FullState {
         let mut drawn = None;
 
         match action {
-            Action::Clue { target, clue } => self.apply_clue(actor, target, clue),
-            Action::Play(card) => {
+            PhysicalAction::Clue { target, clue } => self.apply_clue(actor, target, clue),
+            PhysicalAction::Play(card) => {
                 self.remove_from_current_hand(card);
                 let identity = self.cards[card.index()];
                 let identity_id = self
@@ -453,7 +563,7 @@ impl FullState {
                     drawn = self.draw_for(actor);
                 }
             }
-            Action::Discard(card) => {
+            PhysicalAction::Discard(card) => {
                 self.remove_from_current_hand(card);
                 self.discard_pile.push(card);
                 self.clue_tokens = crate::public_transition::refunded_clues(self.clue_tokens);
@@ -626,13 +736,13 @@ impl FullState {
         }
     }
 
-    fn validate_action(&self, action: Action) -> Result<(), RuleError> {
+    fn validate_action(&self, action: PhysicalAction) -> Result<(), RuleError> {
         if self.is_terminal() {
             return Err(RuleError::GameAlreadyFinished);
         }
         match action {
-            Action::Play(card) => self.require_current_players_card(card),
-            Action::Discard(card) => {
+            PhysicalAction::Play(card) => self.require_current_players_card(card),
+            PhysicalAction::Discard(card) => {
                 self.require_current_players_card(card)?;
                 if self.clue_tokens == MAX_CLUE_TOKENS {
                     Err(RuleError::DiscardAtMaximumClues)
@@ -640,7 +750,7 @@ impl FullState {
                     Ok(())
                 }
             }
-            Action::Clue { target, clue } => {
+            PhysicalAction::Clue { target, clue } => {
                 if self.clue_tokens == 0 {
                     return Err(RuleError::NoClueTokens);
                 }
@@ -650,9 +760,16 @@ impl FullState {
                 if target == self.current_player {
                     return Err(RuleError::CannotClueSelf);
                 }
+                let declared = match clue {
+                    GenericClue::Color(color) => self.variant.clue_colors().contains(&color),
+                    GenericClue::Rank(rank) => self.variant.clue_ranks().contains(&rank),
+                };
+                if !declared {
+                    return Err(RuleError::InvalidClue(clue));
+                }
                 let touches = self.hands[target.index()]
                     .iter()
-                    .any(|id| clue.matches(self.cards[id.index()]));
+                    .any(|id| self.variant.touches(self.identity_id(*id), clue));
                 if !touches {
                     return Err(RuleError::ClueTouchesNoCards);
                 }
@@ -678,17 +795,17 @@ impl FullState {
         hand.remove(index);
     }
 
-    fn apply_clue(&mut self, giver: PlayerId, target: PlayerId, clue: Clue) {
+    fn apply_clue(&mut self, giver: PlayerId, target: PlayerId, clue: GenericClue) {
         self.clue_tokens -= 1;
         let (touched, untouched): (Vec<CardId>, Vec<CardId>) = self.hands[target.index()]
             .iter()
             .copied()
-            .partition(|id| clue.matches(self.cards[id.index()]));
+            .partition(|id| self.variant.touches(self.identity_id(*id), clue));
         for card in &touched {
-            self.clue_facts[card.index()].record(clue, true);
+            self.clue_facts[card.index()].record_physical(clue, true);
         }
         for card in &untouched {
-            self.clue_facts[card.index()].record(clue, false);
+            self.clue_facts[card.index()].record_physical(clue, false);
         }
         self.push_event(GameEvent::Clued {
             giver,
@@ -697,6 +814,14 @@ impl FullState {
             touched,
             untouched,
         });
+    }
+
+    fn identity_id(&self, card: CardId) -> crate::IdentityId {
+        let card = self.cards[card.index()];
+        self.variant
+            .identities()
+            .id_for(card.suit, card.rank)
+            .expect("validated state contains declared identities")
     }
 
     pub(crate) fn clue_facts(&self, card: CardId) -> &ClueFacts {
@@ -713,7 +838,7 @@ impl FullState {
         Some(card)
     }
 
-    fn push_event(&mut self, event: GameEvent) {
+    fn push_event(&mut self, event: GameEvent<GenericClue>) {
         self.history.push(HistoryEntry {
             turn: self.turn,
             event,
@@ -729,7 +854,9 @@ impl WorldTemplate {
     ///
     /// Returns [`WorldConstructionError`] for invalid or duplicate card
     /// locations, a mismatched deck size, or an invalid public rules state.
-    pub fn new(view: &PlayerView) -> Result<Self, WorldConstructionError> {
+    pub fn new<C: Copy + Into<GenericClue>>(
+        view: &PlayerView<C>,
+    ) -> Result<Self, WorldConstructionError> {
         let card_count = view.variant.identities().deck_size();
         let mut used = vec![false; card_count];
         let mut observed_cards = Vec::new();
@@ -782,7 +909,14 @@ impl WorldTemplate {
             discard_pile,
             draw_pile,
             observed_cards,
-            observed_history: view.history.clone(),
+            observed_history: view
+                .history
+                .iter()
+                .map(|entry| ObservedHistoryEntry {
+                    turn: entry.turn,
+                    event: entry.event.clone().map_clue(Into::into),
+                })
+                .collect(),
             clue_tokens: view.clue_tokens,
             strikes: view.strikes,
             current_player: view.current_player,
@@ -932,7 +1066,7 @@ fn identity_at(cards: &[Card], card: CardId) -> Result<Card, WorldConstructionEr
 }
 
 fn validate_history_identities(
-    history: &[ObservedHistoryEntry],
+    history: &[ObservedHistoryEntry<GenericClue>],
     cards: &[Card],
 ) -> Result<(), WorldConstructionError> {
     for entry in history {
@@ -952,8 +1086,8 @@ fn validate_history_identities(
     Ok(())
 }
 
-fn validate_history_card_ids(
-    history: &[ObservedHistoryEntry],
+fn validate_history_card_ids<C>(
+    history: &[ObservedHistoryEntry<C>],
     card_count: usize,
 ) -> Result<(), WorldConstructionError> {
     for entry in history {
@@ -979,7 +1113,9 @@ fn validate_history_card_ids(
     Ok(())
 }
 
-fn reconstruct_history(history: &[ObservedHistoryEntry]) -> Vec<HistoryEntry> {
+fn reconstruct_history<C: Copy + Into<GenericClue>>(
+    history: &[ObservedHistoryEntry<C>],
+) -> Vec<HistoryEntry<GenericClue>> {
     history
         .iter()
         .map(|entry| HistoryEntry {
@@ -994,7 +1130,7 @@ fn reconstruct_history(history: &[ObservedHistoryEntry]) -> Vec<HistoryEntry> {
                 } => GameEvent::Clued {
                     giver: *giver,
                     target: *target,
-                    clue: *clue,
+                    clue: (*clue).into(),
                     touched: touched.clone(),
                     untouched: untouched.clone(),
                 },
@@ -1021,7 +1157,7 @@ fn reconstruct_history(history: &[ObservedHistoryEntry]) -> Vec<HistoryEntry> {
         .collect()
 }
 
-fn derive_clue_facts(card_count: usize, history: &[HistoryEntry]) -> Vec<ClueFacts> {
+fn derive_clue_facts(card_count: usize, history: &[HistoryEntry<GenericClue>]) -> Vec<ClueFacts> {
     let mut facts = vec![ClueFacts::default(); card_count];
     for entry in history {
         let GameEvent::Clued {
@@ -1034,10 +1170,10 @@ fn derive_clue_facts(card_count: usize, history: &[HistoryEntry]) -> Vec<ClueFac
             continue;
         };
         for card in touched {
-            facts[card.index()].record(*clue, true);
+            facts[card.index()].record_physical(*clue, true);
         }
         for card in untouched {
-            facts[card.index()].record(*clue, false);
+            facts[card.index()].record_physical(*clue, false);
         }
     }
     facts
@@ -1157,6 +1293,7 @@ pub enum RuleError {
     InvalidPlayer(PlayerId),
     CannotClueSelf,
     ClueTouchesNoCards,
+    InvalidClue(GenericClue),
 }
 
 impl fmt::Display for RuleError {
@@ -1172,6 +1309,9 @@ impl fmt::Display for RuleError {
             Self::NoClueTokens => formatter.write_str("giving a clue requires a clue token"),
             Self::InvalidPlayer(player) => write!(formatter, "invalid target player {player}"),
             Self::CannotClueSelf => formatter.write_str("a player cannot clue their own hand"),
+            Self::InvalidClue(clue) => {
+                write!(formatter, "clue {clue:?} is not declared by the variant")
+            }
             Self::ClueTouchesNoCards => formatter.write_str("a clue must touch at least one card"),
         }
     }
