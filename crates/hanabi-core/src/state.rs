@@ -182,7 +182,7 @@ impl FullState {
     #[must_use]
     /// # Panics
     ///
-    /// Panics only if an internally constructed state exceeds five players.
+    /// Panics only if an internally constructed state exceeds six players.
     pub fn num_players(&self) -> u8 {
         self.hands
             .len()
@@ -955,7 +955,7 @@ impl fmt::Display for SetupError {
             Self::InvalidPlayerCount(count) => {
                 write!(
                     formatter,
-                    "standard Hanabi requires 2 to 5 players, got {count}"
+                    "standard Hanabi requires 2 to 6 players, got {count}"
                 )
             }
             Self::InvalidDeckSize { expected, actual } => {
