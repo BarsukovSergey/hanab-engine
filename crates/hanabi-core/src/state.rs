@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 
 use crate::{
     Action, Card, CardId, Clue, ClueFacts, ObservedEvent, ObservedHistoryEntry, PlayerId,
-    PlayerView, Rank, Suit,
+    PlayerView, Rank, Suit, VariantSpec,
 };
 
 pub const MAX_CLUE_TOKENS: u8 = 8;
@@ -86,6 +86,7 @@ pub struct TurnResult {
 /// order.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FullState {
+    variant: VariantSpec,
     cards: Vec<Card>,
     draw_pile: VecDeque<CardId>,
     hands: Vec<Vec<CardId>>,
@@ -139,9 +140,36 @@ impl FullState {
     /// Panics only if validated standard-deck constants cannot satisfy the
     /// initial deal, which would indicate an internal rules bug.
     pub fn new_standard(num_players: u8, deck: Vec<Card>) -> Result<Self, SetupError> {
+        Self::new_variant(num_players, VariantSpec::no_variant(), deck)
+    }
+
+    /// Creates a dealt game from an immutable physical variant specification
+    /// and a complete ordered deck. The first card in `deck` is drawn first.
+    ///
+    /// This constructor deliberately models physical rules only. Convention
+    /// semantics remain outside the core state.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SetupError` when the player count is outside 2..=6, the deck
+    /// does not match the variant identity multiplicities, or the deck cannot
+    /// satisfy the initial deal.
+    pub fn new_variant(
+        num_players: u8,
+        variant: VariantSpec,
+        deck: Vec<Card>,
+    ) -> Result<Self, SetupError> {
         let hand_size = standard_hand_size(usize::from(num_players))
             .ok_or(SetupError::InvalidPlayerCount(num_players))?;
-        validate_standard_deck(&deck)?;
+        validate_variant_deck(&variant, &deck)?;
+
+        let initial_cards = usize::from(num_players) * hand_size;
+        if deck.len() < initial_cards {
+            return Err(SetupError::DeckTooSmallForInitialDeal {
+                required: initial_cards,
+                actual: deck.len(),
+            });
+        }
 
         let cards = deck;
         let mut draw_pile = (0..cards.len()).map(CardId::new).collect::<VecDeque<_>>();
@@ -153,17 +181,23 @@ impl FullState {
             for _ in 0..hand_size {
                 let card = draw_pile
                     .pop_front()
-                    .expect("a validated standard deck contains enough cards for the initial deal");
+                    .expect("validated variant deck contains enough cards for the initial deal");
                 hands[usize::from(player)].push(card);
             }
         }
 
         let clue_facts = vec![ClueFacts::default(); cards.len()];
+        let play_stacks = variant
+            .stack_suits()
+            .iter()
+            .map(|_| Vec::with_capacity(variant.card_ranks().len()))
+            .collect();
         let state = Self {
+            variant,
             cards,
             draw_pile,
             hands,
-            play_stacks: vec![Vec::with_capacity(5); Suit::ALL.len()],
+            play_stacks,
             discard_pile: Vec::new(),
             clue_tokens: MAX_CLUE_TOKENS,
             strikes: 0,
@@ -178,7 +212,6 @@ impl FullState {
         debug_assert!(state.validate().is_ok());
         Ok(state)
     }
-
     #[must_use]
     /// # Panics
     ///
@@ -226,6 +259,11 @@ impl FullState {
     }
 
     #[must_use]
+    pub const fn variant(&self) -> &VariantSpec {
+        &self.variant
+    }
+
+    #[must_use]
     pub fn deck_size(&self) -> usize {
         self.draw_pile.len()
     }
@@ -263,15 +301,10 @@ impl FullState {
     #[must_use]
     /// # Panics
     ///
-    /// Panics only if an internally constructed standard stack exceeds five
-    /// cards.
+    /// Panics only if an internally constructed score exceeds the public score type.
     pub fn score(&self) -> u8 {
-        self.play_stacks
-            .iter()
-            .map(|stack| {
-                u8::try_from(stack.len()).expect("a standard stack has at most five cards")
-            })
-            .sum()
+        let score: usize = self.play_stacks.iter().map(Vec::len).sum();
+        u8::try_from(score).expect("variant score fits in u8")
     }
 
     /// Returns the official final score, where three strikes score zero.
@@ -372,12 +405,23 @@ impl FullState {
             Action::Play(card) => {
                 self.remove_from_current_hand(card);
                 let identity = self.cards[card.index()];
-                let expected_rank = self.play_stacks[identity.suit.index()].len() + 1;
-                let successful = expected_rank == usize::from(identity.rank.number());
+                let identity_id = self
+                    .variant
+                    .identities()
+                    .id_for(identity.suit, identity.rank)
+                    .expect("validated variant state only contains declared identities");
+                let stack_index = self
+                    .variant
+                    .stack_suits()
+                    .iter()
+                    .position(|suit| *suit == identity.suit)
+                    .expect("validated identity suit has a play stack");
+                let stack_heights = self.play_stacks.iter().map(Vec::len).collect::<Vec<_>>();
+                let successful = self.variant.playable(&stack_heights, identity_id);
 
                 if successful {
-                    self.play_stacks[identity.suit.index()].push(card);
-                    if identity.rank == Rank::Five {
+                    self.play_stacks[stack_index].push(card);
+                    if self.variant.successor(identity_id).is_none() {
                         self.clue_tokens =
                             crate::public_transition::refunded_clues(self.clue_tokens);
                     }
@@ -392,9 +436,10 @@ impl FullState {
                     successful,
                 });
 
-                self.status = crate::public_transition::status_after_play(
+                self.status = crate::public_transition::status_after_play_with_max(
                     usize::from(self.score()),
                     self.strikes,
+                    self.variant.max_score(),
                 );
                 if self.status == GameStatus::InProgress {
                     drawn = self.draw_for(actor);
