@@ -12,7 +12,7 @@ pub mod state;
 pub mod variant;
 pub mod view;
 
-pub use action::{Action, Clue};
+pub use action::{Action, Clue, PhysicalAction, StandardClueError};
 pub use card::{Card, Rank, Suit, standard_deck};
 pub use ids::{CardId, PlayerId};
 pub use state::{

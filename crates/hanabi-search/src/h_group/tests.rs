@@ -61,7 +61,8 @@ fn replay_action_at_turn(replay: &HanabiLiveReplay, turn: u32) -> Action {
     replay
         .state_at_turn(turn + 1)
         .expect("fixture action is legal")
-        .history()
+        .standard_history()
+        .expect("standard history")
         .iter()
         .find_map(|entry| {
             (entry.turn == turn).then_some(match entry.event {

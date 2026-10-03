@@ -123,7 +123,12 @@ fn reconstructs_actionable_replay_prefixes_by_game_turn() {
         .state_at_turn(u32::try_from(purple_clue_turn + 1).unwrap())
         .unwrap();
     assert!(matches!(
-        &after_purple_clue.history().last().unwrap().event,
+        &after_purple_clue
+            .standard_history()
+            .expect("standard history")
+            .last()
+            .unwrap()
+            .event,
         GameEvent::Clued {
             clue: Clue::Suit(Suit::Purple),
             ..

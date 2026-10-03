@@ -190,7 +190,7 @@ impl HanabiLiveReplay {
 
             let engine_action = action_from_live(action)?;
             state
-                .apply(engine_action)
+                .apply_physical(engine_action.into())
                 .map_err(|source| ReplayError::IllegalAction { turn, source })?;
         }
         Ok(state)
@@ -223,7 +223,7 @@ impl HanabiLiveReplay {
 
             let engine_action = action_from_live(action)?;
             state
-                .apply(engine_action)
+                .apply_physical(engine_action.into())
                 .map_err(|source| ReplayError::IllegalAction {
                     turn: action_index,
                     source,
