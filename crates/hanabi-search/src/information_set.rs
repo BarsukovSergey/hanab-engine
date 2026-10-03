@@ -6,8 +6,7 @@ use hanabi_core::{
 };
 
 const CARD_IDENTITY_COUNT: usize = 25;
-const STANDARD_CARD_COUNT: usize = 50;
-type Counts = [u8; CARD_IDENTITY_COUNT];
+type Counts = Vec<u8>;
 
 /// The hidden worlds logically consistent with one [`PlayerView`].
 ///
@@ -16,7 +15,7 @@ type Counts = [u8; CARD_IDENTITY_COUNT];
 #[derive(Debug)]
 pub struct InformationSet {
     deductions: LogicalDeductions,
-    known_identities: [Option<Card>; STANDARD_CARD_COUNT],
+    known_identities: Vec<Option<Card>>,
     constraint_masks: Vec<u64>,
     deck_cards: Vec<CardId>,
     world_template: WorldTemplate,
@@ -163,7 +162,7 @@ impl Clone for InformationSet {
     fn clone(&self) -> Self {
         Self {
             deductions: self.deductions.clone(),
-            known_identities: self.known_identities,
+            known_identities: self.known_identities.clone(),
             constraint_masks: self.constraint_masks.clone(),
             deck_cards: self.deck_cards.clone(),
             world_template: self.world_template.clone(),
@@ -216,7 +215,7 @@ impl LogicalDeductions {
             }
             *count -= 1;
         }
-        let feasible_by_slot = feasible_identities(&constraints, remaining_counts);
+        let feasible_by_slot = feasible_identities(&constraints, &remaining_counts);
         if feasible_by_slot
             .iter()
             .any(|identities| identities.is_empty())
@@ -260,7 +259,7 @@ impl LogicalDeductions {
         limit: usize,
         mut visitor: impl FnMut(&[(CardId, Card)]) -> bool,
     ) -> HandAssignmentVisit {
-        let mut remaining = self.remaining_counts;
+        let mut remaining = self.remaining_counts.clone();
         let mut assignment = Vec::with_capacity(self.unknown_hand_cards.len());
         let mut result = HandAssignmentVisit {
             examined: 0,
@@ -341,7 +340,7 @@ impl Clone for LogicalDeductions {
             view: self.view.clone(),
             unknown_hand_cards: self.unknown_hand_cards.clone(),
             possibilities: self.possibilities.clone(),
-            remaining_counts: self.remaining_counts,
+            remaining_counts: self.remaining_counts.clone(),
         }
     }
 }
@@ -368,8 +367,12 @@ impl InformationSet {
     pub fn new(view: &PlayerView) -> Result<Self, InformationSetError> {
         let deductions = LogicalDeductions::new(view.clone())?;
 
-        let mut occupied = [false; STANDARD_CARD_COUNT];
-        let mut known_identities = [None; STANDARD_CARD_COUNT];
+        let card_count = view.hands.iter().map(Vec::len).sum::<usize>()
+            + view.play_stacks.iter().map(Vec::len).sum::<usize>()
+            + view.discard_pile.len()
+            + view.deck_size;
+        let mut occupied = vec![false; card_count];
+        let mut known_identities = vec![None; card_count];
         let mut constraint_masks = Vec::new();
 
         for hand in &view.hands {
@@ -405,7 +408,7 @@ impl InformationSet {
             });
         }
 
-        let remaining_counts = deductions.remaining_counts;
+        let remaining_counts = deductions.remaining_counts.clone();
 
         let remaining_total: usize = remaining_counts
             .iter()
@@ -472,7 +475,7 @@ impl InformationSet {
         let mut worlds = 0_u64;
         let mut stopped = None;
         self.visit_belief_masks(belief, control, |masks| {
-            let mut counts = self.deductions.remaining_counts;
+            let mut counts = self.deductions.remaining_counts.clone();
             stopped = count_identity_worlds(
                 masks,
                 self.deck_cards.len(),
@@ -543,15 +546,16 @@ impl InformationSet {
         let placeholder = Card::new(Suit::Red, Rank::One);
         let base_cards = self
             .known_identities
+            .iter()
             .map(|identity| identity.unwrap_or(placeholder))
-            .to_vec();
+            .collect::<Vec<_>>();
         let mut visited = 0_u64;
         let mut error = None;
         self.visit_belief_masks(belief, control, |masks| {
             let mut locations = self.deductions.unknown_hand_cards.clone();
             locations.extend(self.deck_cards.iter().copied());
             let mut cards = base_cards.clone();
-            let mut counts = self.deductions.remaining_counts;
+            let mut counts = self.deductions.remaining_counts.clone();
             let finished = visit_identity_worlds(
                 &locations,
                 masks,
@@ -663,7 +667,7 @@ fn count_identity_worlds(
         .get(slot)
         .copied()
         .unwrap_or(IdentitySet::ALL_MASK);
-    for identity in 0..CARD_IDENTITY_COUNT {
+    for identity in 0..counts.len() {
         if counts[identity] == 0 || allowed & (1_u64 << identity) == 0 {
             continue;
         }
@@ -705,7 +709,7 @@ fn visit_identity_worlds(
         .get(slot)
         .copied()
         .unwrap_or(IdentitySet::ALL_MASK);
-    for identity in 0..CARD_IDENTITY_COUNT {
+    for identity in 0..counts.len() {
         if counts[identity] == 0 || allowed & (1_u64 << identity) == 0 {
             continue;
         }
@@ -728,10 +732,7 @@ fn visit_identity_worlds(
     true
 }
 
-fn mark_location(
-    occupied: &mut [bool; STANDARD_CARD_COUNT],
-    card: CardId,
-) -> Result<(), InformationSetError> {
+fn mark_location(occupied: &mut [bool], card: CardId) -> Result<(), InformationSetError> {
     let Some(slot) = occupied.get_mut(card.index()) else {
         return Err(InformationSetError::InvalidCardId(card));
     };
@@ -765,7 +766,7 @@ fn set_known_identity(
 }
 
 fn standard_counts() -> Counts {
-    let mut counts = [0; CARD_IDENTITY_COUNT];
+    let mut counts = vec![0; CARD_IDENTITY_COUNT];
     for identity in all_identities() {
         counts[identity_index(identity)] = identity.rank.copies();
     }
@@ -786,11 +787,11 @@ fn identity_from_index(index: usize) -> Card {
     Card::new(Suit::ALL[index / 5], Rank::ALL[index % 5])
 }
 
-fn feasible_identities(constraints: &[ClueFacts], counts: Counts) -> Vec<IdentitySet> {
+fn feasible_identities(constraints: &[ClueFacts], counts: &[u8]) -> Vec<IdentitySet> {
     feasible_identity_array(constraints, counts)[..constraints.len()].to_vec()
 }
 
-fn feasible_identity_array(constraints: &[ClueFacts], counts: Counts) -> [IdentitySet; 5] {
+fn feasible_identity_array(constraints: &[ClueFacts], counts: &[u8]) -> [IdentitySet; 5] {
     debug_assert!(constraints.len() <= 5);
     let mut masks = [0_u64; 5];
     for (slot, constraint) in constraints.iter().enumerate() {
@@ -799,7 +800,7 @@ fn feasible_identity_array(constraints: &[ClueFacts], counts: Counts) -> [Identi
     feasible_identity_masks(&masks[..constraints.len()], counts)
 }
 
-fn feasible_identity_masks(constraint_masks: &[u64], counts: Counts) -> [IdentitySet; 5] {
+fn feasible_identity_masks(constraint_masks: &[u64], counts: &[u8]) -> [IdentitySet; 5] {
     debug_assert!(constraint_masks.len() <= 5);
     let mut allowed = [0_u64; 5];
     allowed[..constraint_masks.len()].copy_from_slice(constraint_masks);
