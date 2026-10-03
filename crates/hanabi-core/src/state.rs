@@ -213,6 +213,7 @@ impl FullState {
         debug_assert!(state.validate().is_ok());
         Ok(state)
     }
+
     #[must_use]
     /// # Panics
     ///
@@ -562,7 +563,13 @@ impl FullState {
             ));
         }
 
-        for (stack_index, suit) in self.variant.stack_suits().iter().copied().enumerate() {
+        for (stack_index, suit) in self
+            .variant
+            .stack_suits()
+            .iter()
+            .copied()
+            .enumerate()
+        {
             let stack = &self.play_stacks[stack_index];
             if stack.len() > self.variant.card_ranks().len() {
                 return Err(InvariantViolation(format!(
