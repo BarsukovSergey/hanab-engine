@@ -623,6 +623,7 @@ impl FullState {
 
         Ok(())
     }
+
     fn validate_action(&self, action: Action) -> Result<(), RuleError> {
         if self.is_terminal() {
             return Err(RuleError::GameAlreadyFinished);
