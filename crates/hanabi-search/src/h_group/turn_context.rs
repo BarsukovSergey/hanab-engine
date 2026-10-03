@@ -161,6 +161,7 @@ mod tests {
         let own = Card::new(Suit::Red, Rank::One);
         let future_draw = Card::new(Suit::Blue, Rank::Two);
         let view = PlayerView {
+            variant: hanabi_core::VariantSpec::no_variant(),
             observer: PlayerId::new(0),
             current_player: PlayerId::new(0),
             turn: 5,
