@@ -79,7 +79,7 @@ pub(super) fn replay_h_group_inner_uncached(
 ) -> HGroupState {
     debug_assert!(rule_enabled(profile, HGroupRuleId::Basic));
     let view = deductions.view();
-    let hand_size = if view.hands.len() <= 3 { 5 } else { 4 };
+    let hand_size = hanabi_core::standard_hand_size(view.hands.len()).expect("validated standard player count");
     let hands = (0..view.hands.len())
         .map(|player| {
             let first = player * hand_size;
@@ -461,7 +461,7 @@ impl ReplayReducer {
                     view.turn
                         < turn.saturating_add(
                             u32::try_from(self.hands.len())
-                                .expect("standard Hanabi has at most five players"),
+                                .expect("standard Hanabi has at most six players"),
                         )
                 })
         });

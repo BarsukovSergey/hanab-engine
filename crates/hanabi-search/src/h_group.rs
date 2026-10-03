@@ -1143,7 +1143,7 @@ fn push_signal(
 fn next_player(player: PlayerId, player_count: usize) -> PlayerId {
     PlayerId::new(
         u8::try_from((player.index() + 1) % player_count)
-            .expect("standard Hanabi has at most five players"),
+            .expect("standard Hanabi has at most six players"),
     )
 }
 
@@ -1623,7 +1623,7 @@ fn schedule_connection(
                         turn,
                         PlayerId::new(
                             u8::try_from(*candidate_index)
-                                .expect("standard Hanabi has at most five players"),
+                                .expect("standard Hanabi has at most six players"),
                         ),
                         *card,
                         expected,
@@ -1641,7 +1641,7 @@ fn schedule_connection(
                         }
                         let actor = PlayerId::new(
                             u8::try_from(candidate_index)
-                                .expect("standard Hanabi has at most five players"),
+                                .expect("standard Hanabi has at most six players"),
                         );
                         let gotten = promptable_before_clue
                             .union(invisibly_clued)
@@ -1782,7 +1782,7 @@ fn schedule_connection(
             }
             let candidate_index = (actor_index + distance) % hands.len();
             let actor = PlayerId::new(
-                u8::try_from(candidate_index).expect("standard Hanabi has at most five players"),
+                u8::try_from(candidate_index).expect("standard Hanabi has at most six players"),
             );
             if actor == giver {
                 continue;
@@ -1861,7 +1861,7 @@ fn schedule_connection(
                 let candidate_index = (actor_index + distance) % hands.len();
                 let actor = PlayerId::new(
                     u8::try_from(candidate_index)
-                        .expect("standard Hanabi has at most five players"),
+                        .expect("standard Hanabi has at most six players"),
                 );
                 if actor == giver {
                     continue;
@@ -1944,7 +1944,7 @@ fn schedule_connection(
                                 turn,
                                 PlayerId::new(
                                     u8::try_from(candidate_index)
-                                        .expect("standard Hanabi has at most five players"),
+                                        .expect("standard Hanabi has at most six players"),
                                 ),
                                 *card,
                                 expected,
@@ -1961,7 +1961,7 @@ fn schedule_connection(
                 let candidate_index = (actor_index + distance) % hands.len();
                 let actor = PlayerId::new(
                     u8::try_from(candidate_index)
-                        .expect("standard Hanabi has at most five players"),
+                        .expect("standard Hanabi has at most six players"),
                 );
                 if (target == actor && !recipient_can_self_finesse) || giver == actor {
                     continue;

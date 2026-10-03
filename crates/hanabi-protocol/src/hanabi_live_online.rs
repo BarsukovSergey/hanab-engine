@@ -3,7 +3,7 @@ use std::collections::HashSet;
 
 use hanabi_core::{
     Action, Card, CardId, Clue, ClueFacts, EndReason, GameStatus, ObservedCard, ObservedEvent,
-    ObservedHistoryEntry, PlayerId, PlayerView, Rank, Suit,
+    ObservedHistoryEntry, PlayerId, PlayerView, Rank, Suit, standard_hand_size,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -250,7 +250,7 @@ impl HanabiLiveSession {
                 snapshot.options.variant_name.clone(),
             ));
         }
-        if !(2..=5).contains(&snapshot.player_names.len()) {
+        if standard_hand_size(snapshot.player_names.len()).is_none() {
             return Err(LiveSnapshotError::InvalidPlayerCount(
                 snapshot.player_names.len(),
             ));
@@ -346,7 +346,7 @@ struct LiveViewBuilder {
 
 impl LiveViewBuilder {
     fn new(player_count: usize, observer: usize) -> Self {
-        let hand_size = if player_count <= 3 { 5 } else { 4 };
+        let hand_size = standard_hand_size(player_count).expect("validated standard player count");
         Self {
             observer: player_id(observer),
             current_player: player_id(0),
@@ -467,7 +467,7 @@ impl LiveViewBuilder {
             });
             if self.deck_size == 0 {
                 let player_count = u8::try_from(self.hands.len())
-                    .expect("standard Hanabi has at most five players");
+                    .expect("standard Hanabi has at most six players");
                 self.final_turns_remaining = Some(player_count);
                 self.final_round_start_turn = Some(self.turn + 1);
             }
@@ -610,7 +610,7 @@ impl LiveViewBuilder {
         if let Some(start) = self.final_round_start_turn {
             let elapsed = turn.saturating_sub(start);
             let player_count =
-                u8::try_from(self.hands.len()).expect("standard Hanabi has at most five players");
+                u8::try_from(self.hands.len()).expect("standard Hanabi has at most six players");
             self.final_turns_remaining =
                 Some(player_count.saturating_sub(u8::try_from(elapsed).unwrap_or(u8::MAX)));
         }
@@ -687,7 +687,7 @@ impl LiveViewBuilder {
 }
 
 fn player_id(index: usize) -> PlayerId {
-    PlayerId::new(u8::try_from(index).expect("standard Hanabi has at most five players"))
+    PlayerId::new(u8::try_from(index).expect("standard Hanabi has at most six players"))
 }
 
 fn checked_card_id(order: usize) -> Result<CardId, LiveSnapshotError> {
@@ -907,7 +907,7 @@ impl std::error::Error for LiveSnapshotError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hanabi_core::{Clue, ObservedEvent, Rank};
+    use hanabi_core::{Clue, ObservedEvent, Rank, standard_deck};
 
     fn snapshot_json() -> String {
         serde_json::json!({
@@ -1001,6 +1001,49 @@ mod tests {
                 ..
             } if card == CardId::new(10)
         ));
+    }
+
+    #[test]
+    fn reconstructs_six_player_initial_deal_with_three_card_hands() {
+        let deck = standard_deck();
+        let mut actions = Vec::new();
+        for player_index in 0..6 {
+            for slot in 0..3 {
+                let order = player_index * 3 + slot;
+                let identity = deck[order];
+                let (suit_index, rank) = if player_index == 0 {
+                    (-1, -1)
+                } else {
+                    (
+                        i16::try_from(identity.suit.index()).unwrap(),
+                        i16::from(identity.rank.number()),
+                    )
+                };
+                actions.push(serde_json::json!({
+                    "type": "draw",
+                    "playerIndex": player_index,
+                    "order": order,
+                    "suitIndex": suit_index,
+                    "rank": rank,
+                }));
+            }
+        }
+        let json = serde_json::json!({
+            "tableID": 18,
+            "playerNames": ["Bot", "Alice", "Bob", "Cathy", "Donald", "Emily"],
+            "ourPlayerIndex": 0,
+            "spectating": false,
+            "replay": false,
+            "options": {"variantName": "No Variant"},
+            "actions": actions,
+        });
+        let snapshot = HanabiLiveSnapshot::from_json(&json.to_string()).unwrap();
+        let view = snapshot.player_view().unwrap();
+
+        assert_eq!(view.hands.len(), 6);
+        assert!(view.hands.iter().all(|hand| hand.len() == 3));
+        assert_eq!(view.deck_size, 32);
+        assert!(view.hands[0].iter().all(|card| card.identity.is_none()));
     }
 
     #[test]

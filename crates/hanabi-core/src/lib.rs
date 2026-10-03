@@ -16,6 +16,7 @@ pub use card::{Card, Rank, Suit, standard_deck};
 pub use ids::{CardId, PlayerId};
 pub use state::{
     EndReason, FullState, GameEvent, GameStatus, HistoryEntry, InvariantViolation, MAX_CLUE_TOKENS,
-    MAX_STRIKES, RuleError, SetupError, TurnResult, WorldConstructionError, WorldTemplate,
+    MAX_PLAYERS, MAX_STRIKES, MIN_PLAYERS, RuleError, STANDARD_DECK_SIZE, SetupError, TurnResult,
+    WorldConstructionError, WorldTemplate, standard_hand_size,
 };
 pub use view::{ClueFacts, ObservedCard, ObservedEvent, ObservedHistoryEntry, PlayerView};

@@ -126,7 +126,7 @@ fn extended_finesse_plan(
             for distance in 0..player_count {
                 let actor = PlayerId::new(
                     u8::try_from((first_actor.index() + distance) % player_count)
-                        .expect("standard Hanabi has at most five players"),
+                        .expect("standard Hanabi has at most six players"),
                 );
                 if actor == giver || (actor == target && connections.is_empty()) {
                     continue;
@@ -310,7 +310,7 @@ pub(in crate::h_group) fn lie_component_fix_connection(
         effects.clues.iter().rev().find_map(|prior| {
             let next_giver_turn = prior.turn
                 + u32::try_from(context.after.hands.len())
-                    .expect("standard Hanabi has at most five players");
+                    .expect("standard Hanabi has at most six players");
             if context.entry.turn != next_giver_turn
                 || prior.giver != giver
                 || prior.touched.len() < 2
@@ -651,7 +651,7 @@ pub(in crate::h_group) fn apply_extra_effects(
                             *giver,
                             Some(PlayerId::new(
                                 u8::try_from(player_index)
-                                    .expect("standard Hanabi has at most five players"),
+                                    .expect("standard Hanabi has at most six players"),
                             )),
                             HGroupMoveKind::NegativeSelfChopMove,
                             vec![*card],

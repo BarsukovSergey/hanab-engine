@@ -485,6 +485,24 @@ class BotConcurrencyTests(unittest.TestCase):
         finally:
             bot.shutdown()
 
+    def test_join_allows_bot_as_sixth_player(self) -> None:
+        bot, socket = make_bot(RecordingEngine)
+        try:
+            bot.handle_table(
+                {
+                    "id": 7,
+                    "players": ["Alice", "Bob", "Cathy", "Donald", "Emily"],
+                    "running": False,
+                    "variant": "No Variant",
+                }
+            )
+            bot.handle_chat(
+                {"recipient": "Bot", "who": "Alice", "msg": "/join"}
+            )
+            self.assertIn('tableJoin {"tableID":7}', socket.messages)
+        finally:
+            bot.shutdown()
+
     def test_private_level_message_configures_the_next_game_engine(self) -> None:
         bot, socket = make_bot(
             RecordingEngine,

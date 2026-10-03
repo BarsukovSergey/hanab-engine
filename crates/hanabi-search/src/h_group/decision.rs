@@ -668,7 +668,7 @@ fn permission_to_discard_target(
     let player_count = view.hands.len();
     let previous = PlayerId::new(
         u8::try_from((view.observer.index() + player_count - 1) % player_count)
-            .expect("standard Hanabi has at most five players"),
+            .expect("standard Hanabi has at most six players"),
     );
     let previous_action = view
         .history
@@ -1842,7 +1842,7 @@ fn endgame_completion_plan<'analysis>(
                     }
                     let committed = visible_copies.iter().find_map(|(owner, card)| {
                         let owner = PlayerId::new(
-                            u8::try_from(*owner).expect("standard Hanabi has at most five players"),
+                            u8::try_from(*owner).expect("standard Hanabi has at most six players"),
                         );
                         let projection = team.projection(owner)?;
                         let owns_commitment = projection.inferred.playable_now.contains(card)
@@ -2943,7 +2943,7 @@ fn hard_clue_obligation(
     let every_intervening_player_is_occupied = (1..target_distance).all(|distance| {
         let player = PlayerId::new(
             u8::try_from((view.current_player.index() + distance) % player_count)
-                .expect("standard Hanabi has at most five players"),
+                .expect("standard Hanabi has at most six players"),
         );
         replay.pending_connections.iter().any(|connection| {
             connection.actor == player

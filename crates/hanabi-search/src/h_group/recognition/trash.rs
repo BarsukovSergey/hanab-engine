@@ -582,7 +582,7 @@ pub(in crate::h_group) fn apply_ejection_discharge_effects(
             for distance in 2..hands.len() {
                 let candidate = PlayerId::new(
                     u8::try_from((giver.index() + distance) % hands.len())
-                        .expect("standard Hanabi has at most five players"),
+                        .expect("standard Hanabi has at most six players"),
                 );
                 if let Some(candidate_card) =
                     finesse_position_id(&hands[candidate.index()], &gotten, requested_position)

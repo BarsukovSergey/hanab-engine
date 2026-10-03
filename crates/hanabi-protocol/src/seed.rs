@@ -14,8 +14,8 @@ pub(crate) fn player_count_from_seed(seed: &str) -> Result<usize, String> {
     let (variant, suffix) = tail
         .split_once('s')
         .ok_or("expected a canonical Hanabi Live seed such as p4v0s1")?;
-    if !matches!(count, "2" | "3" | "4" | "5") {
-        return Err("seed requires 2–5 players".to_owned());
+    if !matches!(count, "2" | "3" | "4" | "5" | "6") {
+        return Err("seed requires 2–6 players".to_owned());
     }
     if variant != "0" {
         return Err("seed generation only supports variant 0 (No Variant)".to_owned());
@@ -28,7 +28,7 @@ pub(crate) fn player_count_from_seed(seed: &str) -> Result<usize, String> {
 
 pub(crate) fn deck_from_seed(seed: &str, players: usize) -> Result<Vec<HanabiLiveCard>, String> {
     if player_count_from_seed(seed)? != players {
-        return Err("seed player count must match the replay's 2–5 players".to_owned());
+        return Err("seed player count must match the replay's 2–6 players".to_owned());
     }
     let mut deck = hanabi_core::standard_deck()
         .into_iter()

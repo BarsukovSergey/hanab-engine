@@ -264,7 +264,7 @@ pub(super) fn h_group_clue_candidates_from_replay_inner(
     let gotten = replay.gotten_from(&promptable);
     let next_player = PlayerId::new(
         u8::try_from((view.current_player.index() + 1) % view.hands.len())
-            .expect("standard Hanabi has at most five players"),
+            .expect("standard Hanabi has at most six players"),
     );
     let convention_cards = convention_card_inferences(deductions, replay);
     let giver_inferred = infer_h_group_from_replay(deductions, replay.clone(), profile);
@@ -295,7 +295,7 @@ pub(super) fn h_group_clue_candidates_from_replay_inner(
     let mut players_with_current_play = PlayerSet::default();
     for player in 0..view.hands.len() {
         let observer =
-            PlayerId::new(u8::try_from(player).expect("standard Hanabi has at most five players"));
+            PlayerId::new(u8::try_from(player).expect("standard Hanabi has at most six players"));
         if let Some(cards) = subjective_playable_cards(view, profile, observer) {
             if !cards.is_empty() {
                 players_with_current_play.insert(observer);
@@ -2929,7 +2929,7 @@ pub(super) fn loaded_connection_plan(
                 continue;
             }
             let actor = PlayerId::new(
-                u8::try_from(actor_index).expect("standard Hanabi has at most five players"),
+                u8::try_from(actor_index).expect("standard Hanabi has at most six players"),
             );
             let candidates = hand
                 .iter()

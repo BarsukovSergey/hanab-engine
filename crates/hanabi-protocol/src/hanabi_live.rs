@@ -34,11 +34,16 @@ impl<'de> Deserialize<'de> for HanabiLiveReplay {
             })?;
             let count =
                 crate::seed::player_count_from_seed(seed).map_err(serde::de::Error::custom)?;
-            // Hanab Live's DEFAULT_PLAYER_NAMES; explicit names are preserved.
-            ["Alice", "Bob", "Cathy", "Donald", "Emily"][..count]
-                .iter()
-                .map(|name| (*name).to_owned())
-                .collect()
+            // Hanab Live's known default names cover the original 2–5
+            // player exports. Six-player replays must preserve explicit names
+            // until the server's sixth default-name source is pinned here.
+            let defaults = ["Alice", "Bob", "Cathy", "Donald", "Emily"];
+            let names = defaults.get(..count).ok_or_else(|| {
+                serde::de::Error::custom(
+                    "six-player seeded replays require explicit players",
+                )
+            })?;
+            names.iter().map(|name| (*name).to_owned()).collect()
         };
         // Explicit decks remain authoritative, including custom/edited deals
         // whose original seed is still present as descriptive metadata.
