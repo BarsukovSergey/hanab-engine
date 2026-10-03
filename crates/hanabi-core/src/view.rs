@@ -125,7 +125,9 @@ impl ClueFacts {
         self.record_physical(clue.into(), positive);
     }
 
-    pub(crate) fn record_physical(&mut self, clue: GenericClue, positive: bool) {
+    /// Records a public physical clue fact without assigning a hidden identity.
+    /// Callers validate the label against the active variant before recording it.
+    pub fn record_physical(&mut self, clue: GenericClue, positive: bool) {
         let (bits, value) = match (clue, positive) {
             (GenericClue::Color(color), true) => (&mut self.positive_suits, color.value()),
             (GenericClue::Color(color), false) => (&mut self.negative_suits, color.value()),

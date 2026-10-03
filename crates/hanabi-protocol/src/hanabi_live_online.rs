@@ -2,15 +2,14 @@ use core::fmt;
 use std::collections::HashSet;
 
 use hanabi_core::{
-    Action, Card, CardId, Clue, ClueFacts, EndReason, GameStatus, ObservedCard, ObservedEvent,
-    ObservedHistoryEntry, PlayerId, PlayerView, Rank, Suit, standard_hand_size,
+    Action, Card, CardId, CardRank, ClueColorId, ClueFacts, ClueRank, EndReason, GameStatus,
+    GenericClue, MAX_CLUE_TOKENS, ObservedCard, ObservedEvent, ObservedHistoryEntry,
+    PhysicalAction, PlayerId, PlayerView, StandardClueError, SuitId, VariantId, VariantSpec,
+    standard_hand_size,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::hanabi_live::HanabiLiveActionType;
-
-const STANDARD_DECK_SIZE: usize = 50;
-const MAX_CLUE_TOKENS: u8 = 8;
+use crate::hanabi_live::{HanabiLiveActionType, variant_id_from_live_name};
 
 /// A player-safe snapshot assembled from Hanabi Live init and scrubbed action
 /// messages.
@@ -115,7 +114,7 @@ enum HanabiLiveOnlineAction {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum HanabiLiveSessionRequest {
     Initialize {
         snapshot: HanabiLiveSnapshot,
@@ -180,10 +179,21 @@ impl HanabiLiveSnapshot {
     ///
     /// # Errors
     ///
-    /// Returns `LiveSnapshotError` when the game is not a standard active-player
-    /// game or the action stream is malformed or incomplete.
+    /// Returns `LiveSnapshotError` when the game is not an active-player game,
+    /// the stream is malformed, or convention/policy support is unavailable.
     pub fn player_view(&self) -> Result<PlayerView, LiveSnapshotError> {
         HanabiLiveSession::from_snapshot(self)?.player_view()
+    }
+
+    /// Reconstructs a player-safe physical view for any supported catalog variant.
+    /// Own-hand identities remain hidden, including after public clues.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LiveSnapshotError`] for unsupported variants, non-player tables,
+    /// or malformed or incomplete scrubbed action streams.
+    pub fn physical_player_view(&self) -> Result<PlayerView<GenericClue>, LiveSnapshotError> {
+        HanabiLiveSession::from_snapshot(self)?.physical_player_view()
     }
 }
 
@@ -203,18 +213,37 @@ impl HanabiLiveSessionState {
     /// # Errors
     ///
     /// Returns [`LiveSnapshotError`] when the request is malformed, arrives
-    /// before initialization, targets another table, or contains invalid game
-    /// actions.
+    /// before initialization, targets another table, contains invalid actions,
+    /// or requires convention/policy support for a non-No-Variant game.
     pub fn apply_json(&mut self, json: &str) -> Result<(u64, PlayerView), LiveSnapshotError> {
+        self.apply_json_with_view(json, HanabiLiveSession::player_view)
+    }
+
+    /// Applies an initialize/append request using physical rules only.
+    /// The variant is fixed by initialization; append requests cannot supply metadata.
+    /// Failed initialization or append leaves the previous valid session untouched.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LiveSnapshotError`] for malformed requests, unsupported variants,
+    /// invalid actions, missing initialization, or a table mismatch.
+    pub fn apply_physical_json(
+        &mut self,
+        json: &str,
+    ) -> Result<(u64, PlayerView<GenericClue>), LiveSnapshotError> {
+        self.apply_json_with_view(json, HanabiLiveSession::physical_player_view)
+    }
+
+    fn apply_json_with_view<V>(
+        &mut self,
+        json: &str,
+        build_view: impl FnOnce(&HanabiLiveSession) -> Result<V, LiveSnapshotError>,
+    ) -> Result<(u64, V), LiveSnapshotError> {
         let request: HanabiLiveSessionRequest =
             serde_json::from_str(json).map_err(LiveSnapshotError::Json)?;
-        match request {
+        let candidate = match request {
             HanabiLiveSessionRequest::Initialize { snapshot } => {
-                let candidate = HanabiLiveSession::from_snapshot(&snapshot)?;
-                let view = candidate.player_view()?;
-                let table_id = candidate.table_id;
-                self.session = Some(candidate);
-                Ok((table_id, view))
+                HanabiLiveSession::from_snapshot(&snapshot)?
             }
             HanabiLiveSessionRequest::Append { table_id, actions } => {
                 let current = self
@@ -229,11 +258,13 @@ impl HanabiLiveSessionState {
                 }
                 let mut candidate = current.clone();
                 candidate.append(&actions)?;
-                let view = candidate.player_view()?;
-                self.session = Some(candidate);
-                Ok((table_id, view))
+                candidate
             }
-        }
+        };
+        let view = build_view(&candidate)?;
+        let table_id = candidate.table_id;
+        self.session = Some(candidate);
+        Ok((table_id, view))
     }
 }
 
@@ -245,11 +276,10 @@ impl HanabiLiveSession {
         if snapshot.replay {
             return Err(LiveSnapshotError::Replay);
         }
-        if snapshot.options.variant_name != "No Variant" {
-            return Err(LiveSnapshotError::UnsupportedVariant(
-                snapshot.options.variant_name.clone(),
-            ));
-        }
+        let variant_id =
+            variant_id_from_live_name(&snapshot.options.variant_name).ok_or_else(|| {
+                LiveSnapshotError::UnsupportedVariant(snapshot.options.variant_name.clone())
+            })?;
         if standard_hand_size(snapshot.player_names.len()).is_none() {
             return Err(LiveSnapshotError::InvalidPlayerCount(
                 snapshot.player_names.len(),
@@ -261,8 +291,11 @@ impl HanabiLiveSession {
             ));
         }
 
-        let mut builder =
-            LiveViewBuilder::new(snapshot.player_names.len(), snapshot.our_player_index);
+        let mut builder = LiveViewBuilder::new(
+            snapshot.player_names.len(),
+            snapshot.our_player_index,
+            VariantSpec::from_catalog(variant_id),
+        );
         for action in &snapshot.actions {
             builder.apply(action)?;
         }
@@ -280,6 +313,17 @@ impl HanabiLiveSession {
     }
 
     fn player_view(&self) -> Result<PlayerView, LiveSnapshotError> {
+        if self.builder.variant != VariantSpec::from_catalog(VariantId::NoVariant) {
+            return Err(LiveSnapshotError::PolicyUnsupportedVariant(
+                self.builder.variant.name().to_owned(),
+            ));
+        }
+        self.physical_player_view()?
+            .try_standard()
+            .map_err(LiveSnapshotError::StandardClue)
+    }
+
+    fn physical_player_view(&self) -> Result<PlayerView<GenericClue>, LiveSnapshotError> {
         self.builder.player_view()
     }
 }
@@ -288,31 +332,38 @@ impl HanabiLiveActionCommand {
     /// Converts an engine action into the payload expected by Hanabi Live.
     #[must_use]
     pub fn from_engine_action(table_id: u64, action: Action) -> Self {
+        Self::from_physical_action(table_id, action.into())
+    }
+
+    /// Encodes a physical action without convention interpretation.
+    /// The caller supplies an action legal under the active variant.
+    #[must_use]
+    pub fn from_physical_action(table_id: u64, action: PhysicalAction) -> Self {
         match action {
-            Action::Play(card) => Self {
+            PhysicalAction::Play(card) => Self {
                 table_id,
                 action_type: HanabiLiveActionType::Play,
                 target: card.index(),
                 value: None,
             },
-            Action::Discard(card) => Self {
+            PhysicalAction::Discard(card) => Self {
                 table_id,
                 action_type: HanabiLiveActionType::Discard,
                 target: card.index(),
                 value: None,
             },
-            Action::Clue { target, clue } => match clue {
-                Clue::Suit(suit) => Self {
+            PhysicalAction::Clue { target, clue } => match clue {
+                GenericClue::Color(color) => Self {
                     table_id,
                     action_type: HanabiLiveActionType::SuitClue,
                     target: target.index(),
-                    value: Some(suit.value()),
+                    value: Some(color.value()),
                 },
-                Clue::Rank(rank) => Self {
+                GenericClue::Rank(rank) => Self {
                     table_id,
                     action_type: HanabiLiveActionType::RankClue,
                     target: target.index(),
-                    value: Some(rank.number()),
+                    value: Some(rank.value()),
                 },
             },
         }
@@ -321,6 +372,7 @@ impl HanabiLiveActionCommand {
 
 #[derive(Clone, Debug)]
 struct LiveViewBuilder {
+    variant: VariantSpec,
     observer: PlayerId,
     current_player: PlayerId,
     turn: u32,
@@ -333,21 +385,25 @@ struct LiveViewBuilder {
     final_turns_remaining: Option<u8>,
     final_round_start_turn: Option<u32>,
     status: GameStatus,
-    history: Vec<ObservedHistoryEntry>,
-    seen_cards: [bool; STANDARD_DECK_SIZE],
+    history: Vec<ObservedHistoryEntry<GenericClue>>,
+    seen_cards: Vec<bool>,
     initial_deal_remaining: usize,
 }
 
 impl LiveViewBuilder {
-    fn new(player_count: usize, observer: usize) -> Self {
+    fn new(player_count: usize, observer: usize, variant: VariantSpec) -> Self {
         let hand_size = standard_hand_size(player_count).expect("validated standard player count");
+        let total_cards = variant.identities().deck_size();
+        let play_stacks =
+            vec![Vec::with_capacity(variant.card_ranks().len()); variant.stack_suits().len()];
         Self {
+            variant,
             observer: player_id(observer),
             current_player: player_id(0),
             turn: 0,
             hands: vec![Vec::with_capacity(hand_size); player_count],
-            deck_size: STANDARD_DECK_SIZE,
-            play_stacks: vec![Vec::with_capacity(5); Suit::ALL.len()],
+            deck_size: total_cards,
+            play_stacks,
             discard_pile: Vec::new(),
             clue_tokens: MAX_CLUE_TOKENS,
             strikes: 0,
@@ -355,7 +411,7 @@ impl LiveViewBuilder {
             final_round_start_turn: None,
             status: GameStatus::InProgress,
             history: Vec::new(),
-            seen_cards: [false; STANDARD_DECK_SIZE],
+            seen_cards: vec![false; total_cards],
             initial_deal_remaining: hand_size * player_count,
         }
     }
@@ -409,7 +465,9 @@ impl LiveViewBuilder {
             HanabiLiveOnlineAction::GameOver => {
                 self.status = if self.strikes >= 3 {
                     GameStatus::Finished(EndReason::TooManyStrikes)
-                } else if self.play_stacks.iter().map(Vec::len).sum::<usize>() == 25 {
+                } else if self.play_stacks.iter().map(Vec::len).sum::<usize>()
+                    == self.variant.max_score()
+                {
                     GameStatus::Finished(EndReason::PerfectScore)
                 } else {
                     GameStatus::Finished(EndReason::FinalRoundComplete)
@@ -429,7 +487,7 @@ impl LiveViewBuilder {
     ) -> Result<(), LiveSnapshotError> {
         self.require_player(player_index)?;
         let card = self.new_card(order)?;
-        let supplied_identity = parse_optional_identity(suit_index, rank)?;
+        let supplied_identity = parse_optional_identity(&self.variant, suit_index, rank)?;
         let identity = if player_index == self.observer.index() {
             None
         } else {
@@ -479,11 +537,11 @@ impl LiveViewBuilder {
     ) -> Result<(), LiveSnapshotError> {
         self.require_player(giver)?;
         self.require_player(target)?;
-        let clue = parse_clue(wire_clue)?;
+        let clue = parse_clue(&self.variant, wire_clue)?;
         let touched = touched_orders
             .iter()
             .copied()
-            .map(checked_card_id)
+            .map(|order| checked_card_id(&self.variant, order))
             .collect::<Result<HashSet<_>, _>>()?;
         if touched.len() != touched_orders.len() {
             return Err(LiveSnapshotError::DuplicateTouchedCard);
@@ -493,10 +551,10 @@ impl LiveViewBuilder {
         let mut untouched_cards = Vec::new();
         for card in &mut self.hands[target] {
             if touched.contains(&card.id) {
-                card.clues.add_positive_clue(clue);
+                card.clues.record_physical(clue, true);
                 touched_cards.push(card.id);
             } else {
-                card.clues.add_negative_clue(clue);
+                card.clues.record_physical(clue, false);
                 untouched_cards.push(card.id);
             }
         }
@@ -528,15 +586,26 @@ impl LiveViewBuilder {
         rank: i16,
     ) -> Result<(), LiveSnapshotError> {
         self.require_player(player_index)?;
-        let card = checked_card_id(order)?;
-        let identity = parse_required_identity(card, suit_index, rank)?;
+        let card = checked_card_id(&self.variant, order)?;
+        let identity = parse_required_identity(&self.variant, card, suit_index, rank)?;
         self.remove_card(player_index, card, identity)?;
-        let stack = &mut self.play_stacks[identity.suit.index()];
-        if usize::from(identity.rank.number()) != stack.len() + 1 {
+        let suit_index = self
+            .variant
+            .stack_suits()
+            .iter()
+            .position(|suit| *suit == identity.suit)
+            .expect("parsed active physical suit");
+        let stack = &mut self.play_stacks[suit_index];
+        if self.variant.card_ranks().get(stack.len()) != Some(&identity.rank) {
             return Err(LiveSnapshotError::InvalidSuccessfulPlay { card, identity });
         }
         stack.push((card, identity));
-        if identity.rank == Rank::Five {
+        let identity_id = self
+            .variant
+            .identities()
+            .id_for(identity.suit, identity.rank)
+            .expect("parsed active identity");
+        if self.variant.successor(identity_id).is_none() {
             self.clue_tokens = self.clue_tokens.saturating_add(1).min(MAX_CLUE_TOKENS);
         }
         self.history.push(ObservedHistoryEntry {
@@ -560,8 +629,8 @@ impl LiveViewBuilder {
         failed: bool,
     ) -> Result<(), LiveSnapshotError> {
         self.require_player(player_index)?;
-        let card = checked_card_id(order)?;
-        let identity = parse_required_identity(card, suit_index, rank)?;
+        let card = checked_card_id(&self.variant, order)?;
+        let identity = parse_required_identity(&self.variant, card, suit_index, rank)?;
         self.remove_card(player_index, card, identity)?;
         self.discard_pile.push((card, identity));
         let event = if failed {
@@ -642,7 +711,7 @@ impl LiveViewBuilder {
     }
 
     fn new_card(&mut self, order: usize) -> Result<CardId, LiveSnapshotError> {
-        let card = checked_card_id(order)?;
+        let card = checked_card_id(&self.variant, order)?;
         if self.seen_cards[order] {
             return Err(LiveSnapshotError::DuplicateCard(card));
         }
@@ -657,14 +726,14 @@ impl LiveViewBuilder {
         Ok(())
     }
 
-    fn player_view(&self) -> Result<PlayerView, LiveSnapshotError> {
+    fn player_view(&self) -> Result<PlayerView<GenericClue>, LiveSnapshotError> {
         if self.initial_deal_remaining != 0 {
             return Err(LiveSnapshotError::IncompleteInitialDeal(
                 self.initial_deal_remaining,
             ));
         }
         Ok(PlayerView {
-            variant: hanabi_core::VariantSpec::no_variant(),
+            variant: self.variant.clone(),
             observer: self.observer,
             current_player: self.current_player,
             turn: self.turn,
@@ -685,55 +754,71 @@ fn player_id(index: usize) -> PlayerId {
     PlayerId::new(u8::try_from(index).expect("standard Hanabi has at most six players"))
 }
 
-fn checked_card_id(order: usize) -> Result<CardId, LiveSnapshotError> {
-    if order >= STANDARD_DECK_SIZE {
+fn checked_card_id(variant: &VariantSpec, order: usize) -> Result<CardId, LiveSnapshotError> {
+    if order >= variant.identities().deck_size() {
         return Err(LiveSnapshotError::InvalidCardOrder(order));
     }
     Ok(CardId::new(order))
 }
 
-fn parse_optional_identity(suit_index: i16, rank: i16) -> Result<Option<Card>, LiveSnapshotError> {
+fn parse_optional_identity(
+    variant: &VariantSpec,
+    suit_index: i16,
+    rank: i16,
+) -> Result<Option<Card>, LiveSnapshotError> {
     match (suit_index, rank) {
         (-1, -1) => Ok(None),
         (-1, _) | (_, -1) => Err(LiveSnapshotError::PartiallyHiddenIdentity { suit_index, rank }),
-        _ => Ok(Some(Card::new(parse_suit(suit_index)?, parse_rank(rank)?))),
+        _ => Ok(Some(Card::new(
+            parse_suit(variant, suit_index)?,
+            parse_rank(variant, rank)?,
+        ))),
     }
 }
 
 fn parse_required_identity(
+    variant: &VariantSpec,
     card: CardId,
     suit_index: i16,
     rank: i16,
 ) -> Result<Card, LiveSnapshotError> {
-    parse_optional_identity(suit_index, rank)?.ok_or(LiveSnapshotError::HiddenPublicCard(card))
+    parse_optional_identity(variant, suit_index, rank)?
+        .ok_or(LiveSnapshotError::HiddenPublicCard(card))
 }
 
-fn parse_suit(value: i16) -> Result<Suit, LiveSnapshotError> {
-    match value {
-        0 => Ok(Suit::Red),
-        1 => Ok(Suit::Yellow),
-        2 => Ok(Suit::Green),
-        3 => Ok(Suit::Blue),
-        4 => Ok(Suit::Purple),
-        _ => Err(LiveSnapshotError::InvalidSuit(value)),
-    }
+fn parse_suit(variant: &VariantSpec, value: i16) -> Result<SuitId, LiveSnapshotError> {
+    usize::try_from(value)
+        .ok()
+        .and_then(|index| variant.stack_suits().get(index).copied())
+        .ok_or(LiveSnapshotError::InvalidSuit(value))
 }
 
-fn parse_rank(value: i16) -> Result<Rank, LiveSnapshotError> {
-    match value {
-        1 => Ok(Rank::One),
-        2 => Ok(Rank::Two),
-        3 => Ok(Rank::Three),
-        4 => Ok(Rank::Four),
-        5 => Ok(Rank::Five),
-        _ => Err(LiveSnapshotError::InvalidRank(value)),
-    }
+fn parse_rank(variant: &VariantSpec, value: i16) -> Result<CardRank, LiveSnapshotError> {
+    variant
+        .card_ranks()
+        .iter()
+        .copied()
+        .find(|rank| i16::from(rank.value()) == value)
+        .ok_or(LiveSnapshotError::InvalidRank(value))
 }
 
-fn parse_clue(clue: HanabiLiveOnlineClue) -> Result<Clue, LiveSnapshotError> {
+fn parse_clue(
+    variant: &VariantSpec,
+    clue: HanabiLiveOnlineClue,
+) -> Result<GenericClue, LiveSnapshotError> {
     match clue.clue_type {
-        HanabiLiveClueType::Suit => parse_suit(clue.value).map(Clue::Suit),
-        HanabiLiveClueType::Rank => parse_rank(clue.value).map(Clue::Rank),
+        HanabiLiveClueType::Suit => u8::try_from(clue.value)
+            .ok()
+            .map(ClueColorId::new)
+            .filter(|color| variant.clue_colors().contains(color))
+            .map(GenericClue::Color)
+            .ok_or(LiveSnapshotError::InvalidClueColor(clue.value)),
+        HanabiLiveClueType::Rank => u8::try_from(clue.value)
+            .ok()
+            .map(ClueRank::new)
+            .filter(|rank| variant.clue_ranks().contains(rank))
+            .map(GenericClue::Rank)
+            .ok_or(LiveSnapshotError::InvalidClueRank(clue.value)),
         HanabiLiveClueType::Unknown(other) => Err(LiveSnapshotError::InvalidClueType(other)),
     }
 }
@@ -745,6 +830,9 @@ pub enum LiveSnapshotError {
     Spectating,
     Replay,
     UnsupportedVariant(String),
+    /// Physical rules are supported, but production conventions/policy are not.
+    PolicyUnsupportedVariant(String),
+    StandardClue(StandardClueError),
     InvalidPlayerCount(usize),
     InvalidObserver(usize),
     InvalidPlayerIndex(usize),
@@ -764,6 +852,8 @@ pub enum LiveSnapshotError {
     InvalidSuit(i16),
     InvalidRank(i16),
     InvalidClueType(u8),
+    InvalidClueColor(i16),
+    InvalidClueRank(i16),
     DuplicateTouchedCard,
     TouchedCardNotInHand,
     ClueWithoutToken,
@@ -802,6 +892,11 @@ impl fmt::Display for LiveSnapshotError {
             Self::UnsupportedVariant(variant) => {
                 write!(formatter, "unsupported Hanabi Live variant {variant:?}")
             }
+            Self::PolicyUnsupportedVariant(variant) => write!(
+                formatter,
+                "convention/policy support is not available yet for Hanabi Live variant {variant:?}; use the physical view API"
+            ),
+            Self::StandardClue(error) => error.fmt(formatter),
             Self::InvalidPlayerCount(count) => {
                 write!(formatter, "live game has invalid player count {count}")
             }
@@ -812,10 +907,14 @@ impl fmt::Display for LiveSnapshotError {
                 write!(formatter, "action player index {index} is out of range")
             }
             Self::InvalidCardOrder(order) => {
-                write!(formatter, "card order {order} is outside the standard deck")
+                write!(
+                    formatter,
+                    "card order {order} is outside the active variant deck"
+                )
             }
             Self::DuplicateCard(card) => write!(formatter, "card {card} was drawn more than once"),
-            Self::TooManyDraws => formatter.write_str("action stream draws more than 50 cards"),
+            Self::TooManyDraws => formatter
+                .write_str("action stream draws more cards than the active variant deck contains"),
             Self::IncompleteInitialDeal(remaining) => {
                 write!(
                     formatter,
@@ -833,11 +932,11 @@ impl fmt::Display for LiveSnapshotError {
                 formatter,
                 "card identity is only partly hidden (suit {suit_index}, rank {rank})"
             ),
-            Self::InvalidSuit(suit) => write!(formatter, "invalid standard suit index {suit}"),
-            Self::InvalidRank(rank) => write!(formatter, "invalid standard rank {rank}"),
-            Self::InvalidClueType(clue_type) => {
-                write!(formatter, "invalid standard clue type {clue_type}")
-            }
+            Self::InvalidSuit(suit) => write!(formatter, "invalid physical suit index {suit}"),
+            Self::InvalidRank(rank) => write!(formatter, "invalid physical rank {rank}"),
+            Self::InvalidClueColor(color) => write!(formatter, "invalid clue color label {color}"),
+            Self::InvalidClueRank(rank) => write!(formatter, "invalid clue rank label {rank}"),
+            Self::InvalidClueType(clue_type) => write!(formatter, "invalid clue type {clue_type}"),
             Self::DuplicateTouchedCard => {
                 formatter.write_str("clue lists the same touched card more than once")
             }
@@ -856,12 +955,10 @@ impl fmt::Display for LiveSnapshotError {
             Self::InvalidStrikeCount(count) => {
                 write!(formatter, "server reported invalid strike count {count}")
             }
-            Self::CardNotInHand { card, player_index } => {
-                write!(
-                    formatter,
-                    "card {card} is not in player {player_index}'s hand"
-                )
-            }
+            Self::CardNotInHand { card, player_index } => write!(
+                formatter,
+                "card {card} is not in player {player_index}'s hand"
+            ),
             Self::IdentityChanged {
                 card,
                 visible,
@@ -894,6 +991,7 @@ impl std::error::Error for LiveSnapshotError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Json(error) => Some(error),
+            Self::StandardClue(error) => Some(error),
             _ => None,
         }
     }
@@ -902,7 +1000,7 @@ impl std::error::Error for LiveSnapshotError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hanabi_core::{Clue, ObservedEvent, Rank, standard_deck};
+    use hanabi_core::{Clue, ObservedEvent, Rank, Suit, standard_deck};
 
     fn snapshot_json() -> String {
         serde_json::json!({
@@ -949,7 +1047,7 @@ mod tests {
             value: 0,
         };
         assert!(matches!(
-            parse_clue(clue),
+            parse_clue(&VariantSpec::no_variant(), clue),
             Err(LiveSnapshotError::InvalidClueType(7))
         ));
     }
