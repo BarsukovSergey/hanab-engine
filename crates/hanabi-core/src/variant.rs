@@ -169,8 +169,6 @@ pub struct VariantSpec {
     card_ranks: Vec<CardRank>,
     clue_colors: Vec<ClueColorId>,
     clue_ranks: Vec<ClueRank>,
-    max_clue_tokens: u8,
-    max_strikes: u8,
     universe: IdentityUniverse,
 }
 
@@ -231,8 +229,6 @@ impl VariantSpec {
             card_ranks,
             clue_colors,
             clue_ranks,
-            max_clue_tokens: 8,
-            max_strikes: 3,
             universe: IdentityUniverse::new(identities)?,
         })
     }
@@ -300,32 +296,6 @@ impl VariantSpec {
     #[must_use]
     pub const fn identities(&self) -> &IdentityUniverse {
         &self.universe
-    }
-
-    #[must_use]
-    pub const fn max_clue_tokens(&self) -> u8 {
-        self.max_clue_tokens
-    }
-
-    #[must_use]
-    pub const fn max_strikes(&self) -> u8 {
-        self.max_strikes
-    }
-
-    pub fn with_limits(
-        mut self,
-        max_clue_tokens: u8,
-        max_strikes: u8,
-    ) -> Result<Self, VariantSpecError> {
-        if max_clue_tokens == 0 {
-            return Err(VariantSpecError::ZeroClueTokens);
-        }
-        if max_strikes == 0 {
-            return Err(VariantSpecError::ZeroStrikes);
-        }
-        self.max_clue_tokens = max_clue_tokens;
-        self.max_strikes = max_strikes;
-        Ok(self)
     }
 
     #[must_use]
@@ -436,8 +406,6 @@ pub enum VariantSpecError {
     ZeroCopies {
         identity_index: usize,
     },
-    ZeroClueTokens,
-    ZeroStrikes,
     DeckTooLarge,
     DuplicateValue {
         kind: &'static str,
@@ -526,10 +494,6 @@ impl fmt::Display for VariantSpecError {
                     "identity {identity_index} has zero physical copies"
                 )
             }
-            Self::ZeroClueTokens => {
-                formatter.write_str("variant must allow at least one clue token")
-            }
-            Self::ZeroStrikes => formatter.write_str("variant must allow at least one strike"),
             Self::DeckTooLarge => formatter.write_str("variant deck size overflows usize"),
             Self::DuplicateValue { kind, value } => {
                 write!(formatter, "duplicate {kind} value {value}")
