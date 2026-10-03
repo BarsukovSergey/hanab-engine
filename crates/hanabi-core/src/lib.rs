@@ -9,8 +9,8 @@ pub mod card;
 pub mod ids;
 pub mod public_transition;
 pub mod state;
-pub mod view;
 pub mod variant;
+pub mod view;
 
 pub use action::{Action, Clue};
 pub use card::{Card, Rank, Suit, standard_deck};
