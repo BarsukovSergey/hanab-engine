@@ -535,7 +535,9 @@ impl FullState {
         }
         if let Some(remaining) = self.final_turns_remaining {
             if remaining > self.num_players() {
-                return Err(InvariantViolation("final-round counter is too large".into()));
+                return Err(InvariantViolation(
+                    "final-round counter is too large".into(),
+                ));
             }
             if self.status == GameStatus::InProgress && remaining == 0 {
                 return Err(InvariantViolation(
@@ -563,13 +565,7 @@ impl FullState {
             ));
         }
 
-        for (stack_index, suit) in self
-            .variant
-            .stack_suits()
-            .iter()
-            .copied()
-            .enumerate()
-        {
+        for (stack_index, suit) in self.variant.stack_suits().iter().copied().enumerate() {
             let stack = &self.play_stacks[stack_index];
             if stack.len() > self.variant.card_ranks().len() {
                 return Err(InvariantViolation(format!(
@@ -863,11 +859,7 @@ fn validate_variant_deck(variant: &VariantSpec, deck: &[Card]) -> Result<(), Set
     }
 
     for card in deck {
-        if variant
-            .identities()
-            .id_for(card.suit, card.rank)
-            .is_none()
-        {
+        if variant.identities().id_for(card.suit, card.rank).is_none() {
             let actual = deck.iter().filter(|candidate| **candidate == *card).count();
             return Err(SetupError::InvalidCardMultiplicity {
                 card: *card,
