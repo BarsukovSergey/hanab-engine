@@ -39,9 +39,7 @@ impl<'de> Deserialize<'de> for HanabiLiveReplay {
             // until the server's sixth default-name source is pinned here.
             let defaults = ["Alice", "Bob", "Cathy", "Donald", "Emily"];
             let names = defaults.get(..count).ok_or_else(|| {
-                serde::de::Error::custom(
-                    "six-player seeded replays require explicit players",
-                )
+                serde::de::Error::custom("six-player seeded replays require explicit players")
             })?;
             names.iter().map(|name| (*name).to_owned()).collect()
         };
