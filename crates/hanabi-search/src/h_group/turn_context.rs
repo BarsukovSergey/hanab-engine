@@ -19,7 +19,8 @@ impl<'a> HistoricalView<'a> {
     }
 
     pub(super) fn identity(self, card: CardId) -> Option<Card> {
-        let hand_size = hanabi_core::standard_hand_size(self.source.hands.len()).expect("validated standard player count");
+        let hand_size = hanabi_core::standard_hand_size(self.source.hands.len())
+            .expect("validated standard player count");
         let initial_cards = hand_size * self.source.hands.len();
         let draw = self
             .source
