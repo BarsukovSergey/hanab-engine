@@ -175,6 +175,14 @@ pub struct VariantSpec {
 }
 
 impl VariantSpec {
+    /// Builds an immutable physical-variant description.
+    ///
+    /// # Errors
+    ///
+    /// Returns VariantSpecError when the physical identity universe is empty
+    /// or too large, identifiers are duplicated, identities reference
+    /// undeclared suits/ranks/clue domains, or a physical identity has zero
+    /// copies.
     pub fn new(
         name: impl Into<String>,
         stack_suits: Vec<SuitId>,
@@ -235,6 +243,13 @@ impl VariantSpec {
         })
     }
 
+    /// Returns the built-in standard five-color No Variant specification.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the compile-time built-in specification violates the
+    /// same validation rules accepted by Self::new, which indicates an
+    /// internal engine bug.
     #[must_use]
     pub fn no_variant() -> Self {
         let stack_suits = (0_u8..5).map(SuitId::new).collect::<Vec<_>>();
