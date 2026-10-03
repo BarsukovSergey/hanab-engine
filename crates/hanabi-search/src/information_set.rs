@@ -17,7 +17,7 @@ type Counts = [u8; CARD_IDENTITY_COUNT];
 pub struct InformationSet {
     deductions: LogicalDeductions,
     known_identities: [Option<Card>; STANDARD_CARD_COUNT],
-    constraint_masks: Vec<u32>,
+    constraint_masks: Vec<u64>,
     deck_cards: Vec<CardId>,
     world_template: WorldTemplate,
 }
@@ -36,7 +36,7 @@ pub struct LogicalDeductions {
 
 /// Compact set of the 25 standard card identities.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct IdentitySet(u32);
+pub struct IdentitySet(u64);
 
 /// Why deterministic own-hand assignment traversal ended.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -89,10 +89,14 @@ pub struct BeliefConstraints {
 }
 
 impl IdentitySet {
-    pub(crate) const ALL_MASK: u32 = (1 << CARD_IDENTITY_COUNT) - 1;
+    pub(crate) const ALL_MASK: u64 = (1_u64 << CARD_IDENTITY_COUNT) - 1;
 
     pub(crate) const fn from_mask(mask: u32) -> Self {
-        Self(mask & Self::ALL_MASK)
+        Self((mask as u64) & Self::ALL_MASK)
+    }
+
+    pub(crate) const fn from_bits(bits: u64) -> Self {
+        Self(bits & Self::ALL_MASK)
     }
 
     #[must_use]
@@ -102,12 +106,12 @@ impl IdentitySet {
 
     #[must_use]
     pub const fn singleton(card: Card) -> Self {
-        Self(1 << card.index())
+        Self(1_u64 << card.index())
     }
 
     #[must_use]
     pub const fn contains(self, card: Card) -> bool {
-        self.0 & (1 << card.index()) != 0
+        self.0 & (1_u64 << card.index()) != 0
     }
 
     #[must_use]
@@ -140,7 +144,7 @@ impl IdentitySet {
     }
 }
 
-struct IdentitySetIter(u32);
+struct IdentitySetIter(u64);
 
 impl Iterator for IdentitySetIter {
     type Item = Card;
@@ -374,7 +378,7 @@ impl InformationSet {
                 if let Some(identity) = observed.identity {
                     set_known_identity(&mut known_identities, observed.id, identity)?;
                 } else {
-                    constraint_masks.push(observed.clues.identity_mask());
+                    constraint_masks.push(u64::from(observed.clues.identity_mask()));
                 }
             }
         }
@@ -583,7 +587,7 @@ impl InformationSet {
         &self,
         belief: &BeliefConstraints,
         control: &crate::AnalysisControl,
-        mut visitor: impl FnMut(&[u32]) -> bool,
+        mut visitor: impl FnMut(&[u64]) -> bool,
     ) -> Result<(), crate::AnalysisStopped> {
         let base_masks = self.constrained_masks(&belief.constraints);
         if base_masks.contains(&0) {
@@ -598,8 +602,8 @@ impl InformationSet {
     fn visit_factors(
         &self,
         factors: &[Vec<Vec<(CardId, IdentitySet)>>],
-        masks: &[u32],
-        visitor: &mut impl FnMut(&[u32]) -> bool,
+        masks: &[u64],
+        visitor: &mut impl FnMut(&[u64]) -> bool,
         control: &crate::AnalysisControl,
     ) -> Result<bool, crate::AnalysisStopped> {
         control.checkpoint()?;
@@ -616,13 +620,13 @@ impl InformationSet {
         Ok(true)
     }
 
-    fn constrained_masks(&self, constraints: &[(CardId, IdentitySet)]) -> Vec<u32> {
+    fn constrained_masks(&self, constraints: &[(CardId, IdentitySet)]) -> Vec<u64> {
         let mut masks = self.constraint_masks.clone();
         self.intersect_masks(&mut masks, constraints);
         masks
     }
 
-    fn intersect_masks(&self, masks: &mut [u32], constraints: &[(CardId, IdentitySet)]) {
+    fn intersect_masks(&self, masks: &mut [u64], constraints: &[(CardId, IdentitySet)]) {
         for (card, identities) in constraints {
             let Some(slot) = self
                 .deductions
@@ -638,7 +642,7 @@ impl InformationSet {
 }
 
 fn count_identity_worlds(
-    hand_masks: &[u32],
+    hand_masks: &[u64],
     deck_len: usize,
     slot: usize,
     counts: &mut Counts,
@@ -660,7 +664,7 @@ fn count_identity_worlds(
         .copied()
         .unwrap_or(IdentitySet::ALL_MASK);
     for identity in 0..CARD_IDENTITY_COUNT {
-        if counts[identity] == 0 || allowed & (1 << identity) == 0 {
+        if counts[identity] == 0 || allowed & (1_u64 << identity) == 0 {
             continue;
         }
         counts[identity] -= 1;
@@ -684,7 +688,7 @@ fn count_identity_worlds(
 
 fn visit_identity_worlds(
     locations: &[CardId],
-    hand_masks: &[u32],
+    hand_masks: &[u64],
     slot: usize,
     counts: &mut Counts,
     cards: &mut [Card],
@@ -702,7 +706,7 @@ fn visit_identity_worlds(
         .copied()
         .unwrap_or(IdentitySet::ALL_MASK);
     for identity in 0..CARD_IDENTITY_COUNT {
-        if counts[identity] == 0 || allowed & (1 << identity) == 0 {
+        if counts[identity] == 0 || allowed & (1_u64 << identity) == 0 {
             continue;
         }
         counts[identity] -= 1;
@@ -788,19 +792,19 @@ fn feasible_identities(constraints: &[ClueFacts], counts: Counts) -> Vec<Identit
 
 fn feasible_identity_array(constraints: &[ClueFacts], counts: Counts) -> [IdentitySet; 5] {
     debug_assert!(constraints.len() <= 5);
-    let mut masks = [0; 5];
+    let mut masks = [0_u64; 5];
     for (slot, constraint) in constraints.iter().enumerate() {
-        masks[slot] = constraint.identity_mask();
+        masks[slot] = u64::from(constraint.identity_mask());
     }
     feasible_identity_masks(&masks[..constraints.len()], counts)
 }
 
-fn feasible_identity_masks(constraint_masks: &[u32], counts: Counts) -> [IdentitySet; 5] {
+fn feasible_identity_masks(constraint_masks: &[u64], counts: Counts) -> [IdentitySet; 5] {
     debug_assert!(constraint_masks.len() <= 5);
-    let mut allowed = [0_u32; 5];
+    let mut allowed = [0_u64; 5];
     allowed[..constraint_masks.len()].copy_from_slice(constraint_masks);
     let subset_count = 1_usize << constraint_masks.len();
-    let mut union_masks = [0_u32; 32];
+    let mut union_masks = [0_u64; 32];
     let mut union_capacities = [0_u8; 32];
     for subset in 1..subset_count {
         let slot = subset.trailing_zeros() as usize;
@@ -821,11 +825,11 @@ fn feasible_identity_masks(constraint_masks: &[u32], counts: Counts) -> [Identit
     let available_identities = counts
         .iter()
         .enumerate()
-        .fold(0_u32, |mask, (identity, count)| {
-            mask | (u32::from(*count > 0) << identity)
+        .fold(0_u64, |mask, (identity, count)| {
+            mask | (u64::from(*count > 0) << identity)
         });
     for fixed_slot in 0..constraint_masks.len() {
-        let mut forbidden = 0_u32;
+        let mut forbidden = 0_u64;
         let mut impossible = false;
         for subset in (1..subset_count).filter(|subset| subset & (1 << fixed_slot) == 0) {
             let required =
@@ -841,7 +845,7 @@ fn feasible_identity_masks(constraint_masks: &[u32], counts: Counts) -> [Identit
         }
         if !impossible {
             feasible[fixed_slot] =
-                IdentitySet::from_mask(allowed[fixed_slot] & available_identities & !forbidden);
+                IdentitySet::from_bits(allowed[fixed_slot] & available_identities & !forbidden);
         }
     }
     feasible
