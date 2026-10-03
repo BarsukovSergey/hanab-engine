@@ -146,7 +146,7 @@ pub struct PlayerView {
     pub turn: u32,
     pub hands: Vec<Vec<ObservedCard>>,
     pub deck_size: usize,
-    pub play_stacks: [Vec<(CardId, Card)>; 5],
+    pub play_stacks: Vec<Vec<(CardId, Card)>>,
     pub discard_pile: Vec<(CardId, Card)>,
     pub clue_tokens: u8,
     pub strikes: u8,
@@ -184,7 +184,7 @@ impl PlayerView {
                 let target = PlayerId::new(
                     target_index
                         .try_into()
-                        .expect("standard Hanabi has at most five players"),
+                        .expect("standard Hanabi has at most six players"),
                 );
 
                 for suit in Suit::ALL {
@@ -248,12 +248,16 @@ impl FullState {
             })
             .collect();
 
-        let play_stacks = std::array::from_fn(|suit| {
-            self.play_stacks()[suit]
-                .iter()
-                .map(|id| (*id, self.card(*id).expect("located cards have identities")))
-                .collect()
-        });
+        let play_stacks = self
+            .play_stacks()
+            .iter()
+            .map(|stack| {
+                stack
+                    .iter()
+                    .map(|id| (*id, self.card(*id).expect("located cards have identities")))
+                    .collect()
+            })
+            .collect();
         let discard_pile = self
             .discard_pile()
             .iter()
