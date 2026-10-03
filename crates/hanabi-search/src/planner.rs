@@ -2789,10 +2789,13 @@ fn exact_value_upper_bound(worlds: &[FullState]) -> ExactActionValue {
 
 fn final_round_score_bound(world: &FullState) -> Option<u64> {
     let remaining = world.final_turns_remaining()?;
-    let heights = world
+    let heights: [u8; 5] = world
         .play_stacks()
-        .each_ref()
-        .map(|stack| u8::try_from(stack.len()).expect("standard stack"));
+        .iter()
+        .map(|stack| u8::try_from(stack.len()).expect("standard stack"))
+        .collect::<Vec<_>>()
+        .try_into()
+        .expect("standard planner requires five stacks");
     Some(
         u64::from(world.score())
             + u64::from(final_round_max_plays(
