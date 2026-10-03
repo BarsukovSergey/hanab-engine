@@ -1,7 +1,8 @@
 use core::fmt;
 
 use hanabi_core::{
-    Action, Card, CardId, Clue, FullState, GameStatus, PlayerId, Rank, RuleError, SetupError, Suit,
+    Card, CardId, ClueColorId, ClueRank, FullState, GameStatus, GenericClue, PhysicalAction,
+    PlayerId, RuleError, SetupError, VariantId, VariantSpec,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -15,32 +16,38 @@ pub struct HanabiLiveReplay {
     pub options: Option<HanabiLiveOptions>,
 }
 
+#[derive(Deserialize)]
+struct WireReplay {
+    players: Option<Vec<String>>,
+    deck: Option<Vec<HanabiLiveCard>>,
+    seed: Option<String>,
+    actions: Vec<HanabiLiveAction>,
+    options: Option<HanabiLiveOptions>,
+}
+
 impl<'de> Deserialize<'de> for HanabiLiveReplay {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        struct WireReplay {
-            players: Option<Vec<String>>,
-            deck: Option<Vec<HanabiLiveCard>>,
-            seed: Option<String>,
-            actions: Vec<HanabiLiveAction>,
-            options: Option<HanabiLiveOptions>,
-        }
-        let wire = WireReplay::deserialize(deserializer)?;
+        Self::from_wire(WireReplay::deserialize(deserializer)?)
+    }
+}
+
+impl HanabiLiveReplay {
+    fn from_wire<E: serde::de::Error>(wire: WireReplay) -> Result<Self, E> {
         let players = if let Some(players) = wire.players {
             players
         } else {
-            let seed = wire.seed.as_deref().ok_or_else(|| {
-                serde::de::Error::custom("replay requires players when no seed is provided")
-            })?;
-            let count =
-                crate::seed::player_count_from_seed(seed).map_err(serde::de::Error::custom)?;
+            let seed = wire
+                .seed
+                .as_deref()
+                .ok_or_else(|| E::custom("replay requires players when no seed is provided"))?;
+            let count = crate::seed::player_count_from_seed(seed).map_err(E::custom)?;
             // Hanab Live's known default names cover the original 2–5
             // player exports. Six-player replays must preserve explicit names
             // until the server's sixth default-name source is pinned here.
             let defaults = ["Alice", "Bob", "Cathy", "Donald", "Emily"];
-            let names = defaults.get(..count).ok_or_else(|| {
-                serde::de::Error::custom("six-player seeded replays require explicit players")
-            })?;
+            let names = defaults
+                .get(..count)
+                .ok_or_else(|| E::custom("six-player seeded replays require explicit players"))?;
             names.iter().map(|name| (*name).to_owned()).collect()
         };
         // Explicit decks remain authoritative, including custom/edited deals
@@ -53,15 +60,13 @@ impl<'de> Deserialize<'de> for HanabiLiveReplay {
                 .as_ref()
                 .is_some_and(|options| options.variant != "No Variant")
             {
-                return Err(serde::de::Error::custom(
-                    "seed generation only supports No Variant",
-                ));
+                return Err(E::custom("seed generation only supports No Variant"));
             }
             let seed = wire
                 .seed
                 .as_deref()
-                .ok_or_else(|| serde::de::Error::custom("replay requires a deck or seed"))?;
-            crate::seed::deck_from_seed(seed, players.len()).map_err(serde::de::Error::custom)?
+                .ok_or_else(|| E::custom("replay requires a deck or seed"))?;
+            crate::seed::deck_from_seed(seed, players.len()).map_err(E::custom)?
         };
         Ok(Self {
             seed: wire.seed,
@@ -162,12 +167,14 @@ impl HanabiLiveReplay {
     /// # Errors
     ///
     /// Returns [`ReplayError::Json`] if the JSON does not match the export
-    /// schema.
+    /// schema, or [`ReplayError::UnsupportedVariant`] for an unknown name.
     pub fn from_json(json: &str) -> Result<Self, ReplayError> {
-        serde_json::from_str(json).map_err(ReplayError::Json)
+        let wire: WireReplay = serde_json::from_str(json).map_err(ReplayError::Json)?;
+        variant_from_options(wire.options.as_ref())?;
+        Self::from_wire(wire).map_err(ReplayError::Json)
     }
 
-    /// Replays standard five-color actions through `hanabi-core`.
+    /// Replays catalog variants through the physical rules in `hanabi-core`.
     ///
     /// Both current exports and legacy fixtures without an `options` object
     /// are accepted. A missing variant is interpreted as `No Variant`.
@@ -188,9 +195,9 @@ impl HanabiLiveReplay {
                 break;
             }
 
-            let engine_action = action_from_live(action)?;
+            let engine_action = action_from_live(action, state.variant())?;
             state
-                .apply_physical(engine_action.into())
+                .apply_physical(engine_action)
                 .map_err(|source| ReplayError::IllegalAction { turn, source })?;
         }
         Ok(state)
@@ -221,9 +228,9 @@ impl HanabiLiveReplay {
                 break;
             }
 
-            let engine_action = action_from_live(action)?;
+            let engine_action = action_from_live(action, state.variant())?;
             state
-                .apply_physical(engine_action.into())
+                .apply_physical(engine_action)
                 .map_err(|source| ReplayError::IllegalAction {
                     turn: action_index,
                     source,
@@ -240,11 +247,7 @@ impl HanabiLiveReplay {
     }
 
     fn initial_state(&self) -> Result<FullState, ReplayError> {
-        if let Some(options) = &self.options {
-            if options.variant != "No Variant" {
-                return Err(ReplayError::UnsupportedVariant(options.variant.clone()));
-            }
-        }
+        let variant = VariantSpec::from_catalog(variant_from_options(self.options.as_ref())?);
 
         let player_count = u8::try_from(self.players.len())
             .map_err(|_| ReplayError::InvalidPlayerCount(self.players.len()))?;
@@ -252,30 +255,58 @@ impl HanabiLiveReplay {
             .deck
             .iter()
             .copied()
-            .map(card_from_live)
+            .map(|card| card_from_live(card, &variant))
             .collect::<Result<Vec<_>, _>>()?;
-        FullState::new_standard(player_count, deck).map_err(ReplayError::Setup)
+        FullState::new_variant(player_count, variant, deck).map_err(ReplayError::Setup)
     }
 }
 
-fn card_from_live(card: HanabiLiveCard) -> Result<Card, ReplayError> {
-    Ok(Card::new(
-        suit_from_index(card.suit_index)?,
-        rank_from_number(card.rank)?,
-    ))
+// Exact wire names are owned by the protocol, not by the core catalog keys.
+fn variant_from_options(options: Option<&HanabiLiveOptions>) -> Result<VariantId, ReplayError> {
+    let name = options.map_or("No Variant", |options| options.variant.as_str());
+    match name {
+        "No Variant" => Ok(VariantId::NoVariant),
+        "Black (6 Suits)" => Ok(VariantId::Black6Suits),
+        "Rainbow (6 Suits)" => Ok(VariantId::Rainbow6Suits),
+        "White (6 Suits)" => Ok(VariantId::White6Suits),
+        "Pink (6 Suits)" => Ok(VariantId::Pink6Suits),
+        "Brown (6 Suits)" => Ok(VariantId::Brown6Suits),
+        "Prism (6 Suits)" => Ok(VariantId::Prism6Suits),
+        "Omni (6 Suits)" => Ok(VariantId::Omni6Suits),
+        "Null (6 Suits)" => Ok(VariantId::Null6Suits),
+        _ => Err(ReplayError::UnsupportedVariant(name.to_owned())),
+    }
 }
 
-fn action_from_live(action: &HanabiLiveAction) -> Result<Action, ReplayError> {
+fn card_from_live(card: HanabiLiveCard, variant: &VariantSpec) -> Result<Card, ReplayError> {
+    let suit = variant
+        .stack_suits()
+        .get(usize::from(card.suit_index))
+        .copied()
+        .ok_or(ReplayError::InvalidSuit(card.suit_index))?;
+    let rank = variant
+        .card_ranks()
+        .iter()
+        .copied()
+        .find(|rank| rank.value() == card.rank)
+        .ok_or(ReplayError::InvalidRank(card.rank))?;
+    Ok(Card::new(suit, rank))
+}
+
+fn action_from_live(
+    action: &HanabiLiveAction,
+    variant: &VariantSpec,
+) -> Result<PhysicalAction, ReplayError> {
     match action.action_type {
-        HanabiLiveActionType::Play => Ok(Action::Play(CardId::new(action.target))),
-        HanabiLiveActionType::Discard => Ok(Action::Discard(CardId::new(action.target))),
-        HanabiLiveActionType::SuitClue => Ok(Action::Clue {
+        HanabiLiveActionType::Play => Ok(PhysicalAction::Play(CardId::new(action.target))),
+        HanabiLiveActionType::Discard => Ok(PhysicalAction::Discard(CardId::new(action.target))),
+        HanabiLiveActionType::SuitClue => Ok(PhysicalAction::Clue {
             target: player_from_target(action.target)?,
-            clue: Clue::Suit(suit_from_index(action.value)?),
+            clue: validate_clue(GenericClue::Color(ClueColorId::new(action.value)), variant)?,
         }),
-        HanabiLiveActionType::RankClue => Ok(Action::Clue {
+        HanabiLiveActionType::RankClue => Ok(PhysicalAction::Clue {
             target: player_from_target(action.target)?,
-            clue: Clue::Rank(rank_from_number(action.value)?),
+            clue: validate_clue(GenericClue::Rank(ClueRank::new(action.value)), variant)?,
         }),
         HanabiLiveActionType::GameOver => unreachable!("game-over actions are handled by replay"),
         HanabiLiveActionType::Unknown(other) => Err(ReplayError::UnknownActionType(other)),
@@ -288,25 +319,15 @@ fn player_from_target(target: usize) -> Result<PlayerId, ReplayError> {
         .map_err(|_| ReplayError::InvalidPlayerTarget(target))
 }
 
-fn suit_from_index(index: u8) -> Result<Suit, ReplayError> {
-    match index {
-        0 => Ok(Suit::Red),
-        1 => Ok(Suit::Yellow),
-        2 => Ok(Suit::Green),
-        3 => Ok(Suit::Blue),
-        4 => Ok(Suit::Purple),
-        _ => Err(ReplayError::InvalidSuit(index)),
-    }
-}
-
-fn rank_from_number(rank: u8) -> Result<Rank, ReplayError> {
-    match rank {
-        1 => Ok(Rank::One),
-        2 => Ok(Rank::Two),
-        3 => Ok(Rank::Three),
-        4 => Ok(Rank::Four),
-        5 => Ok(Rank::Five),
-        _ => Err(ReplayError::InvalidRank(rank)),
+fn validate_clue(clue: GenericClue, variant: &VariantSpec) -> Result<GenericClue, ReplayError> {
+    let valid = match clue {
+        GenericClue::Color(color) => variant.clue_colors().contains(&color),
+        GenericClue::Rank(rank) => variant.clue_ranks().contains(&rank),
+    };
+    if valid {
+        Ok(clue)
+    } else {
+        Err(ReplayError::InvalidClue(clue))
     }
 }
 
@@ -318,6 +339,7 @@ pub enum ReplayError {
     InvalidPlayerTarget(usize),
     InvalidSuit(u8),
     InvalidRank(u8),
+    InvalidClue(GenericClue),
     UnknownActionType(u8),
     Setup(SetupError),
     IllegalAction { turn: usize, source: RuleError },
@@ -336,8 +358,9 @@ impl fmt::Display for ReplayError {
             Self::InvalidPlayerTarget(target) => {
                 write!(formatter, "invalid player target: {target}")
             }
-            Self::InvalidSuit(suit) => write!(formatter, "invalid standard suit index: {suit}"),
-            Self::InvalidRank(rank) => write!(formatter, "invalid standard rank: {rank}"),
+            Self::InvalidSuit(suit) => write!(formatter, "invalid variant suit index: {suit}"),
+            Self::InvalidRank(rank) => write!(formatter, "invalid variant card rank: {rank}"),
+            Self::InvalidClue(clue) => write!(formatter, "invalid variant clue label: {clue:?}"),
             Self::UnknownActionType(action) => {
                 write!(formatter, "unknown Hanabi Live action type: {action}")
             }
@@ -347,7 +370,7 @@ impl fmt::Display for ReplayError {
             }
             Self::ExternalGameOver { turn } => write!(
                 formatter,
-                "external game-over action at turn {turn} is not a standard rules ending"
+                "external game-over action at turn {turn} is not a physical rules ending"
             ),
             Self::TurnOutOfRange {
                 requested,
@@ -391,7 +414,7 @@ mod tests {
             value: 0,
         };
         assert!(matches!(
-            action_from_live(&action),
+            action_from_live(&action, &VariantSpec::no_variant()),
             Err(ReplayError::UnknownActionType(9))
         ));
     }
