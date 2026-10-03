@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 
 use crate::{
     Action, Card, CardId, Clue, ClueFacts, ObservedEvent, ObservedHistoryEntry, PlayerId,
-    PlayerView, Rank, Suit,
+    PlayerView, Rank, Suit, VariantSpec,
 };
 
 pub const MAX_CLUE_TOKENS: u8 = 8;
@@ -79,13 +79,14 @@ pub struct TurnResult {
     pub status: GameStatus,
 }
 
-/// Complete simulator truth for a standard game.
+/// Complete simulator truth for one physical Hanabi variant.
 ///
 /// Policies and planning algorithms should use [`crate::PlayerView`] rather than
 /// this type. A `FullState` contains every hidden identity and the exact deck
 /// order.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FullState {
+    variant: VariantSpec,
     cards: Vec<Card>,
     draw_pile: VecDeque<CardId>,
     hands: Vec<Vec<CardId>>,
@@ -139,9 +140,42 @@ impl FullState {
     /// Panics only if validated standard-deck constants cannot satisfy the
     /// initial deal, which would indicate an internal rules bug.
     pub fn new_standard(num_players: u8, deck: Vec<Card>) -> Result<Self, SetupError> {
+        Self::new_variant(num_players, VariantSpec::no_variant(), deck)
+    }
+
+    /// Creates a dealt game from an immutable physical variant specification
+    /// and a complete ordered deck. The first card in `deck` is drawn first.
+    ///
+    /// This constructor deliberately models physical rules only. Convention
+    /// semantics remain outside the core state.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SetupError` when the player count is outside 2..=6, the deck
+    /// does not match the variant identity multiplicities, or the deck cannot
+    /// satisfy the initial deal.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if a deck that passed the initial-deal size check cannot
+    /// supply the validated number of cards, which would indicate an internal
+    /// rules bug.
+    pub fn new_variant(
+        num_players: u8,
+        variant: VariantSpec,
+        deck: Vec<Card>,
+    ) -> Result<Self, SetupError> {
         let hand_size = standard_hand_size(usize::from(num_players))
             .ok_or(SetupError::InvalidPlayerCount(num_players))?;
-        validate_standard_deck(&deck)?;
+        validate_variant_deck(&variant, &deck)?;
+
+        let initial_cards = usize::from(num_players) * hand_size;
+        if deck.len() < initial_cards {
+            return Err(SetupError::DeckTooSmallForInitialDeal {
+                required: initial_cards,
+                actual: deck.len(),
+            });
+        }
 
         let cards = deck;
         let mut draw_pile = (0..cards.len()).map(CardId::new).collect::<VecDeque<_>>();
@@ -153,23 +187,30 @@ impl FullState {
             for _ in 0..hand_size {
                 let card = draw_pile
                     .pop_front()
-                    .expect("a validated standard deck contains enough cards for the initial deal");
+                    .expect("validated variant deck contains enough cards for the initial deal");
                 hands[usize::from(player)].push(card);
             }
         }
 
         let clue_facts = vec![ClueFacts::default(); cards.len()];
+        let play_stacks = variant
+            .stack_suits()
+            .iter()
+            .map(|_| Vec::with_capacity(variant.card_ranks().len()))
+            .collect();
+        let final_turns_remaining = draw_pile.is_empty().then_some(num_players);
         let state = Self {
+            variant,
             cards,
             draw_pile,
             hands,
-            play_stacks: vec![Vec::with_capacity(5); Suit::ALL.len()],
+            play_stacks,
             discard_pile: Vec::new(),
             clue_tokens: MAX_CLUE_TOKENS,
             strikes: 0,
             current_player: PlayerId::new(0),
             turn: 0,
-            final_turns_remaining: None,
+            final_turns_remaining,
             status: GameStatus::InProgress,
             history: Vec::new(),
             clue_facts,
@@ -226,6 +267,11 @@ impl FullState {
     }
 
     #[must_use]
+    pub const fn variant(&self) -> &VariantSpec {
+        &self.variant
+    }
+
+    #[must_use]
     pub fn deck_size(&self) -> usize {
         self.draw_pile.len()
     }
@@ -263,15 +309,10 @@ impl FullState {
     #[must_use]
     /// # Panics
     ///
-    /// Panics only if an internally constructed standard stack exceeds five
-    /// cards.
+    /// Panics only if an internally constructed score exceeds the public score type.
     pub fn score(&self) -> u8 {
-        self.play_stacks
-            .iter()
-            .map(|stack| {
-                u8::try_from(stack.len()).expect("a standard stack has at most five cards")
-            })
-            .sum()
+        let score: usize = self.play_stacks.iter().map(Vec::len).sum();
+        u8::try_from(score).expect("variant score fits in u8")
     }
 
     /// Returns the official final score, where three strikes score zero.
@@ -372,12 +413,23 @@ impl FullState {
             Action::Play(card) => {
                 self.remove_from_current_hand(card);
                 let identity = self.cards[card.index()];
-                let expected_rank = self.play_stacks[identity.suit.index()].len() + 1;
-                let successful = expected_rank == usize::from(identity.rank.number());
+                let identity_id = self
+                    .variant
+                    .identities()
+                    .id_for(identity.suit, identity.rank)
+                    .expect("validated variant state only contains declared identities");
+                let stack_index = self
+                    .variant
+                    .stack_suits()
+                    .iter()
+                    .position(|suit| *suit == identity.suit)
+                    .expect("validated identity suit has a play stack");
+                let stack_heights = self.play_stacks.iter().map(Vec::len).collect::<Vec<_>>();
+                let successful = self.variant.playable(&stack_heights, identity_id);
 
                 if successful {
-                    self.play_stacks[identity.suit.index()].push(card);
-                    if identity.rank == Rank::Five {
+                    self.play_stacks[stack_index].push(card);
+                    if self.variant.successor(identity_id).is_none() {
                         self.clue_tokens =
                             crate::public_transition::refunded_clues(self.clue_tokens);
                     }
@@ -392,9 +444,10 @@ impl FullState {
                     successful,
                 });
 
-                self.status = crate::public_transition::status_after_play(
+                self.status = crate::public_transition::status_after_play_with_max(
                     usize::from(self.score()),
                     self.strikes,
+                    self.variant.max_score(),
                 );
                 if self.status == GameStatus::InProgress {
                     drawn = self.draw_for(actor);
@@ -441,15 +494,29 @@ impl FullState {
         if !(usize::from(MIN_PLAYERS)..=usize::from(MAX_PLAYERS)).contains(&self.hands.len()) {
             return Err(InvariantViolation("player count is outside 2..=6".into()));
         }
-        if self.cards.len() != 50 {
-            return Err(InvariantViolation(
-                "a standard game must contain 50 cards".into(),
-            ));
+        if self.cards.len() != self.variant.identities().deck_size() {
+            return Err(InvariantViolation(format!(
+                "variant requires {} cards, got {}",
+                self.variant.identities().deck_size(),
+                self.cards.len()
+            )));
         }
-        if self.play_stacks.len() != Suit::ALL.len() {
-            return Err(InvariantViolation(
-                "a standard game must contain five play stacks".into(),
-            ));
+        if let Some(card) = self.cards.iter().find(|card| {
+            self.variant
+                .identities()
+                .id_for(card.suit, card.rank)
+                .is_none()
+        }) {
+            return Err(InvariantViolation(format!(
+                "{card} is not declared by the variant"
+            )));
+        }
+        if self.play_stacks.len() != self.variant.stack_suits().len() {
+            return Err(InvariantViolation(format!(
+                "variant requires {} play stacks, got {}",
+                self.variant.stack_suits().len(),
+                self.play_stacks.len()
+            )));
         }
         if self.clue_facts != derive_clue_facts(self.cards.len(), &self.history) {
             return Err(InvariantViolation(
@@ -465,6 +532,13 @@ impl FullState {
         if self.strikes > MAX_STRIKES {
             return Err(InvariantViolation("strike count exceeds three".into()));
         }
+        self.validate_final_round()?;
+        self.validate_card_locations()?;
+        self.validate_play_stacks()?;
+        self.validate_terminal_status()
+    }
+
+    fn validate_final_round(&self) -> Result<(), InvariantViolation> {
         if self.final_turns_remaining.is_some() != self.draw_pile.is_empty() {
             return Err(InvariantViolation(
                 "final-round counter must exist exactly when the deck is empty".into(),
@@ -482,7 +556,10 @@ impl FullState {
                 ));
             }
         }
+        Ok(())
+    }
 
+    fn validate_card_locations(&self) -> Result<(), InvariantViolation> {
         let mut locations = vec![0_u8; self.cards.len()];
         for id in self
             .draw_pile
@@ -501,46 +578,52 @@ impl FullState {
                 "every card must occur in exactly one location".into(),
             ));
         }
+        Ok(())
+    }
 
-        for suit in Suit::ALL {
-            let stack = &self.play_stacks[suit.index()];
-            if stack.len() > 5 {
+    fn validate_play_stacks(&self) -> Result<(), InvariantViolation> {
+        for (stack_index, suit) in self.variant.stack_suits().iter().copied().enumerate() {
+            let stack = &self.play_stacks[stack_index];
+            if stack.len() > self.variant.card_ranks().len() {
                 return Err(InvariantViolation(format!(
-                    "{suit} stack exceeds rank five"
+                    "{suit} stack exceeds the variant rank domain"
                 )));
             }
-            for (index, id) in stack.iter().enumerate() {
+            for (rank_index, id) in stack.iter().enumerate() {
                 let card = self.cards[id.index()];
-                if card.suit != suit || usize::from(card.rank.number()) != index + 1 {
+                let expected_rank = self.variant.card_ranks()[rank_index];
+                if card.suit != suit || card.rank != expected_rank {
                     return Err(InvariantViolation(format!(
-                        "{suit} stack is not an ordered sequence"
+                        "{suit} stack is not an ordered variant sequence"
                     )));
                 }
             }
         }
+        Ok(())
+    }
 
+    fn validate_terminal_status(&self) -> Result<(), InvariantViolation> {
         match self.status {
-            GameStatus::Finished(EndReason::PerfectScore) if self.score() != 25 => {
-                return Err(InvariantViolation(
-                    "perfect-score ending requires a score of 25".into(),
-                ));
+            GameStatus::Finished(EndReason::PerfectScore)
+                if usize::from(self.score()) != self.variant.max_score() =>
+            {
+                Err(InvariantViolation(format!(
+                    "perfect-score ending requires a score of {}",
+                    self.variant.max_score()
+                )))
             }
-            GameStatus::Finished(EndReason::TooManyStrikes) if self.strikes != MAX_STRIKES => {
-                return Err(InvariantViolation(
-                    "strike ending requires exactly three strikes".into(),
-                ));
-            }
+            GameStatus::Finished(EndReason::TooManyStrikes) if self.strikes != MAX_STRIKES => Err(
+                InvariantViolation("strike ending requires exactly three strikes".into()),
+            ),
             GameStatus::Finished(EndReason::FinalRoundComplete)
                 if self.final_turns_remaining != Some(0) =>
             {
-                return Err(InvariantViolation(
+                Err(InvariantViolation(
                     "final-round ending requires zero remaining turns".into(),
-                ));
+                ))
             }
-            _ => {}
+            _ => Ok(()),
         }
-
-        Ok(())
     }
 
     fn validate_action(&self, action: Action) -> Result<(), RuleError> {
@@ -750,6 +833,7 @@ impl WorldTemplate {
 
     fn build_state(&self, cards: Vec<Card>) -> FullState {
         FullState {
+            variant: VariantSpec::no_variant(),
             cards,
             draw_pile: self.draw_pile.clone(),
             hands: self.hands.clone(),
@@ -768,27 +852,39 @@ impl WorldTemplate {
 }
 
 fn validate_standard_deck(deck: &[Card]) -> Result<(), SetupError> {
-    if deck.len() != STANDARD_DECK_SIZE {
+    validate_variant_deck(&VariantSpec::no_variant(), deck)
+}
+
+fn validate_variant_deck(variant: &VariantSpec, deck: &[Card]) -> Result<(), SetupError> {
+    let expected_size = variant.identities().deck_size();
+    if deck.len() != expected_size {
         return Err(SetupError::InvalidDeckSize {
-            expected: STANDARD_DECK_SIZE,
+            expected: expected_size,
             actual: deck.len(),
         });
     }
 
-    let mut counts = [[0_u8; 5]; 5];
     for card in deck {
-        counts[card.suit.index()][card.rank.index()] += 1;
+        if variant.identities().id_for(card.suit, card.rank).is_none() {
+            let actual = deck.iter().filter(|candidate| **candidate == *card).count();
+            return Err(SetupError::InvalidCardMultiplicity {
+                card: *card,
+                expected: 0,
+                actual,
+            });
+        }
     }
-    for suit in Suit::ALL {
-        for rank in Rank::ALL {
-            let actual = counts[suit.index()][rank.index()];
-            if actual != rank.copies() {
-                return Err(SetupError::InvalidCardMultiplicity {
-                    card: Card::new(suit, rank),
-                    expected: rank.copies(),
-                    actual,
-                });
-            }
+
+    for identity in variant.identities().identities() {
+        let card = Card::new(identity.suit, identity.rank);
+        let actual = deck.iter().filter(|candidate| **candidate == card).count();
+        let expected = usize::from(identity.copies);
+        if actual != expected {
+            return Err(SetupError::InvalidCardMultiplicity {
+                card,
+                expected,
+                actual,
+            });
         }
     }
     Ok(())
@@ -949,8 +1045,12 @@ pub enum SetupError {
     },
     InvalidCardMultiplicity {
         card: Card,
-        expected: u8,
-        actual: u8,
+        expected: usize,
+        actual: usize,
+    },
+    DeckTooSmallForInitialDeal {
+        required: usize,
+        actual: usize,
     },
 }
 
@@ -973,6 +1073,10 @@ impl fmt::Display for SetupError {
             } => write!(
                 formatter,
                 "expected {expected} copies of {card}, got {actual}"
+            ),
+            Self::DeckTooSmallForInitialDeal { required, actual } => write!(
+                formatter,
+                "initial deal requires {required} cards, got {actual}"
             ),
         }
     }

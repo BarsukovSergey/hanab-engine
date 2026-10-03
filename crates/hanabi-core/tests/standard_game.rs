@@ -1,7 +1,7 @@
 use hanabi_core::{
-    Action, Card, CardId, Clue, EndReason, FullState, GameEvent, GameStatus, MAX_CLUE_TOKENS,
-    PlayerId, Rank, RuleError, SetupError, Suit, WorldConstructionError, WorldTemplate,
-    standard_deck, standard_hand_size,
+    Action, Card, CardId, CardRank, Clue, EndReason, FullState, GameEvent, GameStatus,
+    IdentitySpec, MAX_CLUE_TOKENS, PlayerId, Rank, RuleError, SetupError, Suit, SuitId,
+    VariantSpec, WorldConstructionError, WorldTemplate, standard_deck, standard_hand_size,
 };
 
 fn card(suit: Suit, rank: Rank) -> Card {
@@ -74,6 +74,112 @@ fn validates_setup_and_deals_standard_hand_sizes() {
         );
         state.validate().unwrap();
     }
+}
+
+#[test]
+fn variant_state_uses_declared_stack_count_and_rank_order() {
+    let variant = VariantSpec::new(
+        "Two Stack",
+        vec![SuitId::new(7), SuitId::new(9)],
+        vec![CardRank::new(2), CardRank::new(4)],
+        vec![],
+        vec![],
+        vec![
+            IdentitySpec {
+                suit: SuitId::new(7),
+                rank: CardRank::new(2),
+                copies: 3,
+                clue_colors: vec![],
+                clue_ranks: vec![],
+            },
+            IdentitySpec {
+                suit: SuitId::new(7),
+                rank: CardRank::new(4),
+                copies: 3,
+                clue_colors: vec![],
+                clue_ranks: vec![],
+            },
+            IdentitySpec {
+                suit: SuitId::new(9),
+                rank: CardRank::new(2),
+                copies: 3,
+                clue_colors: vec![],
+                clue_ranks: vec![],
+            },
+            IdentitySpec {
+                suit: SuitId::new(9),
+                rank: CardRank::new(4),
+                copies: 3,
+                clue_colors: vec![],
+                clue_ranks: vec![],
+            },
+        ],
+    )
+    .unwrap();
+    let mut deck = Vec::new();
+    for identity in variant.identities().identities() {
+        deck.extend(core::iter::repeat_n(
+            Card::new(identity.suit, identity.rank),
+            usize::from(identity.copies),
+        ));
+    }
+    let first = Card::new(SuitId::new(7), CardRank::new(2));
+    let first_index = deck.iter().position(|card| *card == first).unwrap();
+    deck.swap(0, first_index);
+
+    let mut state = FullState::new_variant(2, variant.clone(), deck).unwrap();
+    assert_eq!(state.variant(), &variant);
+    assert_eq!(state.play_stacks().len(), 2);
+    assert_eq!(state.variant().max_score(), 4);
+    let card = state.hand(PlayerId::new(0)).unwrap()[0];
+    state.apply(Action::Play(card)).unwrap();
+    assert_eq!(state.play_stacks()[0], [card]);
+    assert_eq!(state.score(), 1);
+    state.validate().unwrap();
+}
+
+#[test]
+fn variant_state_starts_final_round_when_initial_deal_exhausts_deck() {
+    let variant = VariantSpec::new(
+        "Ten Card",
+        vec![SuitId::new(7)],
+        vec![CardRank::new(1), CardRank::new(2)],
+        vec![],
+        vec![],
+        vec![
+            IdentitySpec {
+                suit: SuitId::new(7),
+                rank: CardRank::new(1),
+                copies: 5,
+                clue_colors: vec![],
+                clue_ranks: vec![],
+            },
+            IdentitySpec {
+                suit: SuitId::new(7),
+                rank: CardRank::new(2),
+                copies: 5,
+                clue_colors: vec![],
+                clue_ranks: vec![],
+            },
+        ],
+    )
+    .unwrap();
+    let deck = variant
+        .identities()
+        .identities()
+        .iter()
+        .flat_map(|identity| {
+            core::iter::repeat_n(
+                Card::new(identity.suit, identity.rank),
+                usize::from(identity.copies),
+            )
+        })
+        .collect();
+
+    let state = FullState::new_variant(2, variant, deck).unwrap();
+    assert_eq!(state.deck_size(), 0);
+    assert_eq!(state.final_turns_remaining(), Some(2));
+    state.validate().unwrap();
 }
 
 #[test]

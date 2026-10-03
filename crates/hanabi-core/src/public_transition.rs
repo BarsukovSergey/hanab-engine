@@ -10,9 +10,14 @@ pub fn refunded_clues(tokens: u8) -> u8 {
 
 #[must_use]
 pub fn status_after_play(score: usize, strikes: u8) -> GameStatus {
+    status_after_play_with_max(score, strikes, 25)
+}
+
+#[must_use]
+pub fn status_after_play_with_max(score: usize, strikes: u8, max_score: usize) -> GameStatus {
     if strikes >= MAX_STRIKES {
         GameStatus::Finished(EndReason::TooManyStrikes)
-    } else if score == 25 {
+    } else if score == max_score {
         GameStatus::Finished(EndReason::PerfectScore)
     } else {
         GameStatus::InProgress
