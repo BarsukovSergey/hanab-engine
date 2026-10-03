@@ -79,7 +79,7 @@ pub struct TurnResult {
     pub status: GameStatus,
 }
 
-/// Complete simulator truth for a standard game.
+/// Complete simulator truth for one physical Hanabi variant.
 ///
 /// Policies and planning algorithms should use [`crate::PlayerView`] rather than
 /// this type. A `FullState` contains every hidden identity and the exact deck
@@ -487,8 +487,25 @@ impl FullState {
         if !(usize::from(MIN_PLAYERS)..=usize::from(MAX_PLAYERS)).contains(&self.hands.len()) {
             return Err(InvariantViolation("player count is outside 2..=6".into()));
         }
-        validate_variant_deck(&self.variant, &self.cards)
-            .map_err(|error| InvariantViolation(error.to_string()))?;
+        if self.cards.len() != self.variant.identities().deck_size() {
+            return Err(InvariantViolation(format!(
+                "variant requires {} cards, got {}",
+                self.variant.identities().deck_size(),
+                self.cards.len()
+            )));
+        }
+        for card in &self.cards {
+            if self
+                .variant
+                .identities()
+                .id_for(card.suit, card.rank)
+                .is_none()
+            {
+                return Err(InvariantViolation(format!(
+                    "{card} is not declared by the variant"
+                )));
+            }
+        }
         if self.play_stacks.len() != self.variant.stack_suits().len() {
             return Err(InvariantViolation(format!(
                 "variant requires {} play stacks, got {}",
