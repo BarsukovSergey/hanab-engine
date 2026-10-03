@@ -29,83 +29,115 @@ jobs:
     name: Live bridge Python checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     steps:
       - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Install Python development dependencies
         run: |
           python3 -m venv .venv
           .venv/bin/python -m pip install --requirement scripts/requirements-dev.txt
-
       - name: Type-check Python
         run: .venv/bin/ty check
-
       - name: Compile Python sources
         run: .venv/bin/python -m compileall -q scripts
-
       - name: Run Python tests
         run: .venv/bin/python -W error::ResourceWarning -m unittest discover -s scripts/tests -v
-
       - name: Check Hanabi Live CLIs
         run: |
           .venv/bin/python scripts/hanabi_live_bot.py --help >/dev/null
           .venv/bin/python scripts/hanabi_live_verify.py --help >/dev/null
 
   quality:
-    name: Fast build, lint, and checks
+    name: Rust build, format, lint, and docs
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
+    timeout-minutes: 10
     steps:
       - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Install pinned Rust with lint tools
         run: |
           rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
           rustup default 1.97.1
-
       - name: Install Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24
           cache: npm
-
       - name: Install formatting dependencies
         run: npm ci --ignore-scripts
+      - name: Check repository formatting
+        run: npm run format:check
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Build all Rust targets
+        run: cargo build --workspace --all-targets --all-features --locked
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Check Rust documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --all-features --no-deps --locked
 
-      - name: Install Python development dependencies
+  core-protocol-tests:
+    name: Core and protocol tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install pinned Rust
         run: |
-          python3 -m venv .venv
-          .venv/bin/python -m pip install --requirement scripts/requirements-dev.txt
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+      - name: Run core and protocol tests
+        run: cargo test -p hanabi-core -p hanabi-protocol --all-targets --all-features --locked
 
+  rust-doctests:
+    name: Rust documentation tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install pinned Rust
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+      - name: Run Rust documentation tests
+        run: cargo test --workspace --all-features --doc --locked
+
+  dead-public-code:
+    name: Dead public code
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Install Hawk toolchain
         run: rustup toolchain install 1.97.1 --profile minimal
-
       - name: Install cargo-hawk 0.1.10
         run: |
           curl --proto '=https' --tlsv1.2 -LsSf \
             https://github.com/astral-sh/hawk/releases/download/0.1.10/cargo-hawk-installer.sh \
             | sh
-
-      - name: Build, lint, and fast checks
-        run: scripts/check.sh --fast
+      - name: Check workspace-wide dead public code
+        run: |
+          cargo +1.97.1 hawk check \
+            --manifest-path Cargo.toml \
+            --only dead-public \
+            -D warnings
 
   exhaustive-h-group-profiles:
     name: Exhaustive H-Group profile matrix
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     steps:
       - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Install stable Rust
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-
       - name: Test every cumulative H-Group profile
         run: scripts/check-exhaustive.sh
