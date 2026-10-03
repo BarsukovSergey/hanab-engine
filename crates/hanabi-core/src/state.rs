@@ -154,6 +154,12 @@ impl FullState {
     /// Returns `SetupError` when the player count is outside 2..=6, the deck
     /// does not match the variant identity multiplicities, or the deck cannot
     /// satisfy the initial deal.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if a deck that passed the initial-deal size check cannot
+    /// supply the validated number of cards, which would indicate an internal
+    /// rules bug.
     pub fn new_variant(
         num_players: u8,
         variant: VariantSpec,
@@ -495,17 +501,15 @@ impl FullState {
                 self.cards.len()
             )));
         }
-        for card in &self.cards {
-            if self
-                .variant
+        if let Some(card) = self.cards.iter().find(|card| {
+            self.variant
                 .identities()
                 .id_for(card.suit, card.rank)
                 .is_none()
-            {
-                return Err(InvariantViolation(format!(
-                    "{card} is not declared by the variant"
-                )));
-            }
+        }) {
+            return Err(InvariantViolation(format!(
+                "{card} is not declared by the variant"
+            )));
         }
         if self.play_stacks.len() != self.variant.stack_suits().len() {
             return Err(InvariantViolation(format!(
@@ -528,6 +532,13 @@ impl FullState {
         if self.strikes > MAX_STRIKES {
             return Err(InvariantViolation("strike count exceeds three".into()));
         }
+        self.validate_final_round()?;
+        self.validate_card_locations()?;
+        self.validate_play_stacks()?;
+        self.validate_terminal_status()
+    }
+
+    fn validate_final_round(&self) -> Result<(), InvariantViolation> {
         if self.final_turns_remaining.is_some() != self.draw_pile.is_empty() {
             return Err(InvariantViolation(
                 "final-round counter must exist exactly when the deck is empty".into(),
@@ -545,7 +556,10 @@ impl FullState {
                 ));
             }
         }
+        Ok(())
+    }
 
+    fn validate_card_locations(&self) -> Result<(), InvariantViolation> {
         let mut locations = vec![0_u8; self.cards.len()];
         for id in self
             .draw_pile
@@ -564,7 +578,10 @@ impl FullState {
                 "every card must occur in exactly one location".into(),
             ));
         }
+        Ok(())
+    }
 
+    fn validate_play_stacks(&self) -> Result<(), InvariantViolation> {
         for (stack_index, suit) in self.variant.stack_suits().iter().copied().enumerate() {
             let stack = &self.play_stacks[stack_index];
             if stack.len() > self.variant.card_ranks().len() {
@@ -580,44 +597,35 @@ impl FullState {
                         "{suit} stack is not an ordered variant sequence"
                     )));
                 }
-                if self
-                    .variant
-                    .identities()
-                    .id_for(card.suit, card.rank)
-                    .is_none()
-                {
-                    return Err(InvariantViolation(format!(
-                        "{card} is not declared by the variant"
-                    )));
-                }
             }
         }
+        Ok(())
+    }
 
+    fn validate_terminal_status(&self) -> Result<(), InvariantViolation> {
         match self.status {
             GameStatus::Finished(EndReason::PerfectScore)
                 if usize::from(self.score()) != self.variant.max_score() =>
             {
-                return Err(InvariantViolation(format!(
+                Err(InvariantViolation(format!(
                     "perfect-score ending requires a score of {}",
                     self.variant.max_score()
-                )));
+                )))
             }
             GameStatus::Finished(EndReason::TooManyStrikes) if self.strikes != MAX_STRIKES => {
-                return Err(InvariantViolation(
+                Err(InvariantViolation(
                     "strike ending requires exactly three strikes".into(),
-                ));
+                ))
             }
             GameStatus::Finished(EndReason::FinalRoundComplete)
                 if self.final_turns_remaining != Some(0) =>
             {
-                return Err(InvariantViolation(
+                Err(InvariantViolation(
                     "final-round ending requires zero remaining turns".into(),
-                ));
+                ))
             }
-            _ => {}
+            _ => Ok(()),
         }
-
-        Ok(())
     }
 
     fn validate_action(&self, action: Action) -> Result<(), RuleError> {
