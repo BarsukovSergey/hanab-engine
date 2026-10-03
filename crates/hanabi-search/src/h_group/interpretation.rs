@@ -84,10 +84,13 @@ pub(super) fn h_group_clue_candidates_from_replay_inner(
     if view.clue_tokens == 0 {
         return Vec::new();
     }
-    let stacks = view
+    let stacks: [u8; 5] = view
         .play_stacks
-        .each_ref()
-        .map(|stack| u8::try_from(stack.len()).expect("five ranks"));
+        .iter()
+        .map(|stack| u8::try_from(stack.len()).expect("five ranks"))
+        .collect::<Vec<_>>()
+        .try_into()
+        .expect("H-Group No Variant analysis requires five stacks");
     let endgame_cards = (view.deck_size <= view.hands.len())
         .then(|| super::convention_card_inferences(deductions, replay));
     if rule_enabled(profile, HGroupRuleId::Stalling)
