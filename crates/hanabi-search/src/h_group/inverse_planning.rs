@@ -312,7 +312,8 @@ struct HistoricalChoice {
 
 impl HistoricalChoice {
     fn new(source: &PlayerView, turn: u32, chosen: Action) -> Option<Self> {
-        let hand_size = hanabi_core::standard_hand_size(source.hands.len()).expect("validated standard player count");
+        let hand_size = hanabi_core::standard_hand_size(source.hands.len())
+            .expect("validated standard player count");
         let mut hands = (0..source.hands.len())
             .map(|player| {
                 (player * hand_size..(player + 1) * hand_size)
