@@ -79,7 +79,8 @@ pub(super) fn replay_h_group_inner_uncached(
 ) -> HGroupState {
     debug_assert!(rule_enabled(profile, HGroupRuleId::Basic));
     let view = deductions.view();
-    let hand_size = hanabi_core::standard_hand_size(view.hands.len()).expect("validated standard player count");
+    let hand_size =
+        hanabi_core::standard_hand_size(view.hands.len()).expect("validated standard player count");
     let hands = (0..view.hands.len())
         .map(|player| {
             let first = player * hand_size;
