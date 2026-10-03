@@ -78,16 +78,6 @@ impl ClueFacts {
         self.record(clue, false);
     }
 
-    /// Records a direct positive physical clue fact.
-    pub(crate) fn add_positive_physical_clue(&mut self, clue: GenericClue) {
-        self.record_physical(clue, true);
-    }
-
-    /// Records a direct negative physical clue fact.
-    pub(crate) fn add_negative_physical_clue(&mut self, clue: GenericClue) {
-        self.record_physical(clue, false);
-    }
-
     /// Whether this card was positively touched by a standard clue.
     #[must_use]
     pub fn has_positive_clue(self, clue: Clue) -> bool {
