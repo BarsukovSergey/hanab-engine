@@ -1,6 +1,6 @@
 use crate::{
-    Action, Card, CardId, Clue, FullState, GameEvent, GameStatus, MAX_CLUE_TOKENS, PlayerId, Rank,
-    Suit,
+    Action, Card, CardId, Clue, ClueColorId, ClueRank, FullState, GameEvent, GameStatus,
+    GenericClue, MAX_CLUE_TOKENS, PlayerId, Rank, Suit, VariantSpec,
 };
 
 /// Objective positive and negative clue facts attached to one physical card.
@@ -45,6 +45,45 @@ impl ClueFacts {
             mask | ((u32::from(allowed_suits & (1 << suit) != 0) * u32::from(allowed_ranks))
                 << (suit * 5))
         })
+    }
+
+    /// Direct clue mask in the active universe's [`crate::IdentityId`] order.
+    /// Legacy clue values name clue colors/ranks, whose physical touches come
+    /// from the variant rather than from a card's suit/rank equality.
+    #[must_use]
+    pub fn identity_mask_in(self, variant: &VariantSpec) -> u64 {
+        if self.is_empty() {
+            return variant
+                .identities()
+                .identities()
+                .iter()
+                .fold(0, |mask, identity| mask | (1_u64 << identity.id.value()));
+        }
+        variant
+            .identities()
+            .identities()
+            .iter()
+            .fold(0, |mask, identity| {
+                let colors = (0_u8..5).fold(0_u8, |bits, value| {
+                    bits | (u8::from(
+                        (self.positive_suits | self.negative_suits) & (1 << value) != 0
+                            && variant
+                                .touches(identity.id, GenericClue::Color(ClueColorId::new(value))),
+                    ) << value)
+                });
+                let ranks = (0_u8..5).fold(0_u8, |bits, value| {
+                    bits | (u8::from(
+                        (self.positive_ranks | self.negative_ranks) & (1 << value) != 0
+                            && variant
+                                .touches(identity.id, GenericClue::Rank(ClueRank::new(value + 1))),
+                    ) << value)
+                });
+                let allows = (self.positive_suits == 0 || self.positive_suits & colors != 0)
+                    && self.negative_suits & colors == 0
+                    && (self.positive_ranks == 0 || self.positive_ranks & ranks != 0)
+                    && self.negative_ranks & ranks == 0;
+                mask | (u64::from(allows) << identity.id.value())
+            })
     }
 
     /// Records a direct positive clue fact.
@@ -141,6 +180,8 @@ pub struct ObservedHistoryEntry {
 /// Everything one player is legally permitted to observe.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PlayerView {
+    /// Public physical rules and identity ordering; contains no deal or hidden cards.
+    pub variant: VariantSpec,
     pub observer: PlayerId,
     pub current_player: PlayerId,
     pub turn: u32,
@@ -273,6 +314,7 @@ impl FullState {
             .collect();
 
         Some(PlayerView {
+            variant: self.variant().clone(),
             observer,
             current_player: self.current_player(),
             turn: self.turn(),

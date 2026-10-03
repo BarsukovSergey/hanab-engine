@@ -1,11 +1,10 @@
 use core::fmt;
 
 use hanabi_core::{
-    Card, CardId, ClueFacts, FullState, PlayerView, Rank, Suit, WorldConstructionError,
-    WorldTemplate,
+    Card, CardId, ClueFacts, FullState, GenericClue, IdentityId, IdentityUniverse, PlayerView,
+    VariantSpec, WorldConstructionError, WorldTemplate,
 };
 
-const CARD_IDENTITY_COUNT: usize = 25;
 type Counts = Vec<u8>;
 
 /// The hidden worlds logically consistent with one [`PlayerView`].
@@ -33,7 +32,10 @@ pub struct LogicalDeductions {
     remaining_counts: Counts,
 }
 
-/// Compact set of the 25 standard card identities.
+/// Compact set whose bit positions are [`IdentityId`] values in an active
+/// [`IdentityUniverse`]. Sets may only be combined within the same universe.
+/// The card-based `all`, `singleton`, `contains`, and `iter` helpers retain
+/// No Variant compatibility.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct IdentitySet(u64);
 
@@ -88,26 +90,29 @@ pub struct BeliefConstraints {
 }
 
 impl IdentitySet {
-    pub(crate) const ALL_MASK: u64 = (1_u64 << CARD_IDENTITY_COUNT) - 1;
+    const STANDARD_MASK: u64 = (1_u64 << 25) - 1;
 
     pub(crate) const fn from_mask(mask: u32) -> Self {
-        Self((mask as u64) & Self::ALL_MASK)
+        Self((mask as u64) & Self::STANDARD_MASK)
     }
 
     pub(crate) const fn from_bits(bits: u64) -> Self {
-        Self(bits & Self::ALL_MASK)
+        Self(bits)
     }
 
+    /// All No Variant identities, in legacy standard order.
     #[must_use]
     pub const fn all() -> Self {
-        Self(Self::ALL_MASK)
+        Self(Self::STANDARD_MASK)
     }
 
+    /// A No Variant identity, in legacy standard order.
     #[must_use]
     pub const fn singleton(card: Card) -> Self {
         Self(1_u64 << card.index())
     }
 
+    /// Tests a No Variant identity, in legacy standard order.
     #[must_use]
     pub const fn contains(self, card: Card) -> bool {
         self.0 & (1_u64 << card.index()) != 0
@@ -138,23 +143,78 @@ impl IdentitySet {
         self.0.count_ones() as usize
     }
 
+    /// Iterates No Variant cards. Generic callers must use [`Self::iter_in`].
     pub fn iter(self) -> impl Iterator<Item = Card> {
+        self.iter_in(no_variant_universe())
+    }
+
+    #[must_use]
+    pub fn all_in(universe: &IdentityUniverse) -> Self {
+        universe
+            .identities()
+            .iter()
+            .fold(Self::default(), |set, identity| {
+                set.union(Self::singleton_id(identity.id))
+            })
+    }
+
+    /// IDs outside the 64-bit storage domain produce an empty set.
+    #[must_use]
+    pub const fn singleton_id(identity: IdentityId) -> Self {
+        match 1_u64.checked_shl(identity.value() as u32) {
+            Some(bit) => Self(bit),
+            None => Self(0),
+        }
+    }
+
+    #[must_use]
+    pub const fn contains_id(self, identity: IdentityId) -> bool {
+        !self.intersection(Self::singleton_id(identity)).is_empty()
+    }
+
+    pub fn iter_ids(self) -> impl Iterator<Item = IdentityId> {
         IdentitySetIter(self.0)
     }
+
+    pub fn iter_in(self, universe: &IdentityUniverse) -> impl Iterator<Item = Card> + '_ {
+        self.iter_ids()
+            .filter_map(move |id| universe.get(id))
+            .map(|identity| Card::new(identity.suit, identity.rank))
+    }
+
+    /// Direct positive/negative physical clue filtering, without conventions.
+    #[must_use]
+    pub fn filter_clue(self, variant: &VariantSpec, clue: GenericClue, touched: bool) -> Self {
+        variant
+            .identities()
+            .identities()
+            .iter()
+            .filter(|identity| {
+                self.contains_id(identity.id) && variant.touches(identity.id, clue) == touched
+            })
+            .fold(Self::default(), |set, identity| {
+                set.union(Self::singleton_id(identity.id))
+            })
+    }
+}
+
+fn no_variant_universe() -> &'static IdentityUniverse {
+    static VARIANT: std::sync::OnceLock<VariantSpec> = std::sync::OnceLock::new();
+    VARIANT.get_or_init(VariantSpec::no_variant).identities()
 }
 
 struct IdentitySetIter(u64);
 
 impl Iterator for IdentitySetIter {
-    type Item = Card;
+    type Item = IdentityId;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.0 == 0 {
             return None;
         }
-        let index = self.0.trailing_zeros() as usize;
+        let index = u8::try_from(self.0.trailing_zeros()).ok()?;
         self.0 &= self.0 - 1;
-        Some(Card::new(Suit::ALL[index / 5], Rank::ALL[index % 5]))
+        Some(IdentityId::new(index))
     }
 }
 
@@ -195,7 +255,12 @@ impl LogicalDeductions {
             .ok_or(InformationSetError::InvalidObserver)?;
         let unknown_hand_cards = own_hand.iter().map(|card| card.id).collect::<Vec<_>>();
         let constraints = own_hand.iter().map(|card| card.clues).collect::<Vec<_>>();
-        let mut remaining_counts = standard_counts();
+        let universe = view.variant.identities();
+        let mut remaining_counts = universe
+            .identities()
+            .iter()
+            .map(|identity| identity.copies)
+            .collect::<Counts>();
         for identity in view
             .hands
             .iter()
@@ -209,13 +274,16 @@ impl LogicalDeductions {
             )
             .chain(view.discard_pile.iter().map(|(_, identity)| *identity))
         {
-            let count = &mut remaining_counts[identity_index(identity)];
+            let id = universe
+                .id_for(identity.suit, identity.rank)
+                .ok_or(InformationSetError::UnknownIdentity(identity))?;
+            let count = &mut remaining_counts[id.index()];
             if *count == 0 {
                 return Err(InformationSetError::TooManyVisibleCopies(identity));
             }
             *count -= 1;
         }
-        let feasible_by_slot = feasible_identities(&constraints, &remaining_counts);
+        let feasible_by_slot = feasible_identities(&constraints, &remaining_counts, &view.variant);
         if feasible_by_slot
             .iter()
             .any(|identities| identities.is_empty())
@@ -266,6 +334,7 @@ impl LogicalDeductions {
             end: HandAssignmentVisitEnd::Exhausted,
         };
         visit_assignments(
+            self.view.variant.identities(),
             &self.unknown_hand_cards,
             &self.possibilities,
             0,
@@ -281,6 +350,7 @@ impl LogicalDeductions {
 
 #[allow(clippy::too_many_arguments)]
 fn visit_assignments(
+    universe: &IdentityUniverse,
     cards: &[CardId],
     possibilities: &[(CardId, IdentitySet)],
     slot: usize,
@@ -309,14 +379,18 @@ fn visit_assignments(
         .iter()
         .find_map(|(candidate, identities)| (*candidate == card).then_some(*identities))
         .unwrap_or_default();
-    for identity in identities.iter() {
-        let count = &mut remaining[identity_index(identity)];
+    for id in identities.iter_ids() {
+        let Some(identity) = universe.get(id) else {
+            continue;
+        };
+        let count = &mut remaining[id.index()];
         if *count == 0 {
             continue;
         }
         *count -= 1;
-        assignment.push((card, identity));
+        assignment.push((card, Card::new(identity.suit, identity.rank)));
         visit_assignments(
+            universe,
             cards,
             possibilities,
             slot + 1,
@@ -327,7 +401,7 @@ fn visit_assignments(
             result,
         );
         assignment.pop();
-        remaining[identity_index(identity)] += 1;
+        remaining[id.index()] += 1;
         if result.end != HandAssignmentVisitEnd::Exhausted {
             return;
         }
@@ -381,7 +455,7 @@ impl InformationSet {
                 if let Some(identity) = observed.identity {
                     set_known_identity(&mut known_identities, observed.id, identity)?;
                 } else {
-                    constraint_masks.push(u64::from(observed.clues.identity_mask()));
+                    constraint_masks.push(observed.clues.identity_mask_in(&view.variant));
                 }
             }
         }
@@ -543,7 +617,9 @@ impl InformationSet {
         control: &crate::AnalysisControl,
         mut visitor: impl FnMut(FullState),
     ) -> Result<u64, EnumerateWorldsError> {
-        let placeholder = Card::new(Suit::Red, Rank::One);
+        let universe = self.view().variant.identities();
+        let identity = &universe.identities()[0];
+        let placeholder = Card::new(identity.suit, identity.rank);
         let base_cards = self
             .known_identities
             .iter()
@@ -557,6 +633,7 @@ impl InformationSet {
             let mut cards = base_cards.clone();
             let mut counts = self.deductions.remaining_counts.clone();
             let finished = visit_identity_worlds(
+                universe,
                 &locations,
                 masks,
                 0,
@@ -663,10 +740,7 @@ fn count_identity_worlds(
         *worlds += 1;
         return Ok(());
     }
-    let allowed = hand_masks
-        .get(slot)
-        .copied()
-        .unwrap_or(IdentitySet::ALL_MASK);
+    let allowed = hand_masks.get(slot).copied().unwrap_or(u64::MAX);
     for identity in 0..counts.len() {
         if counts[identity] == 0 || allowed & (1_u64 << identity) == 0 {
             continue;
@@ -690,7 +764,9 @@ fn count_identity_worlds(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn visit_identity_worlds(
+    universe: &IdentityUniverse,
     locations: &[CardId],
     hand_masks: &[u64],
     slot: usize,
@@ -705,17 +781,16 @@ fn visit_identity_worlds(
     if slot == locations.len() {
         return visitor(cards);
     }
-    let allowed = hand_masks
-        .get(slot)
-        .copied()
-        .unwrap_or(IdentitySet::ALL_MASK);
-    for identity in 0..counts.len() {
+    let allowed = hand_masks.get(slot).copied().unwrap_or(u64::MAX);
+    for spec in universe.identities() {
+        let identity = spec.id.index();
         if counts[identity] == 0 || allowed & (1_u64 << identity) == 0 {
             continue;
         }
         counts[identity] -= 1;
-        cards[locations[slot].index()] = identity_from_index(identity);
+        cards[locations[slot].index()] = Card::new(spec.suit, spec.rank);
         if !visit_identity_worlds(
+            universe,
             locations,
             hand_masks,
             slot + 1,
@@ -765,37 +840,23 @@ fn set_known_identity(
     Ok(())
 }
 
-fn standard_counts() -> Counts {
-    let mut counts = vec![0; CARD_IDENTITY_COUNT];
-    for identity in all_identities() {
-        counts[identity_index(identity)] = identity.rank.copies();
-    }
-    counts
+fn feasible_identities(
+    constraints: &[ClueFacts],
+    counts: &[u8],
+    variant: &VariantSpec,
+) -> Vec<IdentitySet> {
+    feasible_identity_array(constraints, counts, variant)[..constraints.len()].to_vec()
 }
 
-fn all_identities() -> impl Iterator<Item = Card> {
-    Suit::ALL
-        .into_iter()
-        .flat_map(|suit| Rank::ALL.into_iter().map(move |rank| Card::new(suit, rank)))
-}
-
-fn identity_index(card: Card) -> usize {
-    card.index()
-}
-
-fn identity_from_index(index: usize) -> Card {
-    Card::new(Suit::ALL[index / 5], Rank::ALL[index % 5])
-}
-
-fn feasible_identities(constraints: &[ClueFacts], counts: &[u8]) -> Vec<IdentitySet> {
-    feasible_identity_array(constraints, counts)[..constraints.len()].to_vec()
-}
-
-fn feasible_identity_array(constraints: &[ClueFacts], counts: &[u8]) -> [IdentitySet; 5] {
+fn feasible_identity_array(
+    constraints: &[ClueFacts],
+    counts: &[u8],
+    variant: &VariantSpec,
+) -> [IdentitySet; 5] {
     debug_assert!(constraints.len() <= 5);
     let mut masks = [0_u64; 5];
     for (slot, constraint) in constraints.iter().enumerate() {
-        masks[slot] = u64::from(constraint.identity_mask());
+        masks[slot] = constraint.identity_mask_in(variant);
     }
     feasible_identity_masks(&masks[..constraints.len()], counts)
 }
@@ -806,7 +867,7 @@ fn feasible_identity_masks(constraint_masks: &[u64], counts: &[u8]) -> [Identity
     allowed[..constraint_masks.len()].copy_from_slice(constraint_masks);
     let subset_count = 1_usize << constraint_masks.len();
     let mut union_masks = [0_u64; 32];
-    let mut union_capacities = [0_u8; 32];
+    let mut union_capacities = [0_usize; 32];
     for subset in 1..subset_count {
         let slot = subset.trailing_zeros() as usize;
         let previous = subset & !(1 << slot);
@@ -817,7 +878,7 @@ fn feasible_identity_masks(constraint_masks: &[u64], counts: &[u8]) -> [Identity
         while identities != 0 {
             let identity = identities.trailing_zeros() as usize;
             identities &= identities - 1;
-            capacity += counts[identity];
+            capacity += usize::from(counts[identity]);
         }
         union_capacities[subset] = capacity;
     }
@@ -833,8 +894,7 @@ fn feasible_identity_masks(constraint_masks: &[u64], counts: &[u8]) -> [Identity
         let mut forbidden = 0_u64;
         let mut impossible = false;
         for subset in (1..subset_count).filter(|subset| subset & (1 << fixed_slot) == 0) {
-            let required =
-                u8::try_from(subset.count_ones()).expect("a standard hand has at most five cards");
+            let required = subset.count_ones() as usize;
             match union_capacities[subset].cmp(&required) {
                 core::cmp::Ordering::Less => {
                     impossible = true;
@@ -854,6 +914,7 @@ fn feasible_identity_masks(constraint_masks: &[u64], counts: &[u8]) -> [Identity
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InformationSetError {
+    UnknownIdentity(Card),
     InvalidObserver,
     InvalidCardId(CardId),
     DuplicateLocation(CardId),
@@ -878,6 +939,9 @@ pub enum InformationSetError {
 impl fmt::Display for InformationSetError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::UnknownIdentity(card) => {
+                write!(formatter, "identity {card} is not declared by the variant")
+            }
             Self::InvalidObserver => formatter.write_str("observer does not have a hand"),
             Self::InvalidCardId(card) => write!(formatter, "invalid card identifier {card}"),
             Self::DuplicateLocation(card) => {
@@ -958,7 +1022,7 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    use hanabi_core::{FullState, PlayerId, standard_deck};
+    use hanabi_core::{FullState, PlayerId, Rank, Suit, standard_deck};
 
     #[test]
     fn widened_identity_set_preserves_standard_bit_order() {

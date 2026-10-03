@@ -190,6 +190,7 @@ mod tests {
     #[test]
     fn rank_information_can_beat_redundant_color_information() {
         let source = PlayerView {
+            variant: hanabi_core::VariantSpec::no_variant(),
             observer: PlayerId::new(0),
             current_player: PlayerId::new(0),
             turn: 0,

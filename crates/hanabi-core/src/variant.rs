@@ -142,7 +142,7 @@ pub struct IdentitySpec {
     pub clue_ranks: Vec<ClueRank>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Identity {
     pub id: IdentityId,
     pub suit: SuitId,
@@ -162,7 +162,7 @@ impl Identity {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct IdentityUniverse {
     identities: Vec<Identity>,
     deck_size: usize,
@@ -255,7 +255,7 @@ impl IdentityUniverse {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct VariantSpec {
     catalog_id: Option<VariantId>,
     name: String,

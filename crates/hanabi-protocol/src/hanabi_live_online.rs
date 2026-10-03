@@ -664,6 +664,7 @@ impl LiveViewBuilder {
             ));
         }
         Ok(PlayerView {
+            variant: hanabi_core::VariantSpec::no_variant(),
             observer: self.observer,
             current_player: self.current_player,
             turn: self.turn,

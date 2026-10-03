@@ -10,7 +10,6 @@ pub const MAX_CLUE_TOKENS: u8 = 8;
 pub const MAX_STRIKES: u8 = 3;
 pub const MIN_PLAYERS: u8 = 2;
 pub const MAX_PLAYERS: u8 = 6;
-pub const STANDARD_DECK_SIZE: usize = 50;
 
 #[must_use]
 pub const fn standard_hand_size(num_players: usize) -> Option<usize> {
@@ -107,9 +106,10 @@ pub struct FullState {
 ///
 /// Building a template validates card locations and reconstructs authoritative
 /// history and clue facts once. Each instantiation still validates the supplied
-/// standard deck and every visible identity and direct clue constraint.
+/// variant deck and every visible identity and direct clue constraint.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorldTemplate {
+    variant: VariantSpec,
     hands: Vec<Vec<CardId>>,
     play_stacks: Vec<Vec<CardId>>,
     discard_pile: Vec<CardId>,
@@ -730,7 +730,8 @@ impl WorldTemplate {
     /// Returns [`WorldConstructionError`] for invalid or duplicate card
     /// locations, a mismatched deck size, or an invalid public rules state.
     pub fn new(view: &PlayerView) -> Result<Self, WorldConstructionError> {
-        let mut used = [false; STANDARD_DECK_SIZE];
+        let card_count = view.variant.identities().deck_size();
+        let mut used = vec![false; card_count];
         let mut observed_cards = Vec::new();
         let mut hands = Vec::with_capacity(view.hands.len());
         for hand in &view.hands {
@@ -771,10 +772,11 @@ impl WorldTemplate {
             });
         }
 
-        validate_history_card_ids(&view.history, STANDARD_DECK_SIZE)?;
+        validate_history_card_ids(&view.history, card_count)?;
         let history = reconstruct_history(&view.history);
-        let clue_facts = derive_clue_facts(STANDARD_DECK_SIZE, &history);
+        let clue_facts = derive_clue_facts(card_count, &history);
         let template = Self {
+            variant: view.variant.clone(),
             hands,
             play_stacks,
             discard_pile,
@@ -794,7 +796,8 @@ impl WorldTemplate {
         // Known stack identities are sufficient for validating every
         // card-dependent structural invariant. All other placeholder
         // identities are ignored by `FullState::validate`.
-        let mut placeholder_cards = vec![Card::new(Suit::Red, Rank::One); STANDARD_DECK_SIZE];
+        let identity = &view.variant.identities().identities()[0];
+        let mut placeholder_cards = vec![Card::new(identity.suit, identity.rank); card_count];
         for (id, identity, _) in &template.observed_cards {
             if let Some(identity) = identity {
                 placeholder_cards[id.index()] = *identity;
@@ -812,15 +815,23 @@ impl WorldTemplate {
     ///
     /// # Errors
     ///
-    /// Returns [`WorldConstructionError`] if `cards` is not a standard deck or
+    /// Returns [`WorldConstructionError`] if `cards` is not a variant deck or
     /// conflicts with a visible identity, direct clue, or observed history.
     pub fn instantiate(&self, cards: Vec<Card>) -> Result<FullState, WorldConstructionError> {
-        validate_standard_deck(&cards).map_err(WorldConstructionError::InvalidDeck)?;
+        validate_variant_deck(&self.variant, &cards)
+            .map_err(WorldConstructionError::InvalidDeck)?;
         for (id, identity, clues) in &self.observed_cards {
             let supplied = identity_at(&cards, *id)?;
             if let Some(identity) = identity {
                 require_identity(*id, *identity, supplied)?;
-            } else if !clues.allows(supplied) {
+            } else if !self
+                .variant
+                .identities()
+                .id_for(supplied.suit, supplied.rank)
+                .is_some_and(|identity| {
+                    clues.identity_mask_in(&self.variant) & (1_u64 << identity.value()) != 0
+                })
+            {
                 return Err(WorldConstructionError::ViolatesClues {
                     card: *id,
                     supplied,
@@ -833,7 +844,7 @@ impl WorldTemplate {
 
     fn build_state(&self, cards: Vec<Card>) -> FullState {
         FullState {
-            variant: VariantSpec::no_variant(),
+            variant: self.variant.clone(),
             cards,
             draw_pile: self.draw_pile.clone(),
             hands: self.hands.clone(),
@@ -849,10 +860,6 @@ impl WorldTemplate {
             clue_facts: self.clue_facts.clone(),
         }
     }
-}
-
-fn validate_standard_deck(deck: &[Card]) -> Result<(), SetupError> {
-    validate_variant_deck(&VariantSpec::no_variant(), deck)
 }
 
 fn validate_variant_deck(variant: &VariantSpec, deck: &[Card]) -> Result<(), SetupError> {

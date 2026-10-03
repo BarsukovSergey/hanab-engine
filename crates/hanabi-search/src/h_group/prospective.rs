@@ -1894,6 +1894,7 @@ pub(super) fn subjective_view_before_action(
         }
     }
     PlayerView {
+        variant: source.variant.clone(),
         observer,
         current_player: observer,
         turn: history
