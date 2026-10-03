@@ -342,15 +342,15 @@ impl VariantSpec {
 
     #[must_use]
     pub fn legal_clues(&self, target_hand: &[IdentityId]) -> Vec<GenericClue> {
-        let colors = self
-            .clue_colors
-            .iter()
-            .copied()
-            .map(GenericClue::Color);
+        let colors = self.clue_colors.iter().copied().map(GenericClue::Color);
         let ranks = self.clue_ranks.iter().copied().map(GenericClue::Rank);
         colors
             .chain(ranks)
-            .filter(|clue| target_hand.iter().any(|identity| self.touches(*identity, *clue)))
+            .filter(|clue| {
+                target_hand
+                    .iter()
+                    .any(|identity| self.touches(*identity, *clue))
+            })
             .collect()
     }
 
@@ -515,12 +515,20 @@ impl fmt::Display for VariantSpecError {
             Self::NoCardRanks => formatter.write_str("variant requires at least one card rank"),
             Self::NoIdentities => formatter.write_str("variant requires at least one identity"),
             Self::TooManyIdentities(count) => {
-                write!(formatter, "variant has {count} identities; maximum is {MAX_IDENTITIES}")
+                write!(
+                    formatter,
+                    "variant has {count} identities; maximum is {MAX_IDENTITIES}"
+                )
             }
             Self::ZeroCopies { identity_index } => {
-                write!(formatter, "identity {identity_index} has zero physical copies")
+                write!(
+                    formatter,
+                    "identity {identity_index} has zero physical copies"
+                )
             }
-            Self::ZeroClueTokens => formatter.write_str("variant must allow at least one clue token"),
+            Self::ZeroClueTokens => {
+                formatter.write_str("variant must allow at least one clue token")
+            }
             Self::ZeroStrikes => formatter.write_str("variant must allow at least one strike"),
             Self::DeckTooLarge => formatter.write_str("variant deck size overflows usize"),
             Self::DuplicateValue { kind, value } => {
@@ -623,15 +631,18 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            spec.identities().clue_mask(GenericClue::Color(ClueColorId::new(1))),
+            spec.identities()
+                .clue_mask(GenericClue::Color(ClueColorId::new(1))),
             0b01
         );
         assert_eq!(
-            spec.identities().clue_mask(GenericClue::Rank(ClueRank::new(1))),
+            spec.identities()
+                .clue_mask(GenericClue::Rank(ClueRank::new(1))),
             0b11
         );
         assert_eq!(
-            spec.identities().clue_mask(GenericClue::Rank(ClueRank::new(2))),
+            spec.identities()
+                .clue_mask(GenericClue::Rank(ClueRank::new(2))),
             0b10
         );
     }
@@ -647,10 +658,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(spec.copies(red_one), Some(3));
-        assert!(spec.touches(
-            red_one,
-            GenericClue::Color(ClueColorId::new(0))
-        ));
+        assert!(spec.touches(red_one, GenericClue::Color(ClueColorId::new(0))));
         assert_eq!(spec.successor(red_one), Some(red_two));
         assert!(spec.playable(&[0, 0, 0, 0, 0], red_one));
         assert!(!spec.playable(&[1, 0, 0, 0, 0], red_one));
