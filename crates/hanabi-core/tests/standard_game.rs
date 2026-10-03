@@ -1,6 +1,6 @@
 use hanabi_core::{
-    Action, Card, CardId, Clue, EndReason, FullState, GameEvent, GameStatus, MAX_CLUE_TOKENS,
-    CardRank, IdentitySpec, PlayerId, Rank, RuleError, SetupError, Suit, SuitId, VariantSpec,
+    Action, Card, CardId, CardRank, Clue, EndReason, FullState, GameEvent, GameStatus, IdentitySpec,
+    MAX_CLUE_TOKENS, PlayerId, Rank, RuleError, SetupError, Suit, SuitId, VariantSpec,
     WorldConstructionError, WorldTemplate, standard_deck, standard_hand_size,
 };
 
