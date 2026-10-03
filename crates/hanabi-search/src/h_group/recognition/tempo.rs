@@ -379,7 +379,7 @@ pub(in crate::h_group) fn apply_emergency_discard_effects(
     let next_has_safe_action = has_safe_action(next);
     let after_next_has_safe_action = has_safe_action(after_next);
     let after_next_chop = target_chop(after_next);
-    let after_next_is_important = after_next_chop.is_some_and(&historically_important);
+    let after_next_is_important = after_next_chop.is_some_and(historically_important);
 
     if known_playable
         && context.before.clue_tokens == 0
