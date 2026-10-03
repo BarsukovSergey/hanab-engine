@@ -445,7 +445,7 @@ pub(in crate::h_group) fn apply_phantom_effects(
         let next = next_player(*player, hands.len());
         let after_next = next_player(next, hands.len());
         let after_next_chop = chop(&hands[after_next.index()], &gotten);
-        if safe_action(next) && !safe_action(after_next) && after_next_chop.is_some_and(&important)
+        if safe_action(next) && !safe_action(after_next) && after_next_chop.is_some_and(important)
         {
             let bounced = after_next_chop.expect("checked above");
             effects.chop_moved.insert(bounced);
