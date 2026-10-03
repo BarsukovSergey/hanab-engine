@@ -192,6 +192,7 @@ impl FullState {
             .iter()
             .map(|_| Vec::with_capacity(variant.card_ranks().len()))
             .collect();
+        let final_turns_remaining = draw_pile.is_empty().then_some(num_players);
         let state = Self {
             variant,
             cards,
@@ -203,7 +204,7 @@ impl FullState {
             strikes: 0,
             current_player: PlayerId::new(0),
             turn: 0,
-            final_turns_remaining: None,
+            final_turns_remaining,
             status: GameStatus::InProgress,
             history: Vec::new(),
             clue_facts,
