@@ -2,6 +2,9 @@ use core::fmt;
 
 use crate::{Card, Rank};
 
+mod catalog;
+pub use catalog::{HANABI_LIVE_VARIANT_REVISION, VariantId};
+
 #[cfg(test)]
 use crate::Suit;
 
@@ -254,6 +257,7 @@ impl IdentityUniverse {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VariantSpec {
+    catalog_id: Option<VariantId>,
     name: String,
     stack_suits: Vec<SuitId>,
     card_ranks: Vec<CardRank>,
@@ -322,6 +326,7 @@ impl VariantSpec {
         }
 
         Ok(Self {
+            catalog_id: None,
             name: name.into(),
             stack_suits,
             card_ranks,
@@ -340,37 +345,13 @@ impl VariantSpec {
     /// internal engine bug.
     #[must_use]
     pub fn no_variant() -> Self {
-        let stack_suits = (0_u8..5).map(SuitId::new).collect::<Vec<_>>();
-        let card_ranks = (1_u8..=5).map(CardRank::new).collect::<Vec<_>>();
-        let clue_colors = (0_u8..5).map(ClueColorId::new).collect::<Vec<_>>();
-        let clue_ranks = (1_u8..=5).map(ClueRank::new).collect::<Vec<_>>();
-        let mut identities = Vec::with_capacity(25);
-        for suit in 0_u8..5 {
-            for rank in 1_u8..=5 {
-                let copies = match rank {
-                    1 => 3,
-                    2..=4 => 2,
-                    5 => 1,
-                    _ => unreachable!(),
-                };
-                identities.push(IdentitySpec {
-                    suit: SuitId::new(suit),
-                    rank: CardRank::new(rank),
-                    copies,
-                    clue_colors: vec![ClueColorId::new(suit)],
-                    clue_ranks: vec![ClueRank::new(rank)],
-                });
-            }
-        }
-        Self::new(
-            "No Variant",
-            stack_suits,
-            card_ranks,
-            clue_colors,
-            clue_ranks,
-            identities,
-        )
-        .expect("built-in No Variant spec is valid")
+        Self::from_catalog(VariantId::NoVariant)
+    }
+
+    /// Stable engine identifier for a catalog entry; custom specs have none.
+    #[must_use]
+    pub const fn catalog_id(&self) -> Option<VariantId> {
+        self.catalog_id
     }
 
     #[must_use]

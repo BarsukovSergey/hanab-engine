@@ -21,7 +21,8 @@ pub use state::{
     WorldConstructionError, WorldTemplate, standard_hand_size,
 };
 pub use variant::{
-    CardRank, ClueColorId, ClueRank, GenericClue, Identity, IdentityId, IdentitySpec,
-    IdentityUniverse, MAX_IDENTITIES, SuitId, VariantSpec, VariantSpecError,
+    CardRank, ClueColorId, ClueRank, GenericClue, HANABI_LIVE_VARIANT_REVISION, Identity,
+    IdentityId, IdentitySpec, IdentityUniverse, MAX_IDENTITIES, SuitId, VariantId, VariantSpec,
+    VariantSpecError,
 };
 pub use view::{ClueFacts, ObservedCard, ObservedEvent, ObservedHistoryEntry, PlayerView};

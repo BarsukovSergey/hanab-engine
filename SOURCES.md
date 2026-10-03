@@ -19,6 +19,17 @@ This file records external repositories and documentation used to design, implem
 
 Reference for Hanabi Live protocol, variants, physical mechanics, and table lifecycle. GPL-licensed implementation is used as a reference; substantial GPL code is not copied into this MIT codebase without a deliberate licensing decision.
 
+Physical catalog foundation (M3):
+
+- Pinned revision: [`67517fcce0a441bf75313d92dd6078d34495971b`](https://github.com/Hanabi-Live/hanabi-live/tree/67517fcce0a441bf75313d92dd6078d34495971b).
+- Scope: No Variant and Black, Rainbow, White, Pink, Brown, Prism, Omni, and Null in their **6 Suits** editions. Other suit counts and combinations are outside this catalog.
+- Definitions: `packages/game/src/json/variants.json` (ordered suit membership), `packages/game/src/json/suits.json` (physical suit properties), `packages/game/src/suitsInit.ts` and `packages/game/src/variantsInit.ts` (default clue domains, ranks, stack size, and maximum score).
+- Mechanics: `packages/game/src/rules/deck.ts` (copy counts), `packages/game/src/rules/clues.ts` (touching, including Prism's rank-dependent color), and `packages/game/src/rules/playStacks.ts` (ascending stacks). `packages/game/src/rules/card.ts` was also inspected to locate the deck and stack helpers.
+- These physical facts are independently represented by checked-in declarative specs in `hanabi-core`; no source implementation or GPL bot code is imported, and no catalog is fetched at runtime.
+- Engine keys (`no-variant`, `black-6-suits`, etc.) are independent of Hanabi Live's numeric or string protocol IDs. Suits and clue colors use spec-local IDs: standard suits/colors occupy 0 through 4; the added suit occupies 5, with a clue color 5 only in Black, Pink, and Brown.
+- No Variant preserves its existing identity order and 50-card deck. The added variants have 30 identities, ascending ranks 1 through 5, and a maximum score of 30. Black has a 55-card deck (one of each black rank); the others have 60 cards. The existing identity clue-touch sets and ordered stack representation express all required physical traits; no convention metadata or protocol parsing is added.
+- Coverage: `crates/hanabi-core/tests/variant_catalog.rs` checks each entry's deck/multiplicities, identity and clue domains, positive and negative touching, stack independence, playability, successors, maximum score, and stable keys. Existing No Variant regressions are retained.
+
 ### will-hanabi-bot/hanabi-bot
 
 Behavioral/reference oracle for overlapping H-Group behavior. License observed during audit: GPL-3.0. Compare behavior and independently implement; do not copy substantial code, tests, comments, or literal implementation translations.
