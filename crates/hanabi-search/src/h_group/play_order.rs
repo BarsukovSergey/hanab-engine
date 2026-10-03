@@ -17,7 +17,8 @@ pub(super) fn ordered_playable_cards(
         return cards;
     }
     let own_hand = &view.hands[view.observer.index()];
-    let initial_hand_size = hanabi_core::standard_hand_size(view.hands.len()).expect("validated standard player count");
+    let initial_hand_size =
+        hanabi_core::standard_hand_size(view.hands.len()).expect("validated standard player count");
     let initial_cards = initial_hand_size * view.hands.len();
     let gotten = inferred.gotten();
     let ordering = PlayableOrderContext {
@@ -49,7 +50,9 @@ pub(super) fn has_teammate_play_priority(
         inferred,
         profile,
         own_hand: &view.hands[view.observer.index()],
-        initial_cards: (hanabi_core::standard_hand_size(view.hands.len()).expect("validated standard player count")) * view.hands.len(),
+        initial_cards: (hanabi_core::standard_hand_size(view.hands.len())
+            .expect("validated standard player count"))
+            * view.hands.len(),
         gotten: &gotten,
     };
     let key = playable_order_key(&context, card);
