@@ -960,6 +960,17 @@ mod tests {
     use hanabi_core::{FullState, PlayerId, standard_deck};
 
     #[test]
+    fn widened_identity_set_preserves_standard_bit_order() {
+        let last = Card::new(Suit::Purple, Rank::Five);
+        let singleton = IdentitySet::singleton(last);
+
+        assert_eq!(IdentitySet::all().0, (1_u64 << 25) - 1);
+        assert_eq!(singleton.0, 1_u64 << 24);
+        assert!(singleton.contains(last));
+        assert_eq!(singleton.len(), 1);
+    }
+
+    #[test]
     fn bounded_world_count_short_circuits_openings() {
         let state = FullState::new_standard(2, standard_deck()).unwrap();
         let information = InformationSet::new(&state.view_for(PlayerId::new(0)).unwrap()).unwrap();
