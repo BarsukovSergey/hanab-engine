@@ -46,7 +46,7 @@ pub(super) fn apply_strategic_clue_values(
     let baselines = (0..source.hands.len())
         .map(|player| {
             let observer = PlayerId::new(
-                u8::try_from(player).expect("standard Hanabi has at most five players"),
+                u8::try_from(player).expect("standard Hanabi has at most six players"),
             );
             baseline_team
                 .projection(observer)
@@ -659,7 +659,7 @@ fn secured_critical_chop_deadline_value(
         .enumerate()
         .filter_map(|(player, baseline)| {
             let actor = PlayerId::new(
-                u8::try_from(player).expect("standard Hanabi has at most five players"),
+                u8::try_from(player).expect("standard Hanabi has at most six players"),
             );
             let distance = (player + player_count - source.current_player.index()) % player_count;
             if distance == 0
@@ -772,7 +772,7 @@ fn preserves_visible_continuation(
     for distance in 1..target_distance {
         let player = PlayerId::new(
             u8::try_from((source.current_player.index() + distance) % player_count)
-                .expect("standard Hanabi has at most five players"),
+                .expect("standard Hanabi has at most six players"),
         );
         let Some((value, identity)) = scheduled_play_continuation_value(
             source,
@@ -875,7 +875,7 @@ fn clue_establishes_actor_recognized_action(
     let baseline_team = compiled_baseline_team(source, profile);
     for player in 0..source.hands.len() {
         let observer =
-            PlayerId::new(u8::try_from(player).expect("standard Hanabi has at most five players"));
+            PlayerId::new(u8::try_from(player).expect("standard Hanabi has at most six players"));
         let baseline = baseline_team.projection(observer)?;
         let projected = compiled.projection(observer)?;
         let gained_play = projected

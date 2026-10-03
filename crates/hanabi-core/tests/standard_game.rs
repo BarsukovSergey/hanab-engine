@@ -1,6 +1,6 @@
 use hanabi_core::{
     Action, Card, CardId, Clue, EndReason, FullState, GameEvent, GameStatus, MAX_CLUE_TOKENS,
-    PlayerId, Rank, RuleError, SetupError, Suit, standard_deck,
+    PlayerId, Rank, RuleError, SetupError, Suit, standard_deck, standard_hand_size,
 };
 
 fn card(suit: Suit, rank: Rank) -> Card {
@@ -52,9 +52,14 @@ fn validates_setup_and_deals_standard_hand_sizes() {
         Err(SetupError::InvalidPlayerCount(1))
     ));
 
-    for players in 2..=5 {
+    assert!(matches!(
+        FullState::new_standard(7, standard_deck()),
+        Err(SetupError::InvalidPlayerCount(7))
+    ));
+
+    for players in 2..=6 {
         let state = FullState::new_standard(players, standard_deck()).unwrap();
-        let expected_hand_size = if players <= 3 { 5 } else { 4 };
+        let expected_hand_size = standard_hand_size(usize::from(players)).unwrap();
         assert_eq!(state.hands().len(), usize::from(players));
         assert!(
             state

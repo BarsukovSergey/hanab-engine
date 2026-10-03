@@ -24,7 +24,7 @@ fn default_players_require_valid_seed_and_do_not_replace_explicit_names() {
     for json in [
         serde_json::json!({"deck": [], "actions": []}),
         serde_json::json!({"seed": "p1v0s1", "actions": []}),
-        serde_json::json!({"seed": "p6v0s1", "actions": []}),
+        serde_json::json!({"seed": "p7v0s1", "actions": []}),
         serde_json::json!({"seed": "p4v0s", "actions": []}),
         serde_json::json!({"seed": "p4v0s1junk", "actions": []}),
         serde_json::json!({"seed": "p4v0s1", "players": [], "actions": []}),
@@ -100,6 +100,26 @@ fn explicit_deck_takes_precedence_over_seed_metadata() {
     let replay = HanabiLiveReplay::from_json(&empty.to_string()).unwrap();
     assert_eq!(replay.deck, []);
     assert!(replay.state_at_turn(0).is_err());
+}
+
+#[test]
+fn six_player_seeded_replays_work_with_explicit_names() {
+    let players = ["A", "B", "C", "D", "E", "F"];
+    let json = serde_json::json!({
+        "players": players,
+        "seed": "p6v0s1",
+        "actions": []
+    });
+    let replay = HanabiLiveReplay::from_json(&json.to_string()).unwrap();
+
+    assert_eq!(replay.players, players);
+    assert_eq!(replay.deck.len(), 50);
+    let state = replay.state_at_turn(0).unwrap();
+    assert_eq!(state.hands().len(), 6);
+    assert!(state.hands().iter().all(|hand| hand.len() == 3));
+
+    let implicit = serde_json::json!({"seed": "p6v0s1", "actions": []});
+    assert!(HanabiLiveReplay::from_json(&implicit.to_string()).is_err());
 }
 
 #[test]

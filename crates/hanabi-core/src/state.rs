@@ -8,9 +8,19 @@ use crate::{
 
 pub const MAX_CLUE_TOKENS: u8 = 8;
 pub const MAX_STRIKES: u8 = 3;
-const MIN_PLAYERS: u8 = 2;
-const MAX_PLAYERS: u8 = 5;
-const STANDARD_DECK_SIZE: usize = 50;
+pub const MIN_PLAYERS: u8 = 2;
+pub const MAX_PLAYERS: u8 = 6;
+pub const STANDARD_DECK_SIZE: usize = 50;
+
+#[must_use]
+pub const fn standard_hand_size(num_players: usize) -> Option<usize> {
+    match num_players {
+        2 | 3 => Some(5),
+        4 | 5 => Some(4),
+        6 => Some(3),
+        _ => None,
+    }
+}
 
 /// Why a game ended.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -129,19 +139,18 @@ impl FullState {
     /// Panics only if validated standard-deck constants cannot satisfy the
     /// initial deal, which would indicate an internal rules bug.
     pub fn new_standard(num_players: u8, deck: Vec<Card>) -> Result<Self, SetupError> {
-        if !(MIN_PLAYERS..=MAX_PLAYERS).contains(&num_players) {
-            return Err(SetupError::InvalidPlayerCount(num_players));
-        }
+        let hand_size = standard_hand_size(usize::from(num_players))
+            .ok_or(SetupError::InvalidPlayerCount(num_players))?;
         validate_standard_deck(&deck)?;
 
         let cards = deck;
         let mut draw_pile = (0..cards.len()).map(CardId::new).collect::<VecDeque<_>>();
-        let mut hands = vec![Vec::with_capacity(hand_size(num_players)); num_players.into()];
+        let mut hands = vec![Vec::with_capacity(hand_size); num_players.into()];
 
         // Hanabi Live assigns card orders by dealing a complete hand to each
         // player in index order rather than dealing round-robin.
         for player in 0..num_players {
-            for _ in 0..hand_size(num_players) {
+            for _ in 0..hand_size {
                 let card = draw_pile
                     .pop_front()
                     .expect("a validated standard deck contains enough cards for the initial deal");
@@ -173,12 +182,12 @@ impl FullState {
     #[must_use]
     /// # Panics
     ///
-    /// Panics only if an internally constructed state exceeds five players.
+    /// Panics only if an internally constructed state exceeds six players.
     pub fn num_players(&self) -> u8 {
         self.hands
             .len()
             .try_into()
-            .expect("standard Hanabi has at most five players")
+            .expect("standard Hanabi has at most six players")
     }
 
     #[must_use]
@@ -313,7 +322,7 @@ impl FullState {
                 let target = PlayerId::new(
                     target_index
                         .try_into()
-                        .expect("standard Hanabi has at most five players"),
+                        .expect("standard Hanabi has at most six players"),
                 );
                 for suit in Suit::ALL {
                     if target_hand
@@ -430,7 +439,7 @@ impl FullState {
     /// Returns [`InvariantViolation`] describing the first broken invariant.
     pub fn validate(&self) -> Result<(), InvariantViolation> {
         if !(usize::from(MIN_PLAYERS)..=usize::from(MAX_PLAYERS)).contains(&self.hands.len()) {
-            return Err(InvariantViolation("player count is outside 2..=5".into()));
+            return Err(InvariantViolation("player count is outside 2..=6".into()));
         }
         if self.cards.len() != 50 {
             return Err(InvariantViolation(
@@ -753,11 +762,6 @@ impl WorldTemplate {
     }
 }
 
-#[must_use]
-const fn hand_size(num_players: u8) -> usize {
-    if num_players <= 3 { 5 } else { 4 }
-}
-
 fn validate_standard_deck(deck: &[Card]) -> Result<(), SetupError> {
     if deck.len() != STANDARD_DECK_SIZE {
         return Err(SetupError::InvalidDeckSize {
@@ -951,7 +955,7 @@ impl fmt::Display for SetupError {
             Self::InvalidPlayerCount(count) => {
                 write!(
                     formatter,
-                    "standard Hanabi requires 2 to 5 players, got {count}"
+                    "standard Hanabi requires 2 to 6 players, got {count}"
                 )
             }
             Self::InvalidDeckSize { expected, actual } => {

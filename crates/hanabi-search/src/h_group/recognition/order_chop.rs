@@ -73,9 +73,8 @@ pub(in crate::h_group) fn apply_order_chop_move_effects(
     let double = extras_enabled && context.after.hands.len() == 3 && skipped >= 3;
     let target_distance = if double { skipped - 2 } else { skipped };
     let target_index = (player.index() + target_distance) % context.after.hands.len();
-    let mut target = PlayerId::new(
-        u8::try_from(target_index).expect("standard Hanabi has at most five players"),
-    );
+    let mut target =
+        PlayerId::new(u8::try_from(target_index).expect("standard Hanabi has at most six players"));
     let gotten = protected_cards(
         effects.explicitly_clued,
         effects.invisibly_clued,
@@ -134,11 +133,8 @@ fn order_chop_move_order(
             .count()
     };
     let played_clue_count = positive_clue_count(played);
-    let initial_hand_size = if context.before.hands.len() <= 3 {
-        5
-    } else {
-        4
-    };
+    let initial_hand_size = hanabi_core::standard_hand_size(context.before.hands.len())
+        .expect("validated standard player count");
     let initial_cards = initial_hand_size * context.before.hands.len();
     let convention_facts = signals.facts();
     let contextual_identity = |candidate: CardId| {

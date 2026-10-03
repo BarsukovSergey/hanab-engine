@@ -868,7 +868,7 @@ pub(super) fn prospective_team_clue_signal_kinds(
     let mut kinds = Vec::new();
     for player in 0..source.hands.len() {
         let observer =
-            PlayerId::new(u8::try_from(player).expect("standard Hanabi has at most five players"));
+            PlayerId::new(u8::try_from(player).expect("standard Hanabi has at most six players"));
         let Some(signals) = snapshot.signal_kinds(observer) else {
             continue;
         };
@@ -968,7 +968,7 @@ pub(super) fn prospective_stacked_ejection_card(
     let snapshot = compiled_prospective_clue(source, profile, target, clue, touched)?;
     for player in 0..source.hands.len() {
         let observer =
-            PlayerId::new(u8::try_from(player).expect("standard Hanabi has at most five players"));
+            PlayerId::new(u8::try_from(player).expect("standard Hanabi has at most six players"));
         let Some(projection) = snapshot.team.projection(observer) else {
             continue;
         };
@@ -1194,7 +1194,7 @@ fn duplicates_good_touch_superposition(
     let mut baseline_possible_promises = IdentitySet::default();
     for player in 0..source.hands.len() {
         let observer =
-            PlayerId::new(u8::try_from(player).expect("standard Hanabi has at most five players"));
+            PlayerId::new(u8::try_from(player).expect("standard Hanabi has at most six players"));
         let projection = baseline_team.projection(observer)?;
         for interpretation in &projection.replay.clues {
             let focus_is_live = source.hands.iter().flatten().any(|card| {
@@ -1620,7 +1620,7 @@ fn other_player_projection_is_unsafe(
     let giver_promptable = giver_baseline.replay.promptable();
     for player in 0..source.hands.len() {
         let observer =
-            PlayerId::new(u8::try_from(player).expect("standard Hanabi has at most five players"));
+            PlayerId::new(u8::try_from(player).expect("standard Hanabi has at most six players"));
         if observer == target || observer == source.observer {
             continue;
         }

@@ -143,7 +143,7 @@ pub(super) fn compile_named_line_metrics(
     let mut ignition = None;
     for player in 0..source.hands.len() {
         let observer =
-            PlayerId::new(u8::try_from(player).expect("standard Hanabi has at most five players"));
+            PlayerId::new(u8::try_from(player).expect("standard Hanabi has at most six players"));
         let projection = team.projection(observer)?;
         for signal in projection
             .replay

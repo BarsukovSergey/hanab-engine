@@ -488,6 +488,21 @@ mod tests {
     }
 
     #[test]
+    fn six_player_h_group_analysis_accepts_three_card_hands() {
+        let state = FullState::new_standard(6, standard_deck()).unwrap();
+        let view = state.view_for(PlayerId::new(0)).unwrap();
+        assert!(view.hands.iter().all(|hand| hand.len() == 3));
+
+        let deductions = LogicalDeductions::new(view).unwrap();
+        let analysis = SupportedConvention::HGroup(HGroupProfile::Max).analyze(&deductions);
+
+        assert!(matches!(
+            analysis.inferences,
+            ConventionInferences::HGroup(_)
+        ));
+    }
+
+    #[test]
     fn h_group_selection_has_typed_inferences_and_revision_metadata() {
         let state = FullState::new_standard(2, standard_deck()).unwrap();
         let view = state.view_for(PlayerId::new(0)).unwrap();

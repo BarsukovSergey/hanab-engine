@@ -253,7 +253,7 @@ pub(in crate::h_group) fn apply_ignition_effects(
         .map(|distance| {
             PlayerId::new(
                 u8::try_from((giver.index() + distance) % player_count)
-                    .expect("standard Hanabi has at most five players"),
+                    .expect("standard Hanabi has at most six players"),
             )
         })
         .collect::<Vec<_>>();
@@ -1559,7 +1559,7 @@ pub(in crate::h_group) fn apply_priority_effects(
                 .map(|offset| {
                     PlayerId::new(
                         u8::try_from((player.index() + offset) % hands.len())
-                            .expect("standard Hanabi has at most five players"),
+                            .expect("standard Hanabi has at most six players"),
                     )
                 })
                 .collect::<Vec<_>>();

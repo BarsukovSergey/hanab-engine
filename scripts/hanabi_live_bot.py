@@ -323,8 +323,8 @@ class HanabiEngineBot:
         if table.get("variant") != "No Variant":
             self.reply(requester, "I currently support only No Variant games.")
             return
-        if len(table.get("players", [])) >= 5:
-            self.reply(requester, "I support at most five total players.")
+        if len(table.get("players", [])) >= 6:
+            self.reply(requester, "I support at most six total players.")
             return
         self.send("tableJoin", {"tableID": table["id"]})
 

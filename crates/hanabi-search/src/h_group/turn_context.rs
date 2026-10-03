@@ -19,7 +19,8 @@ impl<'a> HistoricalView<'a> {
     }
 
     pub(super) fn identity(self, card: CardId) -> Option<Card> {
-        let hand_size = if self.source.hands.len() <= 3 { 5 } else { 4 };
+        let hand_size = hanabi_core::standard_hand_size(self.source.hands.len())
+            .expect("validated standard player count");
         let initial_cards = hand_size * self.source.hands.len();
         let draw = self
             .source
@@ -38,7 +39,7 @@ impl<'a> HistoricalView<'a> {
             Some((_, player)) => player,
             None if card.index() < initial_cards => hanabi_core::PlayerId::new(
                 u8::try_from(card.index() / hand_size)
-                    .expect("standard Hanabi has at most five players"),
+                    .expect("standard Hanabi has at most six players"),
             ),
             None => return None,
         };
