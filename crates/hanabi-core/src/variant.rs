@@ -1,6 +1,9 @@
 use core::fmt;
 
-use crate::{Card, Rank, Suit};
+use crate::{Card, Rank};
+
+#[cfg(test)]
+use crate::Suit;
 
 pub const MAX_IDENTITIES: usize = 64;
 
@@ -28,6 +31,91 @@ id_type!(ClueColorId);
 id_type!(CardRank);
 id_type!(ClueRank);
 id_type!(IdentityId);
+
+impl SuitId {
+    #[allow(non_upper_case_globals)]
+    pub const Red: Self = Self::new(0);
+    #[allow(non_upper_case_globals)]
+    pub const Yellow: Self = Self::new(1);
+    #[allow(non_upper_case_globals)]
+    pub const Green: Self = Self::new(2);
+    #[allow(non_upper_case_globals)]
+    pub const Blue: Self = Self::new(3);
+    #[allow(non_upper_case_globals)]
+    pub const Purple: Self = Self::new(4);
+    pub const ALL: [Self; 5] = [
+        Self::Red,
+        Self::Yellow,
+        Self::Green,
+        Self::Blue,
+        Self::Purple,
+    ];
+
+    #[must_use]
+    #[allow(clippy::cast_lossless)]
+    pub const fn index(self) -> usize {
+        self.value() as usize
+    }
+}
+
+impl fmt::Display for SuitId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.value() {
+            0 => formatter.write_str("red"),
+            1 => formatter.write_str("yellow"),
+            2 => formatter.write_str("green"),
+            3 => formatter.write_str("blue"),
+            4 => formatter.write_str("purple"),
+            value => write!(formatter, "suit {value}"),
+        }
+    }
+}
+
+impl CardRank {
+    #[allow(non_upper_case_globals)]
+    pub const One: Self = Self::new(1);
+    #[allow(non_upper_case_globals)]
+    pub const Two: Self = Self::new(2);
+    #[allow(non_upper_case_globals)]
+    pub const Three: Self = Self::new(3);
+    #[allow(non_upper_case_globals)]
+    pub const Four: Self = Self::new(4);
+    #[allow(non_upper_case_globals)]
+    pub const Five: Self = Self::new(5);
+    pub const ALL: [Self; 5] = [Self::One, Self::Two, Self::Three, Self::Four, Self::Five];
+
+    #[must_use]
+    pub const fn number(self) -> u8 {
+        self.value()
+    }
+
+    #[must_use]
+    #[allow(clippy::cast_lossless)]
+    pub const fn index(self) -> usize {
+        self.value().saturating_sub(1) as usize
+    }
+
+    /// Returns the standard No Variant multiplicity for this rank.
+    ///
+    /// # Panics
+    ///
+    /// Panics when called for a rank outside the standard 1..=5 domain.
+    #[must_use]
+    pub fn copies(self) -> u8 {
+        match self.value() {
+            1 => 3,
+            2..=4 => 2,
+            5 => 1,
+            value => panic!("card rank {value} has variant-defined multiplicity"),
+        }
+    }
+}
+
+impl fmt::Display for CardRank {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.value().fmt(formatter)
+    }
+}
 
 impl IdentityId {
     #[must_use]
@@ -388,18 +476,6 @@ impl VariantSpec {
     }
 }
 
-impl From<Suit> for SuitId {
-    fn from(value: Suit) -> Self {
-        Self::new(u8::try_from(value.index()).expect("five standard suits"))
-    }
-}
-
-impl From<Rank> for CardRank {
-    fn from(value: Rank) -> Self {
-        Self::new(value.number())
-    }
-}
-
 impl From<Rank> for ClueRank {
     fn from(value: Rank) -> Self {
         Self::new(value.number())
@@ -409,8 +485,7 @@ impl From<Rank> for ClueRank {
 impl VariantSpec {
     #[must_use]
     pub fn standard_identity_id(&self, card: Card) -> Option<IdentityId> {
-        self.universe
-            .id_for(SuitId::from(card.suit), CardRank::from(card.rank))
+        self.universe.id_for(card.suit, card.rank)
     }
 }
 

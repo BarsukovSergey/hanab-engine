@@ -306,13 +306,7 @@ impl HanabiLiveActionCommand {
                     table_id,
                     action_type: HanabiLiveActionType::SuitClue,
                     target: target.index(),
-                    value: Some(match suit {
-                        Suit::Red => 0,
-                        Suit::Yellow => 1,
-                        Suit::Green => 2,
-                        Suit::Blue => 3,
-                        Suit::Purple => 4,
-                    }),
+                    value: Some(suit.value()),
                 },
                 Clue::Rank(rank) => Self {
                     table_id,

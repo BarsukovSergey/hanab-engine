@@ -196,12 +196,13 @@ fn identities(domain: IdentitySet) -> String {
         .map(|card| {
             format!(
                 "{}{}",
-                match card.suit {
-                    hanabi_core::Suit::Red => "r",
-                    hanabi_core::Suit::Yellow => "y",
-                    hanabi_core::Suit::Green => "g",
-                    hanabi_core::Suit::Blue => "b",
-                    hanabi_core::Suit::Purple => "p",
+                match card.suit.value() {
+                    0 => "r",
+                    1 => "y",
+                    2 => "g",
+                    3 => "b",
+                    4 => "p",
+                    _ => "?",
                 },
                 card.rank.number()
             )

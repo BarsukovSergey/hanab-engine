@@ -41,6 +41,10 @@ impl FutureCardQuality {
             }
             Rank::Four => QualityBand::Four,
             Rank::Five => QualityBand::Five,
+            rank => panic!(
+                "future-card quality requires standard rank 1..=5, got {}",
+                rank.number()
+            ),
         }
     }
 }
