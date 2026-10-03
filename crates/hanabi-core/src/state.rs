@@ -612,11 +612,9 @@ impl FullState {
                     self.variant.max_score()
                 )))
             }
-            GameStatus::Finished(EndReason::TooManyStrikes) if self.strikes != MAX_STRIKES => {
-                Err(InvariantViolation(
-                    "strike ending requires exactly three strikes".into(),
-                ))
-            }
+            GameStatus::Finished(EndReason::TooManyStrikes) if self.strikes != MAX_STRIKES => Err(
+                InvariantViolation("strike ending requires exactly three strikes".into()),
+            ),
             GameStatus::Finished(EndReason::FinalRoundComplete)
                 if self.final_turns_remaining != Some(0) =>
             {
