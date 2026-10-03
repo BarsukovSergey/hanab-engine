@@ -10,7 +10,6 @@ pub const MAX_CLUE_TOKENS: u8 = 8;
 pub const MAX_STRIKES: u8 = 3;
 pub const MIN_PLAYERS: u8 = 2;
 pub const MAX_PLAYERS: u8 = 6;
-pub const STANDARD_DECK_SIZE: usize = 50;
 
 #[must_use]
 pub const fn standard_hand_size(num_players: usize) -> Option<usize> {
