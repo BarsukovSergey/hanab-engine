@@ -89,7 +89,7 @@ pub struct FullState {
     cards: Vec<Card>,
     draw_pile: VecDeque<CardId>,
     hands: Vec<Vec<CardId>>,
-    play_stacks: [Vec<CardId>; 5],
+    play_stacks: Vec<Vec<CardId>>,
     discard_pile: Vec<CardId>,
     clue_tokens: u8,
     strikes: u8,
@@ -110,7 +110,7 @@ pub struct FullState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorldTemplate {
     hands: Vec<Vec<CardId>>,
-    play_stacks: [Vec<CardId>; 5],
+    play_stacks: Vec<Vec<CardId>>,
     discard_pile: Vec<CardId>,
     draw_pile: VecDeque<CardId>,
     observed_cards: Vec<(CardId, Option<Card>, ClueFacts)>,
@@ -163,7 +163,7 @@ impl FullState {
             cards,
             draw_pile,
             hands,
-            play_stacks: std::array::from_fn(|_| Vec::with_capacity(5)),
+            play_stacks: vec![Vec::with_capacity(5); Suit::ALL.len()],
             discard_pile: Vec::new(),
             clue_tokens: MAX_CLUE_TOKENS,
             strikes: 0,
@@ -246,7 +246,7 @@ impl FullState {
     }
 
     #[must_use]
-    pub const fn play_stacks(&self) -> &[Vec<CardId>; 5] {
+    pub fn play_stacks(&self) -> &[Vec<CardId>] {
         &self.play_stacks
     }
 
@@ -444,6 +444,11 @@ impl FullState {
         if self.cards.len() != 50 {
             return Err(InvariantViolation(
                 "a standard game must contain 50 cards".into(),
+            ));
+        }
+        if self.play_stacks.len() != Suit::ALL.len() {
+            return Err(InvariantViolation(
+                "a standard game must contain five play stacks".into(),
             ));
         }
         if self.clue_facts != derive_clue_facts(self.cards.len(), &self.history) {
@@ -655,7 +660,7 @@ impl WorldTemplate {
             hands.push(ids);
         }
 
-        let mut play_stacks = std::array::from_fn(|_| Vec::new());
+        let mut play_stacks = vec![Vec::new(); view.play_stacks.len()];
         for (suit_index, observed_stack) in view.play_stacks.iter().enumerate() {
             for (id, identity) in observed_stack {
                 occupy(&mut used, *id)?;
