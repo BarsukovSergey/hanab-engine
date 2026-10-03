@@ -394,7 +394,7 @@ impl VariantSpec {
             .map(|suit| {
                 self.card_ranks
                     .iter()
-                    .filter(|rank| self.universe.id_for(*suit, **rank).is_some())
+                    .take_while(|rank| self.universe.id_for(*suit, **rank).is_some())
                     .count()
             })
             .sum()
@@ -662,6 +662,41 @@ mod tests {
                 GenericClue::Rank(ClueRank::new(1)),
             ]
         );
+    }
+
+    #[test]
+    fn max_score_stops_at_the_first_missing_stack_rank() {
+        let spec = VariantSpec::new(
+            "Sparse",
+            vec![SuitId::new(0)],
+            vec![CardRank::new(1), CardRank::new(2), CardRank::new(3)],
+            vec![],
+            vec![],
+            vec![
+                IdentitySpec {
+                    suit: SuitId::new(0),
+                    rank: CardRank::new(1),
+                    copies: 1,
+                    clue_colors: vec![],
+                    clue_ranks: vec![],
+                },
+                IdentitySpec {
+                    suit: SuitId::new(0),
+                    rank: CardRank::new(3),
+                    copies: 1,
+                    clue_colors: vec![],
+                    clue_ranks: vec![],
+                },
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(spec.max_score(), 1);
+        let one = spec
+            .identities()
+            .id_for(SuitId::new(0), CardRank::new(1))
+            .unwrap();
+        assert_eq!(spec.successor(one), None);
     }
 
     #[test]
