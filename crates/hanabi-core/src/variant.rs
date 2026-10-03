@@ -179,7 +179,7 @@ impl VariantSpec {
     ///
     /// # Errors
     ///
-    /// Returns VariantSpecError when the physical identity universe is empty
+    /// Returns `VariantSpecError` when the physical identity universe is empty
     /// or too large, identifiers are duplicated, identities reference
     /// undeclared suits/ranks/clue domains, or a physical identity has zero
     /// copies.
@@ -248,7 +248,7 @@ impl VariantSpec {
     /// # Panics
     ///
     /// Panics only if the compile-time built-in specification violates the
-    /// same validation rules accepted by Self::new, which indicates an
+    /// same validation rules accepted by `Self::new`, which indicates an
     /// internal engine bug.
     #[must_use]
     pub fn no_variant() -> Self {
