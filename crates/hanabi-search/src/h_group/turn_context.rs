@@ -177,7 +177,7 @@ mod tests {
                 }],
             ],
             deck_size: 38,
-            play_stacks: std::array::from_fn(|_| Vec::new()),
+            play_stacks: vec![Vec::new(); 5],
             discard_pile: vec![(CardId::new(0), own)],
             clue_tokens: 8,
             strikes: 0,
