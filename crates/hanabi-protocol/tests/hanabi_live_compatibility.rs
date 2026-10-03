@@ -61,8 +61,8 @@ fn replays_hanabi_live_no_variant_fixture() {
         GameStatus::Finished(EndReason::FinalRoundComplete)
     );
     assert_eq!(
-        state.play_stacks().each_ref().map(Vec::len),
-        [3, 5, 5, 5, 5]
+        state.play_stacks().iter().map(Vec::len).collect::<Vec<_>>(),
+        vec![3, 5, 5, 5, 5]
     );
     assert_eq!(
         state.hands(),
