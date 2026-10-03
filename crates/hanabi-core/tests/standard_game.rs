@@ -1,6 +1,7 @@
 use hanabi_core::{
     Action, Card, CardId, Clue, EndReason, FullState, GameEvent, GameStatus, MAX_CLUE_TOKENS,
-    PlayerId, Rank, RuleError, SetupError, Suit, standard_deck, standard_hand_size,
+    PlayerId, Rank, RuleError, SetupError, Suit, WorldConstructionError, WorldTemplate,
+    standard_deck, standard_hand_size,
 };
 
 fn card(suit: Suit, rank: Rank) -> Card {
@@ -92,6 +93,18 @@ fn player_view_hides_exactly_the_observers_hand() {
             }
         }
     }
+}
+
+#[test]
+fn world_template_rejects_a_nonstandard_stack_count() {
+    let state = FullState::new_standard(2, standard_deck()).unwrap();
+    let mut view = state.view_for(PlayerId::new(0)).unwrap();
+    view.play_stacks.pop();
+
+    assert!(matches!(
+        WorldTemplate::new(&view),
+        Err(WorldConstructionError::InvalidState(_))
+    ));
 }
 
 #[test]

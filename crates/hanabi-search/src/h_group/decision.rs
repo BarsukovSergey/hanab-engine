@@ -2056,7 +2056,7 @@ fn funded_completion_schedule(
     mut unannounced: Vec<(PlayerId, Card)>,
     initial_play: Option<Card>,
 ) -> bool {
-    let mut heights = view.play_stacks.each_ref().map(Vec::len);
+    let mut heights = view.play_stacks.iter().map(Vec::len).collect::<Vec<_>>();
     let mut tokens = view.clue_tokens;
     let mut deck = view.deck_size;
     let mut final_turns = view.final_turns_remaining;

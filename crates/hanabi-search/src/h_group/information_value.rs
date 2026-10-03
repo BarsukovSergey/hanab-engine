@@ -195,7 +195,7 @@ mod tests {
             turn: 0,
             hands: vec![Vec::new(), Vec::new()],
             deck_size: 40,
-            play_stacks: std::array::from_fn(|_| Vec::new()),
+            play_stacks: vec![Vec::new(); 5],
             discard_pile: Vec::new(),
             clue_tokens: 8,
             strikes: 0,
