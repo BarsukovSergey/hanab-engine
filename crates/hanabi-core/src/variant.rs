@@ -20,10 +20,6 @@ macro_rules! id_type {
                 self.0
             }
 
-            #[must_use]
-            pub fn index(self) -> usize {
-                usize::from(self.0)
-            }
         }
     };
 }
@@ -33,6 +29,13 @@ id_type!(ClueColorId);
 id_type!(CardRank);
 id_type!(ClueRank);
 id_type!(IdentityId);
+
+impl IdentityId {
+    #[must_use]
+    pub fn index(self) -> usize {
+        usize::from(self.value())
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum GenericClue {
