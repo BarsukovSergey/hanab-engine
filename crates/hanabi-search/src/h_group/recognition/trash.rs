@@ -58,7 +58,6 @@ pub(in crate::h_group) fn apply_trash_effects(
         ObservedEvent::Clued {
             giver,
             target,
-            clue,
             touched,
             ..
         } if !touched.is_empty()
