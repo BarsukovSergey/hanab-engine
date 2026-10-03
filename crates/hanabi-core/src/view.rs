@@ -79,12 +79,12 @@ impl ClueFacts {
     }
 
     /// Records a direct positive physical clue fact.
-    pub fn add_positive_physical_clue(&mut self, clue: GenericClue) {
+    pub(crate) fn add_positive_physical_clue(&mut self, clue: GenericClue) {
         self.record_physical(clue, true);
     }
 
     /// Records a direct negative physical clue fact.
-    pub fn add_negative_physical_clue(&mut self, clue: GenericClue) {
+    pub(crate) fn add_negative_physical_clue(&mut self, clue: GenericClue) {
         self.record_physical(clue, false);
     }
 
