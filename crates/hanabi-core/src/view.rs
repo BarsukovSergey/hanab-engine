@@ -1,7 +1,7 @@
 use crate::{
     Action, Card, CardId, Clue, ClueColorId, ClueRank, FullState, GameEvent, GameStatus,
     GenericClue, MAX_CLUE_TOKENS, PhysicalAction, PlayerId, Rank, StandardClueError, Suit,
-    VariantSpec,
+    VariantId, VariantSpec,
 };
 
 /// Objective positive and negative clue facts attached to one physical card.
@@ -427,6 +427,9 @@ impl FullState {
     /// invariant.
     #[must_use]
     pub fn view_for(&self, observer: PlayerId) -> Option<PlayerView> {
+        if self.variant().catalog_id() != Some(VariantId::NoVariant) {
+            return None;
+        }
         self.physical_view_for(observer)?.try_standard().ok()
     }
 
