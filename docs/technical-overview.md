@@ -1,7 +1,7 @@
 # Technical overview
 
-Hanabi Engine is a deterministic belief-state planner for standard five-suit
-Hanabi. For installation and common commands, start with the
+Hanabi Engine is a deterministic belief-state planner built on a variant-aware
+physical Hanabi core. For installation and common commands, start with the
 [README](../README.md).
 
 ## Workspace
@@ -15,7 +15,9 @@ Hanabi. For installation and common commands, start with the
 - `hanabi-cli` exposes replay analysis and the persistent protocol used by the
   online bridge.
 
-Only Hanabi Live `No Variant` games are currently supported.
+Physical rules, offline replay parsing, live snapshots/sessions, and logical
+search support the current nine-variant catalog. H-Group convention semantics
+and planner policy remain No Variant-only during M4.
 
 ## State and knowledge
 
@@ -37,8 +39,8 @@ Only Hanabi Live `No Variant` games are currently supported.
 
 Hidden simulator truth is never passed to an action-selection policy.
 
-Logical feasibility uses compact 25-bit identity sets and Hall-capacity
-matching. A canonical convention constraint graph intersects per-card domains
+Logical feasibility uses compact `u64` identity sets scoped to the active
+`IdentityUniverse` (up to 64 identities) and Hall-capacity matching. A canonical convention constraint graph intersects per-card domains
 and lazily traverses factored, mutually exclusive alternatives for ambiguous
 connections and relational `OneOf` claims. Demonstrated branches are resolved
 against public history before the graph reaches exact world enumeration.
