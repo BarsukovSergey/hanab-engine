@@ -139,4 +139,3 @@ include the specific competing actions, or `--lines all`. Inspect
 Do not substitute raw endpoint values for normalized comparison values. Generic
 exclusion classifications and unrecorded exact principal variations are
 explicitly marked; never present missing evidence as a proven explanation.
-
