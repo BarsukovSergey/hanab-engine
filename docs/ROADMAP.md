@@ -1,21 +1,21 @@
 # Roadmap
 
 This is the durable milestone sequence. Current implementation details belong in
-[`WORKING_STATE.md`](WORKING_STATE.md); historical architecture decisions
-belong in the focused architecture/review documents.
+[`WORKING_STATE.md`](WORKING_STATE.md); historical architecture decisions belong
+in the focused architecture/review documents.
 
-| Milestone | Goal                                    | Status      |
-| --------- | --------------------------------------- | ----------- |
-| M1        | Working hanab.live baseline             | Complete    |
-| M2        | Generic core and 6-player boundary      | Complete    |
-| M3        | Physical variant mechanics              | Complete    |
-| M4        | Variant-aware H-Group for 3-6 players   | In progress |
-| M5        | Proper two-player ruleset               | Planned     |
-| M6        | Replay, explainability, and recovery    | Planned     |
-| M7        | Complexity and clarity reduction        | Planned     |
-| M8        | Risk and policy hardening               | Planned     |
-| M9        | Production hardening                    | Planned     |
-| M10       | Mobile/offline integration              | Planned     |
+| Milestone | Goal                                  | Status      |
+| --------- | ------------------------------------- | ----------- |
+| M1        | Working hanab.live baseline           | Complete    |
+| M2        | Generic core and 6-player boundary    | Complete    |
+| M3        | Physical variant mechanics            | Complete    |
+| M4        | Variant-aware H-Group for 3-6 players | In progress |
+| M5        | Proper two-player ruleset             | Planned     |
+| M6        | Replay, explainability, and recovery  | Planned     |
+| M7        | Complexity and clarity reduction      | Planned     |
+| M8        | Risk and policy hardening             | Planned     |
+| M9        | Production hardening                  | Planned     |
+| M10       | Mobile/offline integration            | Planned     |
 
 ## M4 acceptance direction
 
