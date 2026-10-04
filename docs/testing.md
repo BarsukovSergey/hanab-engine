@@ -43,12 +43,12 @@ replay agreement. Documentation-only changes need formatting, not engine tests.
 Fixture edits need legality and affected-position checks, not automatic scans of
 every replay. See the validation matrix in [AGENTS.md](../AGENTS.md).
 
-The full local suite is still `scripts/check.sh` with no arguments. PR CI
-runs formatting/build/Clippy/docs, MSRV, core/protocol tests, a focused
-hanabi-search contract suite, Python checks, and dead-public-code checks.
-Pushes to `main` additionally run the exhaustive H-Group profile matrix.
-Neither CI path is the complete ordinary hanabi-search suite. Full local runs
-remain nonzero on any failure; known failures are not ignored or deleted.
+The full local suite is still `scripts/check.sh` with no arguments. PR CI runs
+formatting/build/Clippy/docs, MSRV, core/protocol tests, a focused hanabi-search
+contract suite, Python checks, and dead-public-code checks. Pushes to `main`
+additionally run the exhaustive H-Group profile matrix. Neither CI path is the
+complete ordinary hanabi-search suite. Full local runs remain nonzero on any
+failure; known failures are not ignored or deleted.
 
 Record local work sessions and substantive commands:
 
