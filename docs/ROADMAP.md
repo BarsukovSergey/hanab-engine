@@ -1,8 +1,8 @@
 # Roadmap
 
 This is the durable milestone sequence. Current implementation details belong in
-[`WORKING_STATE.md`](WORKING_STATE.md); historical architecture decisions
-belong in the focused architecture/review documents.
+[`WORKING_STATE.md`](WORKING_STATE.md); historical architecture decisions belong
+in the focused architecture/review documents.
 
 | Milestone | Goal                                  | Status      |
 | --------- | ------------------------------------- | ----------- |

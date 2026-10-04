@@ -129,8 +129,8 @@ cargo run --release -p hanabi-cli --bin hanabi-engine -- \
 Here `--live-turn 15` means Hanab Live turn 15 (`--turn 14` is equivalent). Use
 `--format json` for structured evidence. Reports include the fixture action when
 evaluated, all admission/rejection decisions, and recorded pairwise comparisons.
-See [decision explanations](explanations.md). Do not treat display order as
-a strict ranking or a forecast discard as necessarily forced.
+See [decision explanations](explanations.md). Do not treat display order as a
+strict ranking or a forecast discard as necessarily forced.
 
 Use repeatable `--candidate purple:Donald` / `--candidate 4:Alice` selectors to
 include the specific competing actions, or `--lines all`. Inspect
@@ -139,4 +139,3 @@ include the specific competing actions, or `--lines all`. Inspect
 Do not substitute raw endpoint values for normalized comparison values. Generic
 exclusion classifications and unrecorded exact principal variations are
 explicitly marked; never present missing evidence as a proven explanation.
-
