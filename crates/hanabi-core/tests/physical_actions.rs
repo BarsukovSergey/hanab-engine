@@ -67,6 +67,15 @@ fn standard_actions_and_clues_convert_losslessly() {
 }
 
 #[test]
+fn legacy_view_rejects_non_no_variant_even_when_clue_labels_are_standard() {
+    let spec = VariantSpec::from_catalog(VariantId::Rainbow6Suits);
+    let state = FullState::new_variant(2, spec.clone(), deck_for(&spec, &[])).unwrap();
+
+    assert!(state.view_for(PlayerId::new(0)).is_none());
+    assert!(state.physical_view_for(PlayerId::new(0)).is_some());
+}
+
+#[test]
 fn no_variant_legacy_and_physical_apply_match() {
     let initial = FullState::new_standard(3, standard_deck()).unwrap();
     // Every initial clue/play, and every subsequent discard, uses one shared
