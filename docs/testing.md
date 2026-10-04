@@ -29,8 +29,9 @@ validation stages after failures. It reports each stage's elapsed seconds and a
 total on success or failure, and exits nonzero if any stage failed. Missing
 prerequisites still stop the run immediately. Use focused tests while editing;
 full local validation is for broad changes, milestones, or explicit requests,
-not every prompt. CI retains full validation on every push. Do not repeat
-completed checks just because an unrelated regression remains failing.
+not every prompt. PR CI intentionally runs targeted green gates rather than the
+complete ordinary hanabi-search suite. Do not repeat completed checks just
+because an unrelated regression remains failing.
 
 ## Interactive workflow and timing
 
@@ -42,8 +43,11 @@ replay agreement. Documentation-only changes need formatting, not engine tests.
 Fixture edits need legality and affected-position checks, not automatic scans of
 every replay. See the validation matrix in [AGENTS.md](../AGENTS.md).
 
-The full suite is still `scripts/check.sh` with no arguments. CI invokes that
-unchanged default, together with MSRV and exhaustive-profile jobs. Full runs
+The full local suite is still `scripts/check.sh` with no arguments. PR CI
+runs formatting/build/Clippy/docs, MSRV, core/protocol tests, a focused
+hanabi-search contract suite, Python checks, and dead-public-code checks.
+Pushes to `main` additionally run the exhaustive H-Group profile matrix.
+Neither CI path is the complete ordinary hanabi-search suite. Full local runs
 remain nonzero on any failure; known failures are not ignored or deleted.
 
 Record local work sessions and substantive commands:
