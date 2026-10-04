@@ -1,6 +1,9 @@
 use core::fmt;
 
-use hanabi_core::{Action, CardId, GameStatus, MAX_CLUE_TOKENS, ObservedCard, PlayerId, Rank};
+use hanabi_core::{
+    Action, CardId, GameStatus, GenericClue, MAX_CLUE_TOKENS, ObservedCard, PhysicalAction,
+    PlayerId, PlayerView,
+};
 
 use crate::{IdentitySet, LogicalDeductions};
 
@@ -16,10 +19,13 @@ pub struct CardAssessment {
 ///
 /// A card is certainly playable only when every possible identity can be
 /// played now. It is certainly useless only when every possible identity has
-/// already played or can never play because a required lower rank is exhausted.
+/// already played or can never play because a required preceding rank is exhausted.
 /// Returns `None` when `card` is not an unknown card in this information set.
 #[must_use]
-pub fn assess_card(deductions: &LogicalDeductions, card: CardId) -> Option<CardAssessment> {
+pub fn assess_card<C: Copy + Into<GenericClue>>(
+    deductions: &LogicalDeductions<C>,
+    card: CardId,
+) -> Option<CardAssessment> {
     let possibilities = deductions.possible_identities(card)?;
     let context = AssessmentContext::new(deductions.view());
 
@@ -27,52 +33,57 @@ pub fn assess_card(deductions: &LogicalDeductions, card: CardId) -> Option<CardA
 }
 
 struct AssessmentContext {
-    stack_heights: [u8; 5],
-    maximum_reachable_ranks: [u8; 5],
+    playable: IdentitySet,
+    useless: IdentitySet,
 }
 
 impl AssessmentContext {
-    fn new(view: &hanabi_core::PlayerView) -> Self {
-        let stack_heights = std::array::from_fn(|suit| {
-            u8::try_from(view.play_stacks[suit].len())
-                .expect("a standard stack has at most five cards")
-        });
-        let mut discarded_counts = [0_u8; 25];
+    fn new<C>(view: &PlayerView<C>) -> Self {
+        let variant = &view.variant;
+        let universe = variant.identities();
+        let stack_heights = view.play_stacks.iter().map(Vec::len).collect::<Vec<_>>();
+        let mut discarded_counts = vec![0_usize; universe.identities().len()];
         for (_, card) in &view.discard_pile {
-            discarded_counts[card.suit.index() * 5 + card.rank.index()] += 1;
+            let id = universe
+                .id_for(card.suit, card.rank)
+                .expect("deductions validate public identities");
+            discarded_counts[id.index()] += 1;
         }
-        Self::from_counts(stack_heights, discarded_counts)
-    }
-
-    fn from_counts(stack_heights: [u8; 5], discarded_counts: [u8; 25]) -> Self {
-        let maximum_reachable_ranks = std::array::from_fn(|suit| {
-            let stack_height = stack_heights[suit];
-            Rank::ALL
-                .into_iter()
-                .find(|rank| {
-                    rank.number() > stack_height
-                        && discarded_counts[suit * 5 + rank.index()] == rank.copies()
-                })
-                .map_or(5, |rank| rank.number() - 1)
-        });
-        Self {
-            stack_heights,
-            maximum_reachable_ranks,
+        let mut playable = IdentitySet::default();
+        let mut useless = IdentitySet::default();
+        for (suit_index, suit) in variant.stack_suits().iter().enumerate() {
+            let height = stack_heights[suit_index];
+            let mut blocked = false;
+            for (rank_index, rank) in variant.card_ranks().iter().enumerate() {
+                let Some(id) = universe.id_for(*suit, *rank) else {
+                    // A missing identity also makes the remaining path unreachable.
+                    if rank_index >= height {
+                        blocked = true;
+                    }
+                    continue;
+                };
+                let identity = IdentitySet::singleton_id(id);
+                if variant.playable(&stack_heights, id) {
+                    playable = playable.union(identity);
+                }
+                if rank_index >= height {
+                    blocked |= discarded_counts[id.index()]
+                        >= usize::from(variant.copies(id).expect("active identity"));
+                }
+                if rank_index < height || blocked {
+                    useless = useless.union(identity);
+                }
+            }
         }
+        Self { playable, useless }
     }
 
     fn assess(&self, possibilities: IdentitySet) -> CardAssessment {
         CardAssessment {
             certainly_playable: !possibilities.is_empty()
-                && possibilities
-                    .iter()
-                    .all(|card| card.rank.number() == self.stack_heights[card.suit.index()] + 1),
+                && possibilities.without(self.playable).is_empty(),
             certainly_useless: !possibilities.is_empty()
-                && possibilities.iter().all(|card| {
-                    let rank = card.rank.number();
-                    rank <= self.stack_heights[card.suit.index()]
-                        || rank > self.maximum_reachable_ranks[card.suit.index()]
-                }),
+                && possibilities.without(self.useless).is_empty(),
         }
     }
 }
@@ -95,6 +106,21 @@ impl ConventionAgnosticPolicy {
     ///
     /// Returns [`PolicyError`] when the observation is not actionable.
     pub fn select_action(self, deductions: &LogicalDeductions) -> Result<Action, PolicyError> {
+        self.select_physical_action(deductions).and_then(|action| {
+            Action::try_from(action).map_err(|_| PolicyError::NoConventionAction)
+        })
+    }
+
+    /// Chooses a physical play or discard using the active variant's rules.
+    /// Public generic clue history is consumed directly without legacy conversion.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PolicyError`] when the observation is not actionable.
+    pub fn select_physical_action<C: Copy + Into<GenericClue>>(
+        self,
+        deductions: &LogicalDeductions<C>,
+    ) -> Result<PhysicalAction, PolicyError> {
         let view = deductions.view();
         let hand = view
             .hands
@@ -121,7 +147,7 @@ fn select_action_from_knowledge(
     hand: &[ObservedCard],
     context: &AssessmentContext,
     possible_identities: impl Fn(CardId) -> Option<IdentitySet>,
-) -> Result<Action, PolicyError> {
+) -> Result<PhysicalAction, PolicyError> {
     if status != GameStatus::InProgress || observer != current_player {
         return Err(PolicyError::NotCurrentPlayer);
     }
@@ -135,7 +161,7 @@ fn select_action_from_knowledge(
             .ok_or(PolicyError::MissingPossibilities(observed.id))?;
         let assessment = context.assess(possibilities);
         if assessment.certainly_playable {
-            return Ok(Action::Play(observed.id));
+            return Ok(PhysicalAction::Play(observed.id));
         }
         if first_useless.is_none() && assessment.certainly_useless {
             first_useless = Some(observed.id);
@@ -144,9 +170,9 @@ fn select_action_from_knowledge(
 
     // Hands are stored oldest-to-newest; a drawn card is appended.
     if clue_tokens < MAX_CLUE_TOKENS {
-        return Ok(Action::Discard(first_useless.unwrap_or(hand[0].id)));
+        return Ok(PhysicalAction::Discard(first_useless.unwrap_or(hand[0].id)));
     }
-    Ok(Action::Play(
+    Ok(PhysicalAction::Play(
         hand.last().expect("the hand was checked as nonempty").id,
     ))
 }

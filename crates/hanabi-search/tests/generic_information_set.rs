@@ -1,11 +1,11 @@
 use hanabi_core::{
     Action, Card, CardRank, Clue, ClueColorId, ClueFacts, ClueRank, FullState, GenericClue,
-    IdentityId, IdentitySpec, PhysicalAction, PlayerId, Rank, Suit, SuitId, VariantSpec,
+    IdentityId, IdentitySpec, PhysicalAction, PlayerId, Rank, Suit, SuitId, VariantId, VariantSpec,
     standard_deck,
 };
 use hanabi_search::{
     BeliefConstraints, ConventionAgnosticPolicy, IdentitySet, InformationSet, InformationSetError,
-    LogicalDeductions, WorldCount,
+    LogicalDeductions, WorldCount, assess_card,
 };
 
 fn deck(variant: &VariantSpec) -> Vec<Card> {
@@ -606,4 +606,289 @@ fn physical_no_variant_deductions_match_the_legacy_default() {
         legacy.world_count_up_to(&belief, 10),
         generic.world_count_up_to(&belief, 10)
     );
+}
+
+fn deck_with_variant_prefix(variant: &VariantSpec, prefix: &[Card]) -> Vec<Card> {
+    let mut cards = deck(variant);
+    for (index, wanted) in prefix.iter().enumerate() {
+        let found = cards[index..]
+            .iter()
+            .position(|card| card == wanted)
+            .unwrap()
+            + index;
+        cards.swap(index, found);
+    }
+    cards
+}
+
+#[test]
+fn baseline_custom_variant_uses_rank_order_and_public_identity_order() {
+    let original = custom_variant();
+    // Deliberately decreasing rank IDs, and identities ordered independently
+    // of both the stack suits and the rank path.
+    let variant = VariantSpec::new(
+        "baseline reversed ranks",
+        original.stack_suits().to_vec(),
+        original.card_ranks().iter().copied().rev().collect(),
+        original.clue_colors().to_vec(),
+        original.clue_ranks().to_vec(),
+        original
+            .identities()
+            .identities()
+            .iter()
+            .map(|identity| IdentitySpec {
+                suit: identity.suit,
+                rank: identity.rank,
+                copies: identity.copies,
+                clue_colors: identity.clue_colors.clone(),
+                clue_ranks: identity.clue_ranks.clone(),
+            })
+            .collect(),
+    )
+    .unwrap();
+    let first = Card::new(SuitId::new(17), CardRank::new(200));
+    let next = Card::new(SuitId::new(17), CardRank::new(10));
+    let prefix = [next, first, first, next, next];
+    let mut state = FullState::new_variant(
+        2,
+        variant.clone(),
+        deck_with_variant_prefix(&variant, &prefix),
+    )
+    .unwrap();
+    // Generic labels outside the legacy domain identify the first rank.
+    state
+        .apply_physical(PhysicalAction::Clue {
+            target: PlayerId::new(1),
+            clue: GenericClue::Color(ClueColorId::new(2)),
+        })
+        .unwrap();
+    state
+        .apply_physical(PhysicalAction::Clue {
+            target: PlayerId::new(0),
+            clue: GenericClue::Rank(ClueRank::new(255)),
+        })
+        .unwrap();
+    let view = state.physical_view_for(PlayerId::new(0)).unwrap();
+    let playable = view.hands[0][1].id;
+    let duplicate = view.hands[0][2].id;
+    let next_id = view.hands[0][0].id;
+    let deductions = LogicalDeductions::new(view).unwrap();
+    assert!(
+        assess_card(&deductions, playable)
+            .unwrap()
+            .certainly_playable
+    );
+    assert!(
+        !assess_card(&deductions, next_id)
+            .unwrap()
+            .certainly_playable
+    );
+    assert_eq!(
+        ConventionAgnosticPolicy
+            .select_physical_action(&deductions)
+            .unwrap(),
+        PhysicalAction::Play(playable)
+    );
+    state
+        .apply_physical(PhysicalAction::Play(playable))
+        .unwrap();
+    state
+        .apply_physical(PhysicalAction::Clue {
+            target: PlayerId::new(0),
+            clue: GenericClue::Color(ClueColorId::new(199)),
+        })
+        .unwrap();
+    let deductions =
+        LogicalDeductions::new(state.physical_view_for(PlayerId::new(0)).unwrap()).unwrap();
+    assert!(
+        assess_card(&deductions, next_id)
+            .unwrap()
+            .certainly_playable
+    );
+    assert!(
+        assess_card(&deductions, duplicate)
+            .unwrap()
+            .certainly_useless
+    );
+    assert_eq!(
+        ConventionAgnosticPolicy
+            .select_physical_action(&deductions)
+            .unwrap(),
+        PhysicalAction::Play(next_id)
+    );
+}
+
+#[test]
+fn baseline_plays_a_certain_sixth_suit_card() {
+    let mut view = physical_sixth_suit_view(false);
+    let first = view.hands[0][0].id;
+    view.hands[0][0]
+        .clues
+        .record_physical(GenericClue::Rank(ClueRank::new(1)), true);
+    let deductions = LogicalDeductions::new(view).unwrap();
+    assert_eq!(deductions.possible_identities(first).unwrap().len(), 1);
+    assert!(assess_card(&deductions, first).unwrap().certainly_playable);
+    assert_eq!(
+        ConventionAgnosticPolicy
+            .select_physical_action(&deductions)
+            .unwrap(),
+        PhysicalAction::Play(first)
+    );
+}
+
+#[test]
+fn baseline_black_single_copy_predecessor_blocks_only_its_remaining_path() {
+    let variant = VariantSpec::from_catalog(VariantId::Black6Suits);
+    let black = *variant.stack_suits().last().unwrap();
+    let one = Card::new(black, Rank::One);
+    let two = Card::new(black, Rank::Two);
+    let prefix = [
+        two,
+        Card::new(Suit::Red, Rank::Two),
+        one,
+        Card::new(Suit::Red, Rank::Three),
+        Card::new(Suit::Blue, Rank::Four),
+        Card::new(Suit::Red, Rank::One),
+    ];
+    let mut state = FullState::new_variant(
+        2,
+        variant.clone(),
+        deck_with_variant_prefix(&variant, &prefix),
+    )
+    .unwrap();
+    let predecessor = state.hand(PlayerId::new(0)).unwrap()[2];
+    state
+        .apply_physical(PhysicalAction::Clue {
+            target: PlayerId::new(1),
+            clue: GenericClue::Rank(ClueRank::new(1)),
+        })
+        .unwrap();
+    state
+        .apply_physical(PhysicalAction::Clue {
+            target: PlayerId::new(0),
+            clue: GenericClue::Rank(ClueRank::new(2)),
+        })
+        .unwrap();
+    let before = state.physical_view_for(PlayerId::new(0)).unwrap();
+    let later = before.hands[0][0].id;
+    let black_two = variant.identities().id_for(black, Rank::Two).unwrap();
+    let color = variant.identities().get(black_two).unwrap().clue_colors[0];
+    let constrain = |mut view: hanabi_core::PlayerView<GenericClue>| {
+        view.hands[0][0]
+            .clues
+            .record_physical(GenericClue::Color(color), true);
+        let deductions = LogicalDeductions::new(view).unwrap();
+        assert_eq!(
+            deductions.possible_identities(later),
+            Some(IdentitySet::singleton_id(black_two))
+        );
+        deductions
+    };
+    assert!(
+        !assess_card(&constrain(before), later)
+            .unwrap()
+            .certainly_useless
+    );
+    state
+        .apply_physical(PhysicalAction::Discard(predecessor))
+        .unwrap();
+    state
+        .apply_physical(PhysicalAction::Clue {
+            target: PlayerId::new(0),
+            clue: GenericClue::Rank(ClueRank::new(2)),
+        })
+        .unwrap();
+    let deductions = constrain(state.physical_view_for(PlayerId::new(0)).unwrap());
+    assert!(assess_card(&deductions, later).unwrap().certainly_useless);
+    let ordinary = deductions.view().hands[0][1].id;
+    assert!(
+        !assess_card(&deductions, ordinary)
+            .unwrap()
+            .certainly_useless
+    );
+    assert_eq!(
+        ConventionAgnosticPolicy
+            .select_physical_action(&deductions)
+            .unwrap(),
+        PhysicalAction::Discard(later)
+    );
+}
+
+#[test]
+fn baseline_custom_multiplicity_blocks_only_after_the_last_predecessor_copy() {
+    let original = custom_variant();
+    // Two extra copies on the other suit allow all four discards before the
+    // final round ends; the tested predecessor still has exactly four copies.
+    let variant = VariantSpec::new(
+        "baseline four-copy exhaustion",
+        original.stack_suits().to_vec(),
+        original.card_ranks().to_vec(),
+        original.clue_colors().to_vec(),
+        original.clue_ranks().to_vec(),
+        original
+            .identities()
+            .identities()
+            .iter()
+            .map(|identity| IdentitySpec {
+                suit: identity.suit,
+                rank: identity.rank,
+                copies: if identity.suit == SuitId::new(250) && identity.rank == CardRank::new(10) {
+                    5
+                } else {
+                    identity.copies
+                },
+                clue_colors: identity.clue_colors.clone(),
+                clue_ranks: identity.clue_ranks.clone(),
+            })
+            .collect(),
+    )
+    .unwrap();
+    let predecessor = Card::new(SuitId::new(17), CardRank::new(10));
+    let later_card = Card::new(SuitId::new(17), CardRank::new(200));
+    let prefix = [
+        later_card,
+        predecessor,
+        predecessor,
+        predecessor,
+        predecessor,
+    ];
+    let mut state = FullState::new_variant(
+        2,
+        variant.clone(),
+        deck_with_variant_prefix(&variant, &prefix),
+    )
+    .unwrap();
+    let hand = state.hand(PlayerId::new(0)).unwrap().to_vec();
+    state
+        .apply_physical(PhysicalAction::Clue {
+            target: PlayerId::new(1),
+            clue: GenericClue::Rank(ClueRank::new(1)),
+        })
+        .unwrap();
+    state
+        .apply_physical(PhysicalAction::Clue {
+            target: PlayerId::new(0),
+            clue: GenericClue::Rank(ClueRank::new(255)),
+        })
+        .unwrap();
+    for (discarded, id) in hand[1..].iter().enumerate() {
+        state.apply_physical(PhysicalAction::Discard(*id)).unwrap();
+        if !state.is_terminal() {
+            state
+                .apply_physical(PhysicalAction::Clue {
+                    target: PlayerId::new(0),
+                    clue: GenericClue::Rank(ClueRank::new(255)),
+                })
+                .unwrap();
+        }
+        let mut view = state.physical_view_for(PlayerId::new(0)).unwrap();
+        view.hands[0][0]
+            .clues
+            .record_physical(GenericClue::Color(ClueColorId::new(199)), false);
+        let deductions = LogicalDeductions::new(view).unwrap();
+        assert_eq!(deductions.possible_identities(hand[0]).unwrap().len(), 1);
+        let assessment = assess_card(&deductions, hand[0]).unwrap();
+        assert!(!assessment.certainly_playable);
+        assert_eq!(assessment.certainly_useless, discarded == 3);
+    }
 }

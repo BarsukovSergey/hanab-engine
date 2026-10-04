@@ -22,9 +22,24 @@ fn select(state: &FullState) -> Action {
     let actor = state.current_player();
     let view = state.view_for(actor).unwrap();
     let information_set = InformationSet::new(&view).unwrap();
-    ConventionAgnosticPolicy
+    let action = ConventionAgnosticPolicy
         .select_action(information_set.deductions())
-        .unwrap()
+        .unwrap();
+    let physical =
+        hanabi_search::LogicalDeductions::new(state.physical_view_for(actor).unwrap()).unwrap();
+    assert_eq!(
+        ConventionAgnosticPolicy
+            .select_physical_action(&physical)
+            .unwrap(),
+        action.into(),
+    );
+    for observed in &view.hands[actor.index()] {
+        assert_eq!(
+            assess_card(&physical, observed.id),
+            assess_card(information_set.deductions(), observed.id)
+        );
+    }
+    action
 }
 
 #[test]
