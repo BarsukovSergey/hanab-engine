@@ -264,17 +264,21 @@ impl HanabiLiveReplay {
 // Exact wire names are owned by the protocol, not by the core catalog keys.
 fn variant_from_options(options: Option<&HanabiLiveOptions>) -> Result<VariantId, ReplayError> {
     let name = options.map_or("No Variant", |options| options.variant.as_str());
+    variant_id_from_live_name(name).ok_or_else(|| ReplayError::UnsupportedVariant(name.to_owned()))
+}
+
+pub(crate) fn variant_id_from_live_name(name: &str) -> Option<VariantId> {
     match name {
-        "No Variant" => Ok(VariantId::NoVariant),
-        "Black (6 Suits)" => Ok(VariantId::Black6Suits),
-        "Rainbow (6 Suits)" => Ok(VariantId::Rainbow6Suits),
-        "White (6 Suits)" => Ok(VariantId::White6Suits),
-        "Pink (6 Suits)" => Ok(VariantId::Pink6Suits),
-        "Brown (6 Suits)" => Ok(VariantId::Brown6Suits),
-        "Prism (6 Suits)" => Ok(VariantId::Prism6Suits),
-        "Omni (6 Suits)" => Ok(VariantId::Omni6Suits),
-        "Null (6 Suits)" => Ok(VariantId::Null6Suits),
-        _ => Err(ReplayError::UnsupportedVariant(name.to_owned())),
+        "No Variant" => Some(VariantId::NoVariant),
+        "Black (6 Suits)" => Some(VariantId::Black6Suits),
+        "Rainbow (6 Suits)" => Some(VariantId::Rainbow6Suits),
+        "White (6 Suits)" => Some(VariantId::White6Suits),
+        "Pink (6 Suits)" => Some(VariantId::Pink6Suits),
+        "Brown (6 Suits)" => Some(VariantId::Brown6Suits),
+        "Prism (6 Suits)" => Some(VariantId::Prism6Suits),
+        "Omni (6 Suits)" => Some(VariantId::Omni6Suits),
+        "Null (6 Suits)" => Some(VariantId::Null6Suits),
+        _ => None,
     }
 }
 
