@@ -53,7 +53,7 @@ fn custom_variant() -> VariantSpec {
 fn arbitrary_ids_multiplicities_and_worlds_use_the_public_universe() {
     let variant = custom_variant();
     let state = FullState::new_variant(2, variant.clone(), deck(&variant)).unwrap();
-    let view = state.view_for(PlayerId::new(0)).unwrap();
+    let view = state.physical_view_for(PlayerId::new(0)).unwrap();
     assert_eq!(view.variant, variant);
     assert!(view.hands[0].iter().all(|card| card.identity.is_none()));
     let information = InformationSet::new(&view).unwrap();
@@ -80,7 +80,7 @@ fn arbitrary_ids_multiplicities_and_worlds_use_the_public_universe() {
     let visited = information
         .visit_worlds(&BeliefConstraints::default(), 200, |world| {
             world.validate().unwrap();
-            assert_eq!(world.view_for(view.observer), Some(view.clone()));
+            assert_eq!(world.physical_view_for(view.observer), Some(view.clone()));
             assert!(unique.insert(format!("{world:?}")));
         })
         .unwrap();
@@ -121,7 +121,7 @@ fn generic_clues_filter_positive_and_negative_touches_without_conventions() {
             .is_empty()
     );
     let state = FullState::new_variant(2, variant.clone(), deck(&variant)).unwrap();
-    let view = state.view_for(PlayerId::new(0)).unwrap();
+    let view = state.physical_view_for(PlayerId::new(0)).unwrap();
     let information = InformationSet::new(&view).unwrap();
     let first = view.hands[0][0].id;
     let belief = BeliefConstraints {
@@ -186,7 +186,7 @@ fn reordered_standard_cards_do_not_use_card_index_for_counts_or_clues() {
             clue: Clue::Suit(Suit::Purple),
         })
         .unwrap();
-    let view = state.view_for(PlayerId::new(0)).unwrap();
+    let view = state.physical_view_for(PlayerId::new(0)).unwrap();
     let information = InformationSet::new(&view).unwrap();
     for card in &view.hands[0] {
         assert_eq!(
@@ -230,7 +230,7 @@ fn all_64_identities_survive_masks_and_feasibility() {
     );
     assert!(!all.contains_id(IdentityId::new(64)));
     let state = FullState::new_variant(2, variant.clone(), deck(&variant)).unwrap();
-    let view = state.view_for(PlayerId::new(0)).unwrap();
+    let view = state.physical_view_for(PlayerId::new(0)).unwrap();
     let information = InformationSet::new(&view).unwrap();
     let possibilities = information
         .possible_identities(view.hands[0][0].id)
@@ -263,7 +263,8 @@ fn variant_copy_capacities_can_exceed_u8_without_overflow() {
     )
     .unwrap();
     let state = FullState::new_variant(2, variant.clone(), deck(&variant)).unwrap();
-    let deductions = LogicalDeductions::new(state.view_for(PlayerId::new(0)).unwrap()).unwrap();
+    let deductions =
+        LogicalDeductions::new(state.physical_view_for(PlayerId::new(0)).unwrap()).unwrap();
     for card in state.hand(PlayerId::new(0)).unwrap() {
         assert_eq!(
             deductions.possible_identities(*card),
@@ -276,7 +277,7 @@ fn variant_copy_capacities_can_exceed_u8_without_overflow() {
 fn rejects_visible_identities_outside_the_active_universe() {
     let variant = custom_variant();
     let state = FullState::new_variant(2, variant.clone(), deck(&variant)).unwrap();
-    let mut view = state.view_for(PlayerId::new(0)).unwrap();
+    let mut view = state.physical_view_for(PlayerId::new(0)).unwrap();
     let alien = Card::new(Suit::Red, Rank::One);
     view.hands[1][0].identity = Some(alien);
     assert_eq!(
