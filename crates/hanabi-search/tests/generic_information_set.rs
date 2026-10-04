@@ -1,6 +1,7 @@
 use hanabi_core::{
     Action, Card, CardRank, Clue, ClueColorId, ClueFacts, ClueRank, FullState, GenericClue,
-    IdentityId, IdentitySpec, PlayerId, Rank, Suit, SuitId, VariantSpec, standard_deck,
+    IdentityId, IdentitySpec, PhysicalAction, PlayerId, Rank, Suit, SuitId, VariantSpec,
+    standard_deck,
 };
 use hanabi_search::{
     BeliefConstraints, ConventionAgnosticPolicy, IdentitySet, InformationSet, InformationSetError,
@@ -336,4 +337,272 @@ fn six_player_search_boundary_and_baseline_smoke() {
         .select_action(information.deductions())
         .unwrap();
     assert!(state.legal_actions().contains(&action));
+}
+
+#[test]
+fn physical_generic_history_and_multiplicities_enter_logical_search() {
+    let variant = custom_variant();
+    let mut state = FullState::new_variant(2, variant.clone(), deck(&variant)).unwrap();
+    let clues = [
+        (PlayerId::new(1), GenericClue::Rank(ClueRank::new(1))),
+        (PlayerId::new(0), GenericClue::Color(ClueColorId::new(199))),
+    ];
+    for (target, clue) in clues {
+        state
+            .apply_physical(PhysicalAction::Clue { target, clue })
+            .unwrap();
+    }
+    let view: hanabi_core::PlayerView<GenericClue> =
+        state.physical_view_for(PlayerId::new(0)).unwrap();
+    let deductions: LogicalDeductions<GenericClue> = LogicalDeductions::new(view.clone()).unwrap();
+    let information: InformationSet<GenericClue> = InformationSet::new(&view).unwrap();
+    assert_eq!(deductions.view(), &view);
+    assert_eq!(information.view(), &view);
+    assert_eq!(information.deductions(), &deductions);
+    assert_eq!(deductions.clone(), deductions);
+    assert_eq!(information.clone(), information);
+    for (entry, (_, original)) in information.view().history.iter().zip(clues) {
+        assert!(
+            matches!(entry.event, hanabi_core::ObservedEvent::Clued { clue, .. } if clue == original)
+        );
+    }
+    assert_eq!(information.view().history.len(), clues.len());
+    // Visible counts leave [1, 4, 0, 2]. The color clue restricts all five
+    // own cards to IDs 0 and 1, so only the location of ID 0 varies.
+    let expected = IdentitySet::singleton_id(IdentityId::new(0))
+        .union(IdentitySet::singleton_id(IdentityId::new(1)));
+    for card in &deductions.view().hands[0] {
+        assert!(card.identity.is_none());
+        assert_eq!(deductions.possible_identities(card.id), Some(expected));
+        assert_eq!(information.possible_identities(card.id), Some(expected));
+    }
+    let belief = BeliefConstraints::default();
+    assert_eq!(
+        information.world_count_up_to(&belief, 10),
+        WorldCount::Exact(5)
+    );
+    assert_eq!(
+        information
+            .visit_worlds(&belief, 10, |world| {
+                world.validate().unwrap();
+                assert_eq!(world.physical_view_for(view.observer), Some(view.clone()));
+            })
+            .unwrap(),
+        5
+    );
+    let constrained = BeliefConstraints {
+        constraints: vec![(
+            view.hands[0][0].id,
+            IdentitySet::singleton_id(IdentityId::new(0)),
+        )],
+        factors: vec![],
+    };
+    assert_eq!(
+        information.world_count_up_to(&constrained, 10),
+        WorldCount::Exact(1)
+    );
+}
+
+fn sixth_suit_variant(prism: bool) -> VariantSpec {
+    let standard = VariantSpec::no_variant();
+    let sixth = SuitId::new(5);
+    let mut identities = standard
+        .identities()
+        .identities()
+        .iter()
+        .map(|identity| IdentitySpec {
+            suit: identity.suit,
+            rank: identity.rank,
+            copies: identity.copies,
+            clue_colors: identity.clue_colors.clone(),
+            clue_ranks: identity.clue_ranks.clone(),
+        })
+        .collect::<Vec<_>>();
+    identities.extend(Rank::ALL.into_iter().map(|rank| IdentitySpec {
+        suit: sixth,
+        rank,
+        copies: if rank == Rank::One {
+            3
+        } else if rank == Rank::Five {
+            1
+        } else {
+            2
+        },
+        // Rainbow touches every color; Prism touches the color selected by rank.
+        clue_colors: if prism {
+            vec![standard.clue_colors()[usize::from(rank.number() - 1)]]
+        } else {
+            standard.clue_colors().to_vec()
+        },
+        clue_ranks: vec![ClueRank::new(rank.number())],
+    }));
+    let mut suits = standard.stack_suits().to_vec();
+    suits.push(sixth);
+    VariantSpec::new(
+        if prism {
+            "test Prism (6 suits)"
+        } else {
+            "test Rainbow (6 suits)"
+        },
+        suits,
+        standard.card_ranks().to_vec(),
+        standard.clue_colors().to_vec(),
+        standard.clue_ranks().to_vec(),
+        identities,
+    )
+    .unwrap()
+}
+
+fn physical_sixth_suit_view(prism: bool) -> hanabi_core::PlayerView<GenericClue> {
+    let variant = sixth_suit_variant(prism);
+    let sixth = SuitId::new(5);
+    let prefix = [
+        Card::new(sixth, Rank::One),
+        Card::new(sixth, Rank::Two),
+        Card::new(Suit::Red, Rank::One),
+        Card::new(Suit::Yellow, Rank::Two),
+        Card::new(Suit::Green, Rank::Three),
+        Card::new(Suit::Yellow, Rank::One),
+        Card::new(Suit::Purple, Rank::Two),
+        Card::new(Suit::Red, Rank::Three),
+        Card::new(Suit::Blue, Rank::Four),
+        Card::new(Suit::Green, Rank::Five),
+    ];
+    let mut cards = deck(&variant);
+    for (index, wanted) in prefix.iter().enumerate() {
+        let found = cards[index..]
+            .iter()
+            .position(|card| card == wanted)
+            .unwrap()
+            + index;
+        cards.swap(index, found);
+    }
+    let mut state = FullState::new_variant(2, variant, cards).unwrap();
+    for (target, clue) in [
+        (PlayerId::new(1), GenericClue::Rank(ClueRank::new(1))),
+        (PlayerId::new(0), GenericClue::Color(ClueColorId::new(0))),
+        (PlayerId::new(1), GenericClue::Rank(ClueRank::new(2))),
+        (PlayerId::new(0), GenericClue::Color(ClueColorId::new(1))),
+    ] {
+        state
+            .apply_physical(PhysicalAction::Clue { target, clue })
+            .unwrap();
+    }
+    state.physical_view_for(PlayerId::new(0)).unwrap()
+}
+
+#[test]
+fn rainbow_color_touches_preserve_sixth_suit_possibilities() {
+    let view = physical_sixth_suit_view(false);
+    let information = InformationSet::new(&view).unwrap();
+    let universe = view.variant.identities();
+    assert_eq!(IdentitySet::all_in(universe).len(), 30);
+    let rainbow = Rank::ALL
+        .into_iter()
+        .fold(IdentitySet::default(), |set, rank| {
+            set.union(IdentitySet::singleton_id(
+                universe.id_for(SuitId::new(5), rank).unwrap(),
+            ))
+        });
+    // Both Rainbow cards were touched by both color clues, regardless of rank.
+    for card in &view.hands[0][..2] {
+        assert!(card.identity.is_none());
+        assert_eq!(information.possible_identities(card.id), Some(rainbow));
+        assert_eq!(
+            information.deductions().possible_identities(card.id),
+            Some(rainbow)
+        );
+    }
+    // Negative touches rule Rainbow out of each ordinary card.
+    for card in &view.hands[0][2..] {
+        assert!(card.identity.is_none());
+        let possible = information.possible_identities(card.id).unwrap();
+        assert!(possible.intersection(rainbow).is_empty());
+        assert_eq!(
+            possible.intersection(IdentitySet::all_in(universe)),
+            possible
+        );
+    }
+    assert_eq!(information.view(), &view);
+    assert_eq!(
+        information.world_count_up_to(&BeliefConstraints::default(), 1),
+        WorldCount::LowerBound(2)
+    );
+}
+
+#[test]
+fn prism_color_touches_follow_rank_in_the_active_universe() {
+    let view = physical_sixth_suit_view(true);
+    let deductions = LogicalDeductions::new(view.clone()).unwrap();
+    let information = InformationSet::new(&view).unwrap();
+    let universe = view.variant.identities();
+    let prism_one = universe.id_for(SuitId::new(5), Rank::One).unwrap();
+    let prism_two = universe.id_for(SuitId::new(5), Rank::Two).unwrap();
+    for (slot, expected_prism, ordinary_suit) in [
+        (0, prism_one, Suit::Red),
+        (1, prism_two, Suit::Yellow),
+        (2, prism_one, Suit::Red),
+        (3, prism_two, Suit::Yellow),
+    ] {
+        let card = &deductions.view().hands[0][slot];
+        assert!(card.identity.is_none());
+        let possible = deductions.possible_identities(card.id).unwrap();
+        let expected =
+            Rank::ALL
+                .into_iter()
+                .fold(IdentitySet::singleton_id(expected_prism), |set, rank| {
+                    set.union(IdentitySet::singleton_id(
+                        universe.id_for(ordinary_suit, rank).unwrap(),
+                    ))
+                });
+        assert_eq!(possible, expected);
+        assert_eq!(information.possible_identities(card.id), Some(expected));
+    }
+    // An untouched card can still be Prism 3, 4, or 5, but not Prism 1 or 2.
+    let untouched = deductions.possible_identities(view.hands[0][4].id).unwrap();
+    assert!(!untouched.contains_id(prism_one));
+    assert!(!untouched.contains_id(prism_two));
+    for rank in [Rank::Three, Rank::Four, Rank::Five] {
+        assert!(untouched.contains_id(universe.id_for(SuitId::new(5), rank).unwrap()));
+    }
+    assert_eq!(information.view(), &view);
+}
+
+#[test]
+fn physical_no_variant_deductions_match_the_legacy_default() {
+    let mut state = FullState::new_standard(2, standard_deck()).unwrap();
+    state
+        .apply(Action::Clue {
+            target: PlayerId::new(1),
+            clue: Clue::Suit(Suit::Red),
+        })
+        .unwrap();
+    state
+        .apply(Action::Clue {
+            target: PlayerId::new(0),
+            clue: Clue::Rank(Rank::One),
+        })
+        .unwrap();
+    let legacy_view: hanabi_core::PlayerView = state.view_for(PlayerId::new(0)).unwrap();
+    let generic_view = state.physical_view_for(PlayerId::new(0)).unwrap();
+    let legacy: InformationSet = InformationSet::new(&legacy_view).unwrap();
+    let legacy_deductions: LogicalDeductions = LogicalDeductions::new(legacy_view).unwrap();
+    let generic = InformationSet::new(&generic_view).unwrap();
+    assert_eq!(legacy.deductions(), &legacy_deductions);
+    assert_eq!(
+        legacy_deductions.unknown_hand_cards(),
+        generic.deductions().unknown_hand_cards()
+    );
+    for card in &generic.view().hands[0] {
+        assert!(card.identity.is_none());
+        assert_eq!(
+            legacy.possible_identities(card.id),
+            generic.possible_identities(card.id)
+        );
+    }
+    let belief = BeliefConstraints::default();
+    assert_eq!(
+        legacy.world_count_up_to(&belief, 10),
+        generic.world_count_up_to(&belief, 10)
+    );
 }

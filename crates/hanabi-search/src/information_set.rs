@@ -1,8 +1,8 @@
 use core::fmt;
 
 use hanabi_core::{
-    Card, CardId, ClueFacts, FullState, GenericClue, IdentityId, IdentityUniverse, PlayerView,
-    VariantSpec, WorldConstructionError, WorldTemplate,
+    Card, CardId, Clue, ClueFacts, FullState, GenericClue, IdentityId, IdentityUniverse,
+    PlayerView, VariantSpec, WorldConstructionError, WorldTemplate,
 };
 
 type Counts = Vec<u8>;
@@ -11,9 +11,10 @@ type Counts = Vec<u8>;
 ///
 /// Direct clues and public card counts define the logical base; optional
 /// convention constraints can further restrict the worlds visited by a plan.
+/// The clue type preserves history labels without affecting logical constraints.
 #[derive(Debug)]
-pub struct InformationSet {
-    deductions: LogicalDeductions,
+pub struct InformationSet<C = Clue> {
+    deductions: LogicalDeductions<C>,
     known_identities: Vec<Option<Card>>,
     constraint_masks: Vec<u64>,
     deck_cards: Vec<CardId>,
@@ -24,9 +25,11 @@ pub struct InformationSet {
 ///
 /// This contains no convention interpretation and no world construction-only deck
 /// reconstruction data, making it suitable for the policy hot path.
+/// Physical views can retain [`GenericClue`] history; the default preserves
+/// legacy No Variant callers.
 #[derive(Debug)]
-pub struct LogicalDeductions {
-    view: PlayerView,
+pub struct LogicalDeductions<C = Clue> {
+    view: PlayerView<C>,
     unknown_hand_cards: Vec<CardId>,
     possibilities: Vec<(CardId, IdentitySet)>,
     remaining_counts: Counts,
@@ -218,7 +221,7 @@ impl Iterator for IdentitySetIter {
     }
 }
 
-impl Clone for InformationSet {
+impl<C: Clone> Clone for InformationSet<C> {
     fn clone(&self) -> Self {
         Self {
             deductions: self.deductions.clone(),
@@ -230,7 +233,7 @@ impl Clone for InformationSet {
     }
 }
 
-impl PartialEq for InformationSet {
+impl<C: PartialEq> PartialEq for InformationSet<C> {
     fn eq(&self, other: &Self) -> bool {
         self.deductions == other.deductions
             && self.known_identities == other.known_identities
@@ -239,16 +242,16 @@ impl PartialEq for InformationSet {
     }
 }
 
-impl Eq for InformationSet {}
+impl<C: Eq> Eq for InformationSet<C> {}
 
-impl LogicalDeductions {
+impl<C> LogicalDeductions<C> {
     /// Derives exact possible identities without constructing complete worlds.
     ///
     /// # Errors
     ///
     /// Returns [`InformationSetError`] when visible card counts or direct clues
     /// are inconsistent.
-    pub fn new(view: PlayerView) -> Result<Self, InformationSetError> {
+    pub fn new(view: PlayerView<C>) -> Result<Self, InformationSetError> {
         let own_hand = view
             .hands
             .get(view.observer.index())
@@ -304,7 +307,7 @@ impl LogicalDeductions {
     }
 
     #[must_use]
-    pub const fn view(&self) -> &PlayerView {
+    pub const fn view(&self) -> &PlayerView<C> {
         &self.view
     }
 
@@ -408,7 +411,7 @@ fn visit_assignments(
     }
 }
 
-impl Clone for LogicalDeductions {
+impl<C: Clone> Clone for LogicalDeductions<C> {
     fn clone(&self) -> Self {
         Self {
             view: self.view.clone(),
@@ -419,7 +422,7 @@ impl Clone for LogicalDeductions {
     }
 }
 
-impl PartialEq for LogicalDeductions {
+impl<C: PartialEq> PartialEq for LogicalDeductions<C> {
     fn eq(&self, other: &Self) -> bool {
         self.view == other.view
             && self.unknown_hand_cards == other.unknown_hand_cards
@@ -428,9 +431,9 @@ impl PartialEq for LogicalDeductions {
     }
 }
 
-impl Eq for LogicalDeductions {}
+impl<C: Eq> Eq for LogicalDeductions<C> {}
 
-impl InformationSet {
+impl<C> InformationSet<C> {
     /// Builds card-count and direct-clue constraints from a legal observation.
     ///
     /// # Errors
@@ -438,7 +441,10 @@ impl InformationSet {
     /// Returns [`InformationSetError`] when card locations or visible
     /// identities are inconsistent, or when no hidden world satisfies all
     /// direct clues.
-    pub fn new(view: &PlayerView) -> Result<Self, InformationSetError> {
+    pub fn new(view: &PlayerView<C>) -> Result<Self, InformationSetError>
+    where
+        C: Copy + Into<GenericClue>,
+    {
         let deductions = LogicalDeductions::new(view.clone())?;
 
         let card_count = view.hands.iter().map(Vec::len).sum::<usize>()
@@ -509,13 +515,13 @@ impl InformationSet {
     }
 
     #[must_use]
-    pub const fn view(&self) -> &PlayerView {
+    pub const fn view(&self) -> &PlayerView<C> {
         self.deductions.view()
     }
 
     /// Convention-agnostic logical analysis shared with symbolic planning.
     #[must_use]
-    pub const fn deductions(&self) -> &LogicalDeductions {
+    pub const fn deductions(&self) -> &LogicalDeductions<C> {
         &self.deductions
     }
 
