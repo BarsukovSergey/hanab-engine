@@ -95,10 +95,11 @@ sequence.
 8. Use the same selected framework for belief constraints, action availability,
    priorities, and predictable continuations.
 
-The current simulator is standard five-suit Hanabi. Rules whose only observable
-trigger exists in a non-standard variant remain unreachable until that variant
-is represented by `hanabi-core`; they are not guessed from a standard-game
-state.
+The physical core now represents the current nine-variant catalog, but H-Group
+convention semantics and policy are still No Variant-only during M4. A physical
+variant state must not be interpreted through standard H-Group rules merely
+because its clue labels happen to fit the legacy domain. Variant convention
+support is added only by explicit semantic migrations with focused regressions.
 
 Distribution Clues use one shared recognition path for historical interpretation
 and candidate admission. A seating-order schedule compares completion of a known
