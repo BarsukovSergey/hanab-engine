@@ -92,6 +92,24 @@ jobs:
       - name: Run core and protocol tests
         run: cargo test -p hanabi-core -p hanabi-protocol --all-targets --all-features --locked
 
+  search-contract-tests:
+    name: Search contract tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install pinned Rust
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+      - name: Run generic search boundary tests
+        run: |
+          cargo test -p hanabi-search --locked \
+            --test generic_information_set \
+            --test information_set \
+            --test baseline
+
   rust-doctests:
     name: Rust documentation tests
     runs-on: ubuntu-latest
