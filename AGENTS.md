@@ -27,8 +27,8 @@ inexpensive formatting/Clippy before launching broad tests. A failing focused
 test is a reason to keep debugging, not to start full validation.
 
 PR CI is a targeted gate: formatting/build/Clippy/docs, MSRV, core/protocol
-tests, a small green hanabi-search contract suite, Python live-bridge checks, and
-dead-public-code checks. Pushes to `main` additionally run the exhaustive
+tests, a small green hanabi-search contract suite, Python live-bridge checks,
+and dead-public-code checks. Pushes to `main` additionally run the exhaustive
 H-Group profile matrix. Neither CI path is the complete ordinary hanabi-search
 suite. `scripts/check.sh` remains the full local validation checkpoint.
 
