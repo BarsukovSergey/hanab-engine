@@ -42,9 +42,9 @@ Hidden simulator truth is never passed to an action-selection policy.
 Logical feasibility uses compact `u64` identity sets scoped to the active
 `IdentityUniverse` (up to 64 identities) and Hall-capacity matching. A canonical
 convention constraint graph intersects per-card domains and lazily traverses
-factored, mutually exclusive alternatives for ambiguous
-connections and relational `OneOf` claims. Demonstrated branches are resolved
-against public history before the graph reaches exact world enumeration.
+factored, mutually exclusive alternatives for ambiguous connections and
+relational `OneOf` claims. Demonstrated branches are resolved against public
+history before the graph reaches exact world enumeration.
 
 ## Deterministic planning
 
