@@ -1,21 +1,57 @@
 # Hanab Engine
 
-Reusable Hanabi engine and hanab.live bot foundation focused on deterministic H-Group play, reproducible analysis, variants, strong two-player semantics, and future reuse by Hanab Mobile.
+Reusable Hanabi engine and hanab.live bot foundation focused on deterministic
+H-Group play, reproducible analysis, physical variants, strong two-player
+semantics, and future reuse by Hanab Mobile.
 
-## Baseline
+## Current status
 
-This repository is an independent derivative of the MIT-licensed `Zamiell/hanabi-engine`.
+Physical rules, replay parsing, and live snapshot/session reconstruction support
+the current nine-variant catalog:
 
-Pinned upstream baseline:
+- No Variant
+- Black, Rainbow, White, Pink, Brown, Prism, Omni, and Null (6 Suits)
 
-`be00e7852571258af7847af35646c3571f620c64`
+The physical path is variant-aware through `VariantSpec`,
+`PlayerView<GenericClue>`, `PhysicalAction`, and logical search. H-Group
+convention interpretation and planner policy are still intentionally No
+Variant-only while M4 migrates convention semantics.
 
-The imported baseline tree is byte-for-byte/tree-identical to that upstream commit. See `UPSTREAM.md` and `SOURCES.md` for provenance and sync policy.
+See [current working state](docs/WORKING_STATE.md) and the
+[roadmap](docs/ROADMAP.md).
 
-## Repository boundaries
+## Workspace
 
-- `hanab-engine`: reusable engine, conventions, planner, replay/recompute core, and initial hanab.live bot runtime.
-- `hanab-mobile`: separate mobile client/consumer.
-- `hanabi-live`: protocol/mechanics reference, not the home of this bot implementation.
+- `hanabi-core`: physical rules, authoritative state, variants, and player-safe
+  observations.
+- `hanabi-protocol`: Hanabi Live replay/live adapters.
+- `hanabi-search`: logical deductions, convention inference, and planning.
+- `hanabi-cli`: analysis CLI and the persistent engine process used by the
+  online bridge.
 
-Current implementation plan: `docs/M1_BASELINE.md`.
+Repository boundaries and provenance are documented in
+[`UPSTREAM.md`](UPSTREAM.md), [`SOURCES.md`](SOURCES.md), and
+[`docs/REPOSITORY_STRATEGY.md`](docs/REPOSITORY_STRATEGY.md).
+
+## Development
+
+The default Rust development toolchain is pinned by
+[`rust-toolchain.toml`](rust-toolchain.toml); the separate CI MSRV check remains
+Rust 1.85.
+
+Install formatting and Python development dependencies when needed:
+
+```sh
+npm ci
+python3 -m venv .venv
+.venv/bin/python -m pip install --requirement scripts/requirements-dev.txt
+```
+
+Use focused Rust tests while editing. `scripts/check.sh --fast` runs the broad
+non-test quality checks; `scripts/check.sh` is the full local checkpoint. The
+current shell validation script is intended for Linux/WSL; CI is the canonical
+Linux environment.
+
+Agent instructions are in [`AGENTS.md`](AGENTS.md). Replay-specific review
+instructions live separately in
+[`docs/replay-agent-workflow.md`](docs/replay-agent-workflow.md).
