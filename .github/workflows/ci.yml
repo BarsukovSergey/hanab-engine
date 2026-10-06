@@ -65,12 +65,8 @@ jobs:
           cache: npm
       - name: Install formatting dependencies
         run: npm ci --ignore-scripts
-      - name: Format repository for diagnostics
-        run: npm run format
-      - name: Show formatting diff
-        run: git diff -- AGENTS.md docs/replay-agent-workflow.md docs/testing.md
-      - name: Fail if formatting changed files
-        run: git diff --exit-code
+      - name: Check repository formatting
+        run: npm run format:check
       - name: Check shell script syntax
         run: bash -n scripts/*.sh
       - name: Smoke-test validation helper CLIs
