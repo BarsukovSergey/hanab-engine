@@ -102,7 +102,7 @@ After inspecting a completed full-check log, explicitly capture a diagnostic
 failure baseline with its originating revision:
 
 ```bash
-python3 scripts/workflow.py baseline /tmp/reviewed-check.log --revision COMMIT
+bash scripts/run-python.sh scripts/workflow.py baseline /tmp/reviewed-check.log --revision COMMIT
 ```
 
 Subsequent completed full runs report new, still-failing, and no-longer-reported
