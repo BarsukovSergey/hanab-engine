@@ -421,6 +421,18 @@ impl VariantSpec {
         self.universe.id_for(identity.suit, next_rank)
     }
 
+    /// Previous physical identity on the same stack, in this variant's rank order.
+    #[must_use]
+    pub fn predecessor(&self, identity: IdentityId) -> Option<IdentityId> {
+        let identity = self.universe.get(identity)?;
+        let position = self
+            .card_ranks
+            .iter()
+            .position(|rank| *rank == identity.rank)?;
+        let rank = *self.card_ranks.get(position.checked_sub(1)?)?;
+        self.universe.id_for(identity.suit, rank)
+    }
+
     #[must_use]
     pub fn playable(&self, stack_heights: &[usize], identity: IdentityId) -> bool {
         let Some(identity) = self.universe.get(identity) else {
@@ -618,6 +630,33 @@ impl std::error::Error for VariantSpecError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn predecessor_tracks_variant_rank_order_and_active_identities() {
+        for variant in [
+            VariantSpec::no_variant(),
+            VariantSpec::from_catalog(VariantId::Rainbow6Suits),
+        ] {
+            for identity in variant.identities().identities() {
+                let position = variant
+                    .card_ranks()
+                    .iter()
+                    .position(|rank| *rank == identity.rank)
+                    .unwrap();
+                if position == 0 {
+                    assert_eq!(variant.predecessor(identity.id), None);
+                } else {
+                    let previous = variant.predecessor(identity.id).unwrap();
+                    assert_eq!(variant.successor(previous), Some(identity.id));
+                    assert_eq!(
+                        variant.identities().get(previous).unwrap().suit,
+                        identity.suit
+                    );
+                }
+            }
+            assert_eq!(variant.predecessor(IdentityId::new(63)), None);
+        }
+    }
 
     #[test]
     fn no_variant_matches_the_legacy_identity_order_and_deck() {

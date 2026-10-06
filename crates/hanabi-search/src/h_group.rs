@@ -108,8 +108,9 @@ use hand::{
 };
 use hypothesis::{InterpretationHypotheses, InterpretationSource};
 use identity::{
-    card_is_trash, identity_of, is_card_identity_accounted_trash, is_convention_trash,
-    is_eventually_useful, is_playable_at, is_playable_now, is_trash_at,
+    card_is_trash, connection_advance, connection_allows, connection_card, connection_domain,
+    connection_playable, connection_predecessors, identity_of, is_card_identity_accounted_trash,
+    is_convention_trash, is_eventually_useful, is_playable_at, is_playable_now, is_trash_at,
 };
 use information_value::convention_information_value;
 #[cfg(test)]
@@ -1333,7 +1334,7 @@ struct ConnectionPlanningContext<'a> {
     declined_direct_plays: &'a CardSet,
     convention_facts: &'a ConventionFacts,
     chop_moved: &'a CardSet,
-    stack_heights: [u8; 5],
+    stack_heights: &'a [usize],
     allow_blind_reverse_empathy: bool,
 }
 
@@ -1370,7 +1371,7 @@ impl ConnectionPlanningContext<'_> {
             self.giver,
             self.target,
             self.focus,
-            standard_h_group_clue(&self.view.variant, self.clue),
+            self.clue,
             self.touches.0,
             Some(identity),
             self.hands,
@@ -1418,7 +1419,7 @@ impl ConnectionPlanningContext<'_> {
             self.giver,
             self.target,
             self.focus,
-            standard_h_group_clue(&self.view.variant, self.clue),
+            self.clue,
             self.touches.0,
             identity,
             self.hands,
@@ -1448,7 +1449,7 @@ fn schedule_connection(
     giver: PlayerId,
     target: PlayerId,
     focus: CardId,
-    clue: Clue,
+    clue: GenericClue,
     same_clue_touched: &[CardId],
     focus_identity: Option<Card>,
     hands: &[Vec<CardId>],
@@ -1461,7 +1462,7 @@ fn schedule_connection(
     convention_facts: &ConventionFacts,
     chop_moved: &CardSet,
     invisibly_clued: &mut ProvenancedCardSet,
-    stack_heights: [u8; 5],
+    stack_heights: &[usize],
     pending: &mut ConnectionManager,
     required_fix: &mut Option<RequiredFix>,
     allow_blind_reverse_empathy: bool,
@@ -1470,8 +1471,8 @@ fn schedule_connection(
     let Some(focus_identity) = focus_identity else {
         return scheduled_connections;
     };
-    let height = stack_heights[focus_identity.suit.index()];
-    if focus_identity.rank.number() <= height + 1 {
+    let predecessors = connection_predecessors(view, stack_heights, focus_identity);
+    if predecessors.is_empty() {
         return scheduled_connections;
     }
     // A previously fixed focus has no live Play obligation for a new clue to
@@ -1500,9 +1501,10 @@ fn schedule_connection(
     }
     let target_loaded = loaded_plan.is_some_and(|plan| plan.is_some())
         || (promptable_before_clue.contains(&focus)
-            && IdentitySet::from_mask(facts[focus.index()].identity_mask()).len() == 1);
+            && IdentitySet::from_bits(facts[focus.index()].identity_mask_in(&view.variant)).len()
+                == 1);
     let connection_count = if rule_enabled(profile, HGroupRuleId::BasicMoves) {
-        focus_identity.rank.number().saturating_sub(height + 1)
+        predecessors.len()
     } else {
         1
     };
@@ -1511,13 +1513,11 @@ fn schedule_connection(
     // neither a visible duplicate nor this clue's own interpretation rules
     // out the recipient's direct-play alternative.
     // https://hanabi.github.io/level-2/#the-self-finesse
-    let recipient_has_direct_play = Suit::ALL.into_iter().any(|suit| {
-        let Some(rank) = Rank::ALL.get(usize::from(stack_heights[suit.index()])) else {
-            return false;
-        };
-        let identity = Card::new(suit, *rank);
-        clue.matches(identity)
-            && facts[focus.index()].allows(identity)
+    let recipient_has_direct_play = view.variant.identities().identities().iter().any(|id| {
+        let identity = connection_card(view, id.id);
+        view.variant.playable(stack_heights, id.id)
+            && view.variant.touches(id.id, clue)
+            && connection_allows(view, facts[focus.index()], identity)
             && !hands.iter().flatten().any(|card| {
                 *card != focus
                     && promptable_before_clue.contains(card)
@@ -1526,13 +1526,17 @@ fn schedule_connection(
     });
     let mut scheduled_cards = CardSet::default();
     let mut reverse_cycle_started = false;
-    for offset in 0..connection_count {
-        let expected_rank = usize::from(height + offset);
-        let expected = Card::new(focus_identity.suit, Rank::ALL[expected_rank]);
+    for (offset, &expected) in predecessors.iter().take(connection_count).enumerate() {
+        let offset = u8::try_from(offset).expect("connection step");
+        let expected_id = view
+            .variant
+            .standard_identity_id(expected)
+            .expect("active predecessor");
+        let expected_mask = 1_u64 << expected_id.index();
         let matches_expected = |card: CardId| {
-            identity_of(view, card) == Some(expected)
+            HistoricalView::new(view, turn).identity(card) == Some(expected)
                 || clues.iter().rev().any(|clue| {
-                    clue.focus == card && clue.focus_identities == IdentitySet::singleton(expected)
+                    clue.focus == card && clue.focus_identities == connection_domain(view, expected)
                 })
         };
         // Level1: already-known connectors are not new Prompts. Literal
@@ -1540,7 +1544,7 @@ fn schedule_connection(
         // marker. Use pre-clue facts so this clue cannot prove its own premise.
         let already_known = |card: CardId| {
             already_playing.contains(&card)
-                || facts_before[card.index()].identity_mask() == 1 << expected.index()
+                || facts_before[card.index()].identity_mask_in(&view.variant) == expected_mask
                 || convention_facts.known_identity_before(card, turn) == Some(expected)
         };
         let gotten_match_is_still_waiting = promptable_before_clue
@@ -1551,7 +1555,8 @@ fn schedule_connection(
                 !declined_direct_plays.contains(card)
                     && already_known(*card)
                     && (matches_expected(*card)
-                        || facts_before[card.index()].identity_mask() == 1 << expected.index()
+                        || facts_before[card.index()].identity_mask_in(&view.variant)
+                            == expected_mask
                         || convention_facts.known_identity_before(*card, turn) == Some(expected))
             });
         if pending.identity_is_queued(expected) {
@@ -1559,7 +1564,7 @@ fn schedule_connection(
                 connection.actor == giver
                     && connection.expected == expected
                     && pending.is_active(connection)
-                    && is_playable_at(stack_heights, expected)
+                    && connection_playable(view, stack_heights, expected)
             });
             if giver_is_deferring_this_connection {
                 // By giving the connecting clue instead of taking their own
@@ -1572,7 +1577,9 @@ fn schedule_connection(
                     |connection| connection.actor == giver && connection.expected == expected,
                 );
             } else {
-                if rule_enabled(profile, HGroupRuleId::SpecialFinesses) && !clue.matches(expected) {
+                if rule_enabled(profile, HGroupRuleId::SpecialFinesses)
+                    && !view.variant.touches(expected_id, clue)
+                {
                     if let Some(connection) = extend_queued_finesse_with_playable_layers(
                         view,
                         giver,
@@ -1604,7 +1611,7 @@ fn schedule_connection(
                         expected,
                         convention_facts,
                         chop_moved,
-                        |card| facts[card.index()].allows(expected),
+                        |card| connection_allows(view, facts[card.index()], expected),
                     )
                 })
                 .flatten()
@@ -1650,9 +1657,10 @@ fn schedule_connection(
                         *card,
                         expected,
                         allow_blind_reverse_empathy,
-                    ) && (identity_of(view, *card) == Some(expected)
+                    ) && (HistoricalView::new(view, turn).identity(*card) == Some(expected)
                         || (*candidate_index == view.observer.index()
-                            && (facts[card.index()].identity_mask() == 1 << expected.index()
+                            && (facts[card.index()].identity_mask_in(&view.variant)
+                                == expected_mask
                                 || elimination_card_for(view.observer) == Some(*card))))
                 })
                 || rule_enabled(profile, HGroupRuleId::SpecialFinesses)
@@ -1689,17 +1697,20 @@ fn schedule_connection(
                                     *card,
                                     expected,
                                     allow_blind_reverse_empathy,
-                                ) && (identity_of(view, *card) == Some(expected)
+                                ) && (HistoricalView::new(view, turn).identity(*card)
+                                    == Some(expected)
                                     || (candidate_index == view.observer.index()
-                                        && facts[card.index()].identity_mask()
-                                            == 1 << expected.index()))
+                                        && facts[card.index()].identity_mask_in(&view.variant)
+                                            == expected_mask))
                             })
                             .is_some_and(|position| {
                                 position > 0
                                     && unclued[..position].iter().all(|card| {
-                                        identity_of(view, *card).is_some_and(|identity| {
-                                            is_playable_at(stack_heights, identity)
-                                        })
+                                        HistoricalView::new(view, turn).identity(*card).is_some_and(
+                                            |identity| {
+                                                connection_playable(view, stack_heights, identity)
+                                            },
+                                        )
                                     })
                             })
                     });
@@ -1709,7 +1720,7 @@ fn schedule_connection(
                 .iter()
                 .any(|(candidate_index, card)| {
                     *candidate_index == view.observer.index()
-                        && facts[card.index()].allows(expected)
+                        && connection_allows(view, facts[card.index()], expected)
                 });
         let visible_reverse_prompt = (ordinary_search_len..hands.len()).any(|distance| {
             let candidate_index = (actor_index + distance) % hands.len();
@@ -1723,13 +1734,14 @@ fn schedule_connection(
                     && !already_playing.contains(&card)
                     && !scheduled_cards.contains(&card)
                     && pending_card_allows_identity(
+                        view,
                         pending,
                         convention_facts,
                         card,
                         expected,
                         stack_heights,
                     )
-                    && identity_of(view, card) == Some(expected)
+                    && HistoricalView::new(view, turn).identity(card) == Some(expected)
             })
         });
         let direct_reverse_connection = rule_enabled(profile, HGroupRuleId::BasicMoves)
@@ -1754,13 +1766,14 @@ fn schedule_connection(
                     && !chop_moved.contains(card)
                     && !scheduled_cards.contains(card)
                     && pending_card_allows_identity(
+                        view,
                         pending,
                         convention_facts,
                         *card,
                         expected,
                         stack_heights,
                     )
-                    && identity_of(view, *card) == Some(expected)
+                    && HistoricalView::new(view, turn).identity(*card) == Some(expected)
             })
             .collect::<Vec<_>>();
         if !directly_clued.is_empty() {
@@ -1790,7 +1803,7 @@ fn schedule_connection(
                     && !invisibly_clued.contains(card)
                     && !scheduled_cards.contains(card)
             })?;
-            (identity_of(view, card) == Some(expected)
+            (HistoricalView::new(view, turn).identity(card) == Some(expected)
                 && !already_playing.contains(&card)
                 && !pending
                     .iter()
@@ -1820,13 +1833,14 @@ fn schedule_connection(
                         && !already_playing.contains(card)
                         && !scheduled_cards.contains(card)
                         && pending_card_allows_identity(
+                            view,
                             pending,
                             convention_facts,
                             *card,
                             expected,
                             stack_heights,
                         )
-                        && identity_of(view, *card).map_or_else(
+                        && HistoricalView::new(view, turn).identity(*card).map_or_else(
                             || {
                                 if actor == view.observer && giver == view.observer {
                                     // A clue giver cannot knowingly build a Prompt through
@@ -1834,7 +1848,8 @@ fn schedule_connection(
                                     // their perspective, that card must already be established
                                     // as the connector. Other observers must still respect an
                                     // ambiguous Prompt in their own hand.
-                                    facts[card.index()].identity_mask() == 1 << expected.index()
+                                    facts[card.index()].identity_mask_in(&view.variant)
+                                        == expected_mask
                                         || convention_focus_is_live_identity(
                                             *card,
                                             expected,
@@ -1845,7 +1860,7 @@ fn schedule_connection(
                                             false,
                                         )
                                 } else {
-                                    facts[card.index()].allows(expected)
+                                    connection_allows(view, facts[card.index()], expected)
                                         && HistoricalView::new(view, turn)
                                             .has_unseen_copy(expected, hands)
                                 }
@@ -1859,7 +1874,7 @@ fn schedule_connection(
                     && actor != target
                     && visible_prompt_alternative.is_some()
                     && prompt_cards.iter().all(|card| {
-                        facts[card.index()].identity_mask() != 1 << expected.index()
+                        facts[card.index()].identity_mask_in(&view.variant) != expected_mask
                             && convention_facts.known_identity(*card) != Some(expected)
                     })
                 {
@@ -1897,17 +1912,19 @@ fn schedule_connection(
                             && !declined_direct_plays.contains(card)
                             && !scheduled_cards.contains(card)
                             && pending_card_allows_identity(
+                                view,
                                 pending,
                                 convention_facts,
                                 *card,
                                 expected,
                                 stack_heights,
                             )
-                            && (identity_of(view, *card) == Some(expected)
-                                || facts[card.index()].identity_mask() == 1 << expected.index()
+                            && (HistoricalView::new(view, turn).identity(*card) == Some(expected)
+                                || facts[card.index()].identity_mask_in(&view.variant)
+                                    == expected_mask
                                 || (actor == view.observer
-                                    && facts[card.index()].allows(expected)
-                                    && is_playable_at(stack_heights, expected))
+                                    && connection_allows(view, facts[card.index()], expected)
+                                    && connection_playable(view, stack_heights, expected))
                                 || convention_focus_is_live_identity(
                                     *card,
                                     expected,
@@ -1972,7 +1989,8 @@ fn schedule_connection(
                                 allow_blind_reverse_empathy,
                             )
                     })?;
-                    (identity_of(view, card) == Some(expected)).then_some((candidate_index, card))
+                    (HistoricalView::new(view, turn).identity(card) == Some(expected))
+                        .then_some((candidate_index, card))
                 })
                 .collect::<Vec<_>>();
             let ambiguous_visible_actor = (visible_finesse_actors.len() > 1)
@@ -2015,7 +2033,8 @@ fn schedule_connection(
                     // the validity of the whole clue. Select before checking
                     // visibility so a wrong selected card cannot be skipped.
                     (!scheduled_cards.contains(&card)
-                        && (actor == view.observer || identity_of(view, card) == Some(expected)))
+                        && (actor == view.observer
+                            || HistoricalView::new(view, turn).identity(card) == Some(expected)))
                     .then_some(card)
                     .into_iter()
                     .collect()
@@ -2025,8 +2044,9 @@ fn schedule_connection(
                             unclued
                                 .iter()
                                 .position(|card| {
-                                    IdentitySet::from_mask(facts[card.index()].identity_mask())
-                                        == IdentitySet::singleton(expected)
+                                    IdentitySet::from_bits(
+                                        facts[card.index()].identity_mask_in(&view.variant),
+                                    ) == connection_domain(view, expected)
                                 })
                                 .map_or_else(Vec::new, |position| unclued[..=position].to_vec())
                         } else {
@@ -2035,7 +2055,7 @@ fn schedule_connection(
                             // the intervening Fix advances this obligation to
                             // the next position. The final rank may still be a
                             // normal layered finesse with several candidates.
-                            let current_len = if offset.saturating_add(1) < connection_count {
+                            let current_len = if usize::from(offset) + 1 < connection_count {
                                 1
                             } else {
                                 unclued.len()
@@ -2045,7 +2065,9 @@ fn schedule_connection(
                     } else {
                         unclued
                             .iter()
-                            .position(|card| identity_of(view, *card) == Some(expected))
+                            .position(|card| {
+                                HistoricalView::new(view, turn).identity(*card) == Some(expected)
+                            })
                             .filter(|position| {
                                 // Visibility alone does not make a connector
                                 // eligible. It must be on Finesse Position, or
@@ -2056,17 +2078,19 @@ fn schedule_connection(
                                 // component; mere visibility cannot invent it.
                                 // https://hanabi.github.io/beginner/finesse/#finesse-position
                                 // https://hanabi.github.io/level-5/#the-layered-finesse
-                                let mut heights = stack_heights;
+                                let mut heights = stack_heights.to_vec();
                                 unclued[..*position].iter().all(|card| {
-                                    identity_of(view, *card).is_some_and(|identity| {
-                                        if !is_playable_at(heights, identity) {
-                                            return required_fix.is_some_and(|fix| {
-                                                fix.target == actor && fix.focus == *card
-                                            });
-                                        }
-                                        heights[identity.suit.index()] = identity.rank.number();
-                                        true
-                                    })
+                                    HistoricalView::new(view, turn).identity(*card).is_some_and(
+                                        |identity| {
+                                            if !connection_playable(view, &heights, identity) {
+                                                return required_fix.is_some_and(|fix| {
+                                                    fix.target == actor && fix.focus == *card
+                                                });
+                                            }
+                                            connection_advance(view, &mut heights, identity);
+                                            true
+                                        },
+                                    )
                                 })
                             })
                             .map_or_else(Vec::new, |position| unclued[..=position].to_vec())
@@ -2076,8 +2100,9 @@ fn schedule_connection(
                         .first()
                         .copied()
                         .filter(|card| {
-                            IdentitySet::from_mask(facts[card.index()].identity_mask())
-                                == IdentitySet::singleton(expected)
+                            IdentitySet::from_bits(
+                                facts[card.index()].identity_mask_in(&view.variant),
+                            ) == connection_domain(view, expected)
                         })
                         .into_iter()
                         .collect()
@@ -2087,9 +2112,9 @@ fn schedule_connection(
                 if !cards.is_empty() {
                     if ambiguous_visible_actor.is_some_and(|chosen| chosen != candidate_index)
                         && cards.len() == 1
-                        && cards
-                            .first()
-                            .is_some_and(|card| identity_of(view, *card) == Some(expected))
+                        && cards.first().is_some_and(|card| {
+                            HistoricalView::new(view, turn).identity(*card) == Some(expected)
+                        })
                     {
                         continue;
                     }
@@ -2197,7 +2222,7 @@ fn schedule_connection(
                         && !scheduled_cards.contains(card)
                 })
                 .take(1)
-                .filter(|card| facts[card.index()].allows(expected))
+                .filter(|card| connection_allows(view, facts[card.index()], expected))
                 .collect::<Vec<_>>();
             if !cards.is_empty() {
                 pending.defer_connection(
@@ -2249,7 +2274,7 @@ fn extend_queued_finesse_with_playable_layers(
     hands: &[Vec<CardId>],
     promptable_before_clue: &CardSet,
     invisibly_clued: &mut ProvenancedCardSet,
-    stack_heights: [u8; 5],
+    stack_heights: &[usize],
     pending: &mut ConnectionManager,
     turn: u32,
 ) -> Option<ConnectionObligation> {
@@ -2271,8 +2296,9 @@ fn extend_queued_finesse_with_playable_layers(
     let nearer_visible_connector = (1..queued_distance).any(|distance| {
         let player = (giver.index() + distance) % player_count;
         player != target.index()
-            && finesse_position_id(&hands[player], &gotten, 0)
-                .is_some_and(|card| identity_of(view, card) == Some(expected))
+            && finesse_position_id(&hands[player], &gotten, 0).is_some_and(|card| {
+                HistoricalView::new(view, turn).identity(card) == Some(expected)
+            })
     });
     if nearer_visible_connector {
         return None;
@@ -2287,8 +2313,8 @@ fn extend_queued_finesse_with_playable_layers(
         if gotten.contains(&card) {
             continue;
         }
-        let identity = identity_of(view, card)?;
-        if !is_playable_at(stack_heights, identity) {
+        let identity = HistoricalView::new(view, turn).identity(card)?;
+        if !connection_playable(view, stack_heights, identity) {
             return None;
         }
         layers.push(card);
@@ -2341,7 +2367,12 @@ fn visible_reverse_candidate_was_just_declined(
         && view.hands[actor.index()]
             .iter()
             .any(|candidate| candidate.id == card)
-        && view.play_stacks[expected.suit.index()].len() < usize::from(expected.rank.number())
+        && view
+            .variant
+            .standard_identity_id(expected)
+            .is_some_and(|id| {
+                identity::connection_live(view, &identity::connection_heights(view, None), id)
+            })
         && view.history.last().is_some_and(|entry| {
             entry.turn > connection_turn
                 && matches!(entry.event, ObservedEvent::Clued { giver, .. } if giver == actor)
@@ -2354,18 +2385,21 @@ fn convention_focus_is_live_identity(
     view: &PlayerView,
     clues: &[HGroupClueInterpretation],
     already_playing: &CardSet,
-    stack_heights: [u8; 5],
+    stack_heights: &[usize],
     allow_ambiguous_owned_identity: bool,
 ) -> bool {
     let Some(clue) = clues.iter().rev().find(|clue| clue.focus == card) else {
         return false;
     };
-    let mut live = IdentitySet::from_mask(
-        clue.play_identities
-            .iter()
-            .filter(|identity| identity.rank.number() > stack_heights[identity.suit.index()])
-            .fold(0, |mask, identity| mask | (1 << identity.index())),
-    );
+    let live_domain = |identities: IdentitySet| {
+        identities
+            .iter_ids()
+            .filter(|id| identity::connection_live(view, stack_heights, *id))
+            .fold(IdentitySet::default(), |set, id| {
+                set.union(IdentitySet::singleton_id(id))
+            })
+    };
+    let mut live = live_domain(clue.play_identities);
     for other in already_playing
         .iter()
         .copied()
@@ -2373,32 +2407,31 @@ fn convention_focus_is_live_identity(
     {
         let claimed = identity_of(view, other).or_else(|| {
             let clue = clues.iter().rev().find(|clue| clue.focus == other)?;
-            let identities = IdentitySet::from_mask(
-                clue.play_identities
-                    .iter()
-                    .filter(|identity| {
-                        identity.rank.number() > stack_heights[identity.suit.index()]
-                    })
-                    .fold(0, |mask, identity| mask | (1 << identity.index())),
-            );
+            let identities = live_domain(clue.play_identities);
             (identities.len() == 1)
-                .then(|| identities.iter().next())
+                .then(|| {
+                    identities
+                        .iter_ids()
+                        .next()
+                        .map(|id| connection_card(view, id))
+                })
                 .flatten()
         });
         if let Some(claimed) = claimed {
-            live = live.without(IdentitySet::singleton(claimed));
+            live = live.without(connection_domain(view, claimed));
         }
     }
-    live == IdentitySet::singleton(expected)
-        || (allow_ambiguous_owned_identity && live.contains(expected))
+    let expected = connection_domain(view, expected);
+    live == expected || (allow_ambiguous_owned_identity && !live.intersection(expected).is_empty())
 }
 
 fn pending_card_allows_identity(
+    view: &PlayerView,
     pending: &ConnectionManager,
     convention_facts: &ConventionFacts,
     card: CardId,
     identity: Card,
-    stack_heights: [u8; 5],
+    stack_heights: &[usize],
 ) -> bool {
     // A Fix retracts the card's former Play meaning. Until a later Play clue
     // explicitly reactivates that card, it cannot become a Prompt merely
@@ -2453,20 +2486,25 @@ fn pending_card_allows_identity(
     }
     let conflicts_with_hard_claim = hard_claims.any(|claim| claim.identity != identity);
     !conflicts_with_hard_claim
-        && !convention_facts
+        && convention_facts
             .excluded_identities(card)
-            .contains(identity)
+            .intersection(connection_domain(view, identity))
+            .is_empty()
         && !pending.iter().any(|connection| {
             connection.cards.len() == 1
                 && connection.cards.contains(&card)
                 && connection.expected != identity
-                && !is_playable_at(stack_heights, identity)
+                && !connection_playable(view, stack_heights, identity)
         })
 }
 
 fn replay_identity_is_queued(view: &PlayerView, replay: &HGroupState, identity: Card) -> bool {
-    let identity_is_still_useful =
-        usize::from(identity.rank.number()) > view.play_stacks[identity.suit.index()].len();
+    let identity_is_still_useful = view
+        .variant
+        .standard_identity_id(identity)
+        .is_some_and(|id| {
+            identity::connection_live(view, &identity::connection_heights(view, None), id)
+        });
     let card_is_still_held = |card: CardId| {
         view.hands
             .iter()
@@ -2476,13 +2514,14 @@ fn replay_identity_is_queued(view: &PlayerView, replay: &HGroupState, identity: 
         || replay.cards.already_playing.iter().any(|card| {
             identity_of(view, *card) == Some(identity)
                 || replay.clues.iter().rev().any(|clue| {
-                    clue.focus == *card && clue.focus_identities == IdentitySet::singleton(identity)
+                    clue.focus == *card
+                        && clue.focus_identities == connection_domain(view, identity)
                 })
         })
         || (identity_is_still_useful
             && replay.clues.iter().any(|clue| {
                 clue.non_focus_identities.iter().any(|(card, identities)| {
-                    card_is_still_held(*card) && *identities == IdentitySet::singleton(identity)
+                    card_is_still_held(*card) && *identities == connection_domain(view, identity)
                 })
             }))
 }

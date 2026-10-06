@@ -23,6 +23,9 @@ use super::{
     standard_h_group_clue, subjective_action_context_before, was_clued_before,
     was_clued_before_with,
 };
+use crate::h_group::identity::{
+    connection_allows, connection_domain, connection_heights, connection_predecessors,
+};
 
 struct ReplayReducer {
     hands: Vec<Vec<CardId>>,
@@ -336,6 +339,7 @@ impl ReplayReducer {
                 _ => None,
             };
             self.pending_connections.resolve_deferred_connections(
+                &view.variant,
                 entry.turn,
                 declined_actor.unwrap_or(match entry.event {
                     ObservedEvent::Played { player, .. } => player,
@@ -343,8 +347,8 @@ impl ReplayReducer {
                 }),
                 declined_actor.is_some(),
                 ordinary_clued_play,
-                context.before.stack_heights,
-                self.stack_heights,
+                &connection_heights(view, Some(entry.turn)),
+                &connection_heights(view, Some(entry.turn + 1)),
             );
             if action_is_settled {
                 if let Some(actor) = declined_with_clue {
@@ -601,7 +605,7 @@ impl ReplayReducer {
                     &gotten,
                     &self.already_playing,
                     &self.pending_connections,
-                    self.stack_heights,
+                    &connection_heights(frame.view, Some(frame.entry.turn)),
                 )
                 .flatten()
                 .is_some_and(|required| {
@@ -637,9 +641,9 @@ impl ReplayReducer {
         else {
             unreachable!("event dispatcher selects its handler")
         };
-        // The connection reducer remains No Variant-only. Base semantics accept
-        // dynamic snapshots so they do not inherit that compatibility boundary.
-        let basic_heights = self.stack_heights.map(usize::from);
+        // Basic connection and primary semantics share the public dynamic stack
+        // snapshot; advanced recognizers retain their legacy reducer storage.
+        let basic_heights = connection_heights(view, Some(entry.turn));
         let basic_discarded = self.public_removed.map(usize::from);
         let public_clue = GenericClue::from(*clue);
         let clue = &standard_h_group_clue(&view.variant, public_clue);
@@ -849,7 +853,7 @@ impl ReplayReducer {
                     &pre_clue_gotten,
                     &self.already_playing,
                     &self.pending_connections,
-                    self.stack_heights,
+                    &connection_heights(view, Some(entry.turn)),
                 )
                 .flatten()
                 .is_some_and(|required| {
@@ -996,8 +1000,12 @@ impl ReplayReducer {
             }
             self.explicitly_clued.extend(touched.iter().copied());
             let raw_focus_identities = focus_identity.map_or_else(
-                || IdentitySet::from_mask(self.facts[focus.index()].identity_mask()),
-                IdentitySet::singleton,
+                || {
+                    IdentitySet::from_bits(
+                        self.facts[focus.index()].identity_mask_in(&view.variant),
+                    )
+                },
+                |identity| connection_domain(view, identity),
             );
             // The Load Clue relocates the connector promised by Priority.
             // It does not introduce an unrelated delayed rank-clue branch.
@@ -1053,12 +1061,12 @@ impl ReplayReducer {
                         &self.pending_connections,
                         self.signals.facts(),
                         &self.chop_moved,
-                        self.stack_heights,
+                        &connection_heights(view, Some(entry.turn)),
                         entry.turn,
                         allow_blind_reverse_empathy,
                     )
                 },
-                IdentitySet::singleton,
+                |identity| connection_domain(view, identity),
             );
             if focus_identity.is_none()
                 && *clue == Clue::Rank(Rank::Two)
@@ -1097,7 +1105,7 @@ impl ReplayReducer {
                     &self.pending_connections,
                     self.signals.facts(),
                     &self.chop_moved,
-                    self.stack_heights,
+                    &connection_heights(view, Some(entry.turn)),
                     entry.turn,
                     allow_blind_reverse_empathy,
                 );
@@ -1129,7 +1137,7 @@ impl ReplayReducer {
                 declined_direct_plays: &self.declined_direct_plays,
                 convention_facts: &convention_facts_before_clue,
                 chop_moved: &self.chop_moved,
-                stack_heights: self.stack_heights,
+                stack_heights: &connection_heights(view, Some(entry.turn)),
                 allow_blind_reverse_empathy,
             };
             // The snapshot shortcut handles one missing connector.
@@ -1452,19 +1460,23 @@ impl ReplayReducer {
             });
             let immediate_play = ClueInterpretationPlan::direct_play(
                 &view.variant,
-                &self.stack_heights.map(usize::from),
+                &basic_heights,
                 public_clue,
                 play_identities,
             );
-            let direct_play = IdentitySet::from_mask(
+            let direct_play = IdentitySet::from_bits(
                 immediate_play
                     .play_identities
-                    .iter()
-                    .filter(|identity| !self.pending_connections.identity_is_queued(*identity))
-                    .fold(0, |mask, identity| mask | (1 << identity.index())),
+                    .iter_ids()
+                    .filter(|id| {
+                        !self
+                            .pending_connections
+                            .identity_is_queued(super::connection_card(view, *id))
+                    })
+                    .fold(0, |mask, id| mask | (1_u64 << id.index())),
             );
             let connection_hypotheses = play_identities
-                .iter()
+                .iter_in(view.variant.identities())
                 .map(|identity| {
                     connection_context.simulate(
                         identity,
@@ -1506,7 +1518,12 @@ impl ReplayReducer {
             let inferred_connection_identity = focus_identity
                 .or_else(|| {
                     (play_identities.len() == 1)
-                        .then(|| play_identities.iter().next())
+                        .then(|| {
+                            play_identities
+                                .iter_ids()
+                                .next()
+                                .map(|id| super::connection_card(view, id))
+                        })
                         .flatten()
                 })
                 .or_else(|| {
@@ -1514,17 +1531,26 @@ impl ReplayReducer {
                     // and a delayed identity in their note. Preserve a
                     // unique delayed interpretation so intervening
                     // blind plays can demonstrate and resolve it.
-                    let delayed = IdentitySet::from_mask(
+                    let delayed = IdentitySet::from_bits(
                         play_identities
-                            .iter()
-                            .filter(|identity| {
-                                identity.rank.number()
-                                    > self.stack_heights[identity.suit.index()] + 1
+                            .iter_ids()
+                            .filter(|id| {
+                                !connection_predecessors(
+                                    view,
+                                    &basic_heights,
+                                    super::connection_card(view, *id),
+                                )
+                                .is_empty()
                             })
-                            .fold(0, |mask, identity| mask | (1 << identity.index())),
+                            .fold(0, |mask, id| mask | (1_u64 << id.index())),
                     );
                     (delayed.len() == 1)
-                        .then(|| delayed.iter().next())
+                        .then(|| {
+                            delayed
+                                .iter_ids()
+                                .next()
+                                .map(|id| super::connection_card(view, id))
+                        })
                         .flatten()
                 })
                 .or_else(|| {
@@ -1738,7 +1764,7 @@ impl ReplayReducer {
                     declined_direct_plays: &self.declined_direct_plays,
                     convention_facts: self.signals.facts(),
                     chop_moved: &self.chop_moved,
-                    stack_heights: self.stack_heights,
+                    stack_heights: &connection_heights(view, Some(entry.turn)),
                     allow_blind_reverse_empathy,
                 };
                 let (new_connections, _recomputed_fix) = committed_plan.commit(
@@ -2226,7 +2252,7 @@ impl ReplayReducer {
         self.pending_connections
             .prioritize_active_prompts(entry.turn, |connection, candidate| {
                 self.explicitly_clued.contains(&candidate)
-                    && self.facts[candidate.index()].allows(connection.expected)
+                    && connection_allows(view, self.facts[candidate.index()], connection.expected)
             });
         let failed_connections = advance.failed_focuses;
         let released_candidates = advance.released_candidates;

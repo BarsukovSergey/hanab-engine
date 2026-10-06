@@ -29,6 +29,10 @@ use super::{
     replay_identity_is_queued, rule_enabled, subjective_convention_cards,
     subjective_playable_cards, was_clued_before, with_prospective_analysis_cache,
 };
+use crate::h_group::identity::{
+    connection_advance, connection_allows, connection_domain, connection_heights,
+    connection_playable, connection_predecessors,
+};
 
 mod candidate_validation;
 mod knowledge;
@@ -37,8 +41,8 @@ pub(super) use candidate_validation::{
 };
 pub(super) use knowledge::{
     build_convention_knowledge, convention_card_inferences, convention_playable,
-    delayed_focus_identities, find_prompt, identities_at_distance_at, snapshot_accounted,
-    snapshot_good_touch_identities, snapshot_play_identities, snapshot_save_identities,
+    delayed_focus_identities, find_prompt, snapshot_accounted, snapshot_good_touch_identities,
+    snapshot_play_identities, snapshot_save_identities,
 };
 
 #[allow(clippy::too_many_lines)]
@@ -404,9 +408,10 @@ pub(super) fn h_group_clue_candidates_from_replay_inner(
                     card.card == focus && card.identities == IdentitySet::singleton(focus_identity)
                 })
             });
-        let connection_match = replay
-            .pending_connections
-            .match_clue(target, clue, &touched);
+        let connection_match =
+            replay
+                .pending_connections
+                .match_clue(&view.variant, target, clue.into(), &touched);
         let continues_inactive_connection =
             connection_match == ConnectionClueMatch::LaterContinuation;
         if !repairs_required_fix
@@ -693,10 +698,7 @@ pub(super) fn h_group_clue_candidates_from_replay_inner(
                 &promptable,
                 &baseline_playing,
                 &replay.pending_connections,
-                std::array::from_fn(|suit| {
-                    u8::try_from(view.play_stacks[suit].len())
-                        .expect("a standard stack has at most five cards")
-                }),
+                &connection_heights(view, None),
             )
             .is_some_and(|fix| fix.is_some());
         let creates_false_non_focus_self_prompt = is_playable_now(view, focus_identity)
@@ -2643,17 +2645,14 @@ pub(super) fn delayed_connection_score(
     chop_moved: &CardSet,
     convention_cards: &[HGroupCardInference],
 ) -> Option<u16> {
-    let stack_height = view.play_stacks[focus_identity.suit.index()].len();
-    if usize::from(focus_identity.rank.number()) <= stack_height + 1
-        || stack_height >= Rank::ALL.len()
-    {
+    let heights = connection_heights(view, None);
+    let predecessors = connection_predecessors(view, &heights, focus_identity);
+    if predecessors.is_empty() {
         return None;
     }
-    let pending_wholly_queued = ((stack_height + 1)..usize::from(focus_identity.rank.number()))
-        .all(|needed_rank| {
-            pending_connections
-                .identity_is_queued(Card::new(focus_identity.suit, Rank::ALL[needed_rank - 1]))
-        });
+    let pending_wholly_queued = predecessors
+        .iter()
+        .all(|needed| pending_connections.identity_is_queued(*needed));
     if pending_wholly_queued {
         if explicitly_clued.contains(&focus) && !focus_was_fixed {
             // Every predecessor was already promised, so Good Touch would
@@ -2683,15 +2682,13 @@ pub(super) fn delayed_connection_score(
                     && convention_cards.iter().any(|note| {
                         note.card == card.id
                             && note.identity_status == super::HGroupIdentityStatus::Settled
-                            && note.identities == IdentitySet::singleton(needed)
+                            && note.identities == connection_domain(view, needed)
                     })
             })
     };
-    let first_unqueued_rank =
-        ((stack_height + 1)..usize::from(focus_identity.rank.number())).find(|needed_rank| {
-            let needed = Card::new(focus_identity.suit, Rank::ALL[*needed_rank - 1]);
-            !already_queued(needed)
-        });
+    let first_unqueued_rank = predecessors
+        .iter()
+        .position(|needed| !already_queued(*needed));
     let Some(first_unqueued_rank) = first_unqueued_rank else {
         if explicitly_clued.contains(&focus) && !focus_was_fixed {
             // `already_playing` can account for every predecessor without a
@@ -2710,7 +2707,7 @@ pub(super) fn delayed_connection_score(
     // Already-promised plays advance the delayed line. Search for the first
     // genuinely missing connector instead of trying to create a duplicate
     // Prompt/Finesse for an identity the team is already committed to play.
-    let connector = Card::new(focus_identity.suit, Rank::ALL[first_unqueued_rank - 1]);
+    let connector = predecessors[first_unqueued_rank];
     if rule_enabled(profile, HGroupRuleId::Extras)
         && loaded_connection_plan(
             view,
@@ -2724,10 +2721,7 @@ pub(super) fn delayed_connection_score(
             explicitly_clued,
             already_playing,
             pending_connections,
-            std::array::from_fn(|suit| {
-                u8::try_from(view.play_stacks[suit].len())
-                    .expect("a standard stack has at most five cards")
-            }),
+            &connection_heights(view, None),
         )
         .is_some()
     {
@@ -2741,9 +2735,10 @@ pub(super) fn delayed_connection_score(
     };
     let prompt_allows = |card: &ObservedCard, identity: Card| {
         !fixed_cards.contains(&card.id)
-            && convention_facts
-                .known_identity(card.id)
-                .map_or_else(|| card.clues.allows(identity), |known| known == identity)
+            && convention_facts.known_identity(card.id).map_or_else(
+                || connection_allows(view, card.clues, identity),
+                |known| known == identity,
+            )
     };
     let finesse_connects = |player: usize, needed: Card| {
         let actor = PlayerId::new(u8::try_from(player).expect("standard player index"));
@@ -2759,7 +2754,7 @@ pub(super) fn delayed_connection_score(
                 chop_moved,
                 |id| {
                     hand.iter()
-                        .any(|card| card.id == id && card.clues.allows(needed))
+                        .any(|card| card.id == id && connection_allows(view, card.clues, needed))
                 },
             ) {
                 return !already_playing.contains(&card) && identity_of(view, card) == Some(needed);
@@ -2838,8 +2833,7 @@ pub(super) fn delayed_connection_score(
         return None;
     }
 
-    for needed_rank in (first_unqueued_rank + 1)..usize::from(focus_identity.rank.number()) {
-        let needed = Card::new(focus_identity.suit, Rank::ALL[needed_rank - 1]);
+    for &needed in &predecessors[first_unqueued_rank + 1..] {
         if already_queued(needed) {
             // A later connector can already be convention-bound even when an
             // earlier connector is the first missing step. Do not demand a
@@ -2905,8 +2899,9 @@ pub(super) fn loaded_connection_plan(
     gotten: &CardSet,
     already_playing: &CardSet,
     pending: &ConnectionManager,
-    mut stack_heights: [u8; 5],
+    stack_heights: &[usize],
 ) -> Option<Option<RequiredFix>> {
+    let mut stack_heights = stack_heights.to_vec();
     let visible_identity = |card| {
         historical_view.map_or_else(|| identity_of(view, card), |history| history.identity(card))
     };
@@ -2926,8 +2921,8 @@ pub(super) fn loaded_connection_plan(
         .any(|connection| connection.actor == target && pending.is_active(connection))
         || (gotten.contains(&focus)
             && historical_facts.is_some_and(|facts| {
-                IdentitySet::from_mask(facts[focus.index()].identity_mask())
-                    == IdentitySet::singleton(focus_identity)
+                IdentitySet::from_bits(facts[focus.index()].identity_mask_in(&view.variant))
+                    == connection_domain(view, focus_identity)
             }));
     if !target_loaded {
         return None;
@@ -2936,15 +2931,13 @@ pub(super) fn loaded_connection_plan(
     let fixer = next_player(giver, hands.len());
     let mut scheduled = CardSet::default();
     let mut required_fix = None;
-    let height = stack_heights[focus_identity.suit.index()];
-    for rank in (height + 1)..focus_identity.rank.number() {
-        let expected = Card::new(focus_identity.suit, Rank::ALL[usize::from(rank - 1)]);
+    for expected in connection_predecessors(view, &stack_heights, focus_identity) {
         if pending.identity_is_queued(expected)
             || already_playing
                 .iter()
                 .any(|card| visible_identity(*card) == Some(expected))
         {
-            stack_heights[expected.suit.index()] = expected.rank.number();
+            connection_advance(view, &mut stack_heights, expected);
             continue;
         }
 
@@ -2955,7 +2948,7 @@ pub(super) fn loaded_connection_plan(
                 && visible_identity(*card) == Some(expected)
         });
         if prompted {
-            stack_heights[expected.suit.index()] = expected.rank.number();
+            connection_advance(view, &mut stack_heights, expected);
             continue;
         }
 
@@ -2988,7 +2981,7 @@ pub(super) fn loaded_connection_plan(
             else {
                 continue;
             };
-            let mut simulated = stack_heights;
+            let mut simulated = stack_heights.clone();
             let mut candidate_fix = required_fix;
             let mut valid = true;
             for card in &candidates[..position] {
@@ -2996,8 +2989,8 @@ pub(super) fn loaded_connection_plan(
                     valid = false;
                     break;
                 };
-                if is_playable_at(simulated, identity) {
-                    simulated[identity.suit.index()] = identity.rank.number();
+                if connection_playable(view, &simulated, identity) {
+                    connection_advance(view, &mut simulated, identity);
                     continue;
                 }
                 let actor_distance = (actor.index() + hands.len() - giver.index()) % hands.len();
@@ -3011,9 +3004,15 @@ pub(super) fn loaded_connection_plan(
                     },
                     |facts| facts[card.index()],
                 );
-                let repair_clue_available = [Clue::Suit(identity.suit), Clue::Rank(identity.rank)]
-                    .into_iter()
-                    .any(|clue| !clues.has_positive_clue(clue));
+                let repair_clue_available = view
+                    .variant
+                    .standard_identity_id(identity)
+                    .is_some_and(|id| {
+                        view.variant
+                            .legal_clues(&[id])
+                            .into_iter()
+                            .any(|clue| !clues.has_positive_physical_clue(clue))
+                    });
                 if candidate_fix.is_some()
                     || fixer == actor
                     || actor_distance <= 1
@@ -3033,7 +3032,7 @@ pub(super) fn loaded_connection_plan(
                 scheduled.extend(candidates[..=position].iter().map(|card| **card));
                 required_fix = candidate_fix;
                 stack_heights = simulated;
-                stack_heights[expected.suit.index()] = expected.rank.number();
+                connection_advance(view, &mut stack_heights, expected);
                 found = true;
                 break;
             }
@@ -3041,7 +3040,7 @@ pub(super) fn loaded_connection_plan(
         if !found {
             if let Some(card) = observer_fallback {
                 scheduled.insert(*card);
-                stack_heights[expected.suit.index()] = expected.rank.number();
+                connection_advance(view, &mut stack_heights, expected);
                 found = true;
             }
         }
@@ -3065,17 +3064,15 @@ pub(super) fn visible_finesse_connects(
     already_playing: &CardSet,
     special_finesses: bool,
 ) -> bool {
-    let stack_heights = std::array::from_fn(|suit| {
-        u8::try_from(view.play_stacks[suit].len()).expect("a Hanabi stack has at most five cards")
-    });
-    visible_finesse_connects_at(
+    visible_finesse_connects_in(
+        view,
         hand,
         expected,
         Some(focus),
         gotten,
         already_playing,
         special_finesses,
-        stack_heights,
+        &connection_heights(view, None),
     )
 }
 
@@ -3112,6 +3109,44 @@ pub(super) fn visible_finesse_connects_at(
             return false;
         }
         stack_heights[identity.suit.index()] = identity.rank.number();
+    }
+    false
+}
+
+pub(super) fn visible_finesse_connects_in(
+    view: &PlayerView,
+    hand: &[ObservedCard],
+    expected: Card,
+    focus: Option<CardId>,
+    gotten: &CardSet,
+    already_playing: &CardSet,
+    special_finesses: bool,
+    stack_heights: &[usize],
+) -> bool {
+    let mut stack_heights = stack_heights.to_vec();
+    for (position, card) in hand
+        .iter()
+        .rev()
+        .filter(|card| {
+            Some(card.id) != focus
+                && !gotten.contains(&card.id)
+                && !already_playing.contains(&card.id)
+        })
+        .enumerate()
+    {
+        let Some(identity) = card.identity else {
+            return false;
+        };
+        if identity == expected {
+            return position == 0 || special_finesses;
+        }
+        if position > 0 && !special_finesses {
+            return false;
+        }
+        if !connection_playable(view, &stack_heights, identity) {
+            return false;
+        }
+        connection_advance(view, &mut stack_heights, identity);
     }
     false
 }
@@ -3277,7 +3312,7 @@ pub(super) fn infer_clue_to_self(
             .possible_identities(clue.focus)
             .is_some_and(|identities| {
                 identities
-                    .iter()
+                    .iter_in(view.variant.identities())
                     .any(|identity| identity.rank == Rank::Five)
             })
         && view.history.iter().any(|entry| {
@@ -3319,66 +3354,85 @@ pub(super) fn infer_clue_to_self(
     if focus_possibilities.is_empty() {
         return;
     }
-    let direct = identities_at_distance_at(focus_possibilities, clue.stack_heights, 0);
+    let historical_heights = connection_heights(view, Some(clue.turn));
+    let direct = focus_possibilities
+        .iter_ids()
+        .filter(|id| view.variant.playable(&historical_heights, *id))
+        .fold(IdentitySet::default(), |set, id| {
+            set.union(IdentitySet::singleton_id(id))
+        });
     let delayed = delayed_focus_identities(
         focus_possibilities,
-        clue.stack_heights,
+        &historical_heights,
         view,
         explicitly_clued,
         clue.focus,
     );
-    let live_direct = IdentitySet::from_mask(
+    let live_direct = IdentitySet::from_bits(
         direct
-            .iter()
+            .iter_in(view.variant.identities())
             .filter(|identity| is_playable_now(view, *identity))
-            .fold(0, |mask, identity| mask | (1 << identity.index())),
+            .fold(0, |mask, identity| {
+                mask | (1_u64 << view.variant.standard_identity_id(identity).unwrap().index())
+            }),
     );
-    let prompt_identities = IdentitySet::from_mask(delayed.iter().fold(0, |mask, identity| {
-        let connector = Card::new(
-            identity.suit,
-            Rank::ALL[usize::from(clue.stack_heights[identity.suit.index()])],
-        );
-        if is_playable_now(view, connector) {
-            mask | (1 << connector.index())
-        } else {
-            mask
-        }
-    }));
+    let prompt_identities = delayed
+        .iter_ids()
+        .filter_map(|id| {
+            connection_predecessors(view, &historical_heights, super::connection_card(view, id))
+                .first()
+                .copied()
+        })
+        .filter(|card| is_playable_now(view, *card))
+        .fold(IdentitySet::default(), |set, card| {
+            set.union(connection_domain(view, card))
+        });
     // Once connecting plays made after this clue have brought any promised
     // focus identity into the playable position, the focus is due. This must
     // use the current stack rather than only identities that were immediately
     // playable when the clue was given: an existing multi-card line can move
     // a delayed focus several ranks while the clue waits.
-    let demonstrated_focus = IdentitySet::from_mask(
+    let demonstrated_focus = IdentitySet::from_bits(
         focus_possibilities
-            .iter()
+            .iter_in(view.variant.identities())
             .filter(|identity| is_playable_now(view, *identity))
-            .fold(0, |mask, identity| mask | (1 << identity.index())),
+            .fold(0, |mask, identity| {
+                mask | (1_u64 << view.variant.standard_identity_id(identity).unwrap().index())
+            }),
     );
     let all_possibilities_completed = demonstrated_focus == focus_possibilities
-        && demonstrated_focus.iter().all(|identity| {
-            let Some(previous_rank) = identity.rank.index().checked_sub(1) else {
-                return false;
-            };
-            let connector = Card::new(identity.suit, Rank::ALL[previous_rank]);
-            view.history.iter().any(|entry| {
-                entry.turn > clue.turn
-                    && matches!(
-                        entry.event,
-                        ObservedEvent::Played {
-                            identity: played,
-                            successful: true,
-                            ..
-                        } if played == connector
-                    )
-            })
-        });
+        && demonstrated_focus
+            .iter_in(view.variant.identities())
+            .all(|identity| {
+                let Some(previous) = view
+                    .variant
+                    .standard_identity_id(identity)
+                    .and_then(|id| view.variant.predecessor(id))
+                else {
+                    return false;
+                };
+                let connector = super::connection_card(view, previous);
+                view.history.iter().any(|entry| {
+                    entry.turn > clue.turn
+                        && matches!(
+                            entry.event,
+                            ObservedEvent::Played {
+                                identity: played,
+                                successful: true,
+                                ..
+                            } if played == connector
+                        )
+                })
+            });
     let completed_good_touch_chain = matches!(clue.clue, hanabi_core::GenericClue::Color(_))
-        && focus_possibilities.iter().next().is_some_and(|first| {
-            focus_possibilities
-                .iter()
-                .all(|identity| identity.suit == first.suit)
-        })
+        && focus_possibilities
+            .iter_in(view.variant.identities())
+            .next()
+            .is_some_and(|first| {
+                focus_possibilities
+                    .iter_in(view.variant.identities())
+                    .all(|identity| identity.suit == first.suit)
+            })
         && clue.touched.iter().copied().any(|card| {
             card != clue.focus
                 && explicitly_clued.contains(&card)
@@ -3387,32 +3441,44 @@ pub(super) fn infer_clue_to_self(
                     .iter()
                     .any(|note| note.card == card && note.identities == focus_possibilities)
         })
-        && demonstrated_focus.iter().any(|identity| {
-            identity.rank.index()
-                == focus_possibilities
+        && demonstrated_focus
+            .iter_in(view.variant.identities())
+            .any(|identity| {
+                view.variant
+                    .card_ranks()
                     .iter()
-                    .map(|candidate| candidate.rank.index())
-                    .min()
-                    .expect("focus possibilities are non-empty")
-                && identity
-                    .rank
-                    .index()
-                    .checked_sub(1)
-                    .is_some_and(|previous| {
-                        let connector = Card::new(identity.suit, Rank::ALL[previous]);
-                        view.history.iter().any(|entry| {
-                            entry.turn > clue.turn
-                                && matches!(
-                                    entry.event,
-                                    ObservedEvent::Played {
-                                        identity: played,
-                                        successful: true,
-                                        ..
-                                    } if played == connector
-                                )
+                    .position(|rank| *rank == identity.rank)
+                    .unwrap()
+                    == focus_possibilities
+                        .iter_in(view.variant.identities())
+                        .map(|candidate| {
+                            view.variant
+                                .card_ranks()
+                                .iter()
+                                .position(|rank| *rank == candidate.rank)
+                                .unwrap()
                         })
-                    })
-        });
+                        .min()
+                        .expect("focus possibilities are non-empty")
+                    && view
+                        .variant
+                        .standard_identity_id(identity)
+                        .and_then(|id| view.variant.predecessor(id))
+                        .is_some_and(|previous| {
+                            let connector = super::connection_card(view, previous);
+                            view.history.iter().any(|entry| {
+                                entry.turn > clue.turn
+                                    && matches!(
+                                        entry.event,
+                                        ObservedEvent::Played {
+                                            identity: played,
+                                            successful: true,
+                                            ..
+                                        } if played == connector
+                                    )
+                            })
+                        })
+            });
     // https://hanabi.github.io/level-1/#good-touch-principle
     // A same-suit clue can correlate two previously gotten cards as the next
     // two ranks. Once the predecessor of the lower identity plays, the focus
@@ -3430,17 +3496,22 @@ pub(super) fn infer_clue_to_self(
     }
 
     let direct_identities_claimed = !live_direct.is_empty()
-        && live_direct.iter().all(|identity| {
-            view.hands.iter().flatten().any(|card| {
-                card.id != clue.focus
-                    && explicitly_clued.contains(&card.id)
-                    && (card.identity == Some(identity)
-                        || inferred
-                            .cards
-                            .iter()
-                            .any(|note| note.card == card.id && note.identities.contains(identity)))
-            })
-        });
+        && live_direct
+            .iter_in(view.variant.identities())
+            .all(|identity| {
+                view.hands.iter().flatten().any(|card| {
+                    card.id != clue.focus
+                        && explicitly_clued.contains(&card.id)
+                        && (card.identity == Some(identity)
+                            || inferred.cards.iter().any(|note| {
+                                note.card == card.id
+                                    && !note
+                                        .identities
+                                        .intersection(connection_domain(view, identity))
+                                        .is_empty()
+                            }))
+                })
+            });
     // A Self-Prompt only exists when no unclaimed identity allowed for the
     // focus can be played immediately. Good Touch may eliminate the direct
     // identities when matching cards are already promised elsewhere.

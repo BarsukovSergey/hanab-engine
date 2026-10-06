@@ -8,8 +8,12 @@ use super::{
     HGroupMoveKind, HGroupPlayObligation, HGroupProfile, HGroupRuleId, HGroupState, HistoricalView,
     IdentityClaims, IdentitySet, LogicalDeductions, MaterializedCardFact, ObservedEvent, PlayerId,
     PlayerView, Rank, StackTimeline, chop, elimination_finesse_connection, identity_of,
-    is_eventually_useful, is_playable_at, loaded_connection_plan, pending_card_allows_identity,
+    is_eventually_useful, loaded_connection_plan, pending_card_allows_identity,
     replay_identity_is_queued, rule_enabled, was_clued_before,
+};
+use crate::h_group::identity::{
+    connection_advance, connection_allows, connection_card, connection_domain, connection_playable,
+    connection_predecessors,
 };
 use crate::h_group::knowledge_effects::{
     CardKnowledgeEffect, KnowledgeSource, effects_between, initial_card_inferences,
@@ -176,7 +180,7 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
             {
                 continue;
             }
-            let claimed = IdentitySet::singleton(pending.expected);
+            let claimed = connection_domain(self.deductions.view(), pending.expected);
             for card in self.knowledge.cards.clone() {
                 if card.card == pending.focus
                     || pending.cards.contains(&card.card)
@@ -541,7 +545,7 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
             let current_identities = card.identities;
             if pending.cards.len() == 1 {
                 let narrowed =
-                    current_identities.intersection(IdentitySet::singleton(pending.expected));
+                    current_identities.intersection(connection_domain(view, pending.expected));
                 if narrowed.is_empty() {
                     continue;
                 }
@@ -560,7 +564,7 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
                 |card| {
                     if pending.cards.len() == 1 {
                         card.identities = current_identities
-                            .intersection(IdentitySet::singleton(pending.expected));
+                            .intersection(connection_domain(view, pending.expected));
                     }
                     card.promised_identity = Some(pending.expected);
                     card.finessed = pending.kind == HGroupConnectionKind::Finesse;
@@ -572,7 +576,8 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
     fn apply_active_connection_promises(&mut self) {
         let view = self.deductions.view();
         let observer_turn_stack_heights =
-            StackTimeline::before_player_turn(view, self.replay, view.observer).heights();
+            super::super::action_schedule::ActionSchedule::from_replay(view, self.replay)
+                .stack_heights_before_in(view, view.observer);
         for pending in self.replay.pending_connections.iter().filter(|pending| {
             pending.actor == view.observer && self.replay.pending_connections.is_active(pending)
         }) {
@@ -596,16 +601,22 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
             else {
                 continue;
             };
-            let expected = IdentitySet::singleton(pending.expected);
+            let expected = connection_domain(view, pending.expected);
             let allowed = if pending.cards.len() == 1 {
                 expected
             } else {
                 let claims = IdentityClaims::new(view, self.replay);
-                let unclaimed_playables = IdentitySet::from_mask(
-                    identities_at_distance_at(card.identities, observer_turn_stack_heights, 0)
-                        .iter()
-                        .filter(|identity| !claims.identity_claimed_elsewhere(card.card, *identity))
-                        .fold(0, |mask, identity| mask | (1 << identity.index())),
+                let unclaimed_playables = IdentitySet::from_bits(
+                    card.identities
+                        .iter_ids()
+                        .filter(|id| {
+                            view.variant.playable(&observer_turn_stack_heights, *id)
+                                && !claims.identity_claimed_elsewhere(
+                                    card.card,
+                                    connection_card(view, *id),
+                                )
+                        })
+                        .fold(0, |mask, id| mask | (1_u64 << id.index())),
                 );
                 expected.union(unclaimed_playables)
             };
@@ -785,31 +796,31 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
 
 pub(in crate::h_group) fn delayed_focus_identities(
     identities: IdentitySet,
-    stack_heights: [u8; 5],
+    stack_heights: &[usize],
     view: &PlayerView,
     gotten: &CardSet,
     excluded: CardId,
 ) -> IdentitySet {
-    let mask = identities
-        .iter()
-        .filter(|identity| {
-            let height = usize::from(stack_heights[identity.suit.index()]);
-            let rank = usize::from(identity.rank.number());
-            rank > height + 1
-                && ((height + 2)..rank).all(|needed_rank| {
-                    let needed = Card::new(identity.suit, Rank::ALL[needed_rank - 1]);
+    identities
+        .iter_ids()
+        .filter(|id| {
+            let predecessors =
+                connection_predecessors(view, stack_heights, connection_card(view, *id));
+            !predecessors.is_empty()
+                && predecessors.iter().skip(1).all(|needed| {
                     view.hands.iter().flatten().any(|card| {
                         card.id != excluded
                             && gotten.contains(&card.id)
                             && card.identity.map_or_else(
-                                || card.clues.allows(needed),
-                                |actual| actual == needed,
+                                || connection_allows(view, card.clues, *needed),
+                                |actual| actual == *needed,
                             )
                     })
                 })
         })
-        .fold(0, |mask, identity| mask | (1 << identity.index()));
-    IdentitySet::from_mask(mask)
+        .fold(IdentitySet::default(), |set, id| {
+            set.union(IdentitySet::singleton_id(id))
+        })
 }
 
 pub(in crate::h_group) fn find_prompt(
@@ -840,7 +851,7 @@ pub(in crate::h_group) fn find_prompt(
         if matching.is_empty() {
             continue;
         }
-        let identity = matching.iter().next()?;
+        let identity = connection_card(deductions.view(), matching.iter_ids().next()?);
         return Some(HGroupConnection {
             card: card.id,
             identity,
@@ -1435,7 +1446,7 @@ pub(in crate::h_group) fn snapshot_play_identities(
     pending_connections: &ConnectionManager,
     convention_facts: &ConventionFacts,
     chop_moved: &CardSet,
-    stack_heights: [u8; 5],
+    stack_heights: &[usize],
     historical_turn: u32,
     allow_blind_reverse_empathy: bool,
 ) -> IdentitySet {
@@ -1450,14 +1461,15 @@ pub(in crate::h_group) fn snapshot_play_identities(
     let self_finesse_possible = target == view.observer
         && rule_enabled(profile, HGroupRuleId::BasicMoves)
         && !identities
-            .iter()
-            .any(|identity| identity.rank.number() == stack_heights[identity.suit.index()] + 1);
+            .iter_ids()
+            .any(|id| view.variant.playable(stack_heights, id));
     let mask = identities
-        .iter()
-        .filter(|identity| {
+        .iter_ids()
+        .filter(|id| {
+            let identity = connection_card(view, *id);
             snapshot_playable(
                 profile,
-                *identity,
+                identity,
                 giver,
                 target,
                 focus,
@@ -1473,21 +1485,24 @@ pub(in crate::h_group) fn snapshot_play_identities(
                 Some(HistoricalView::new(view, historical_turn)),
                 allow_blind_reverse_empathy,
             ) || (self_finesse_possible
-                && identity.rank.number() == stack_heights[identity.suit.index()] + 2
-                && hands[target.index()]
-                    .iter()
-                    .rev()
-                    .copied()
-                    .find(|card| *card != focus && !gotten.contains(card))
-                    .is_some_and(|card| {
-                        facts[card.index()].allows(Card::new(
-                            identity.suit,
-                            Rank::ALL[usize::from(stack_heights[identity.suit.index()])],
-                        ))
-                    }))
+                && view.variant.predecessor(*id).is_some_and(|previous| {
+                    view.variant.playable(stack_heights, previous)
+                        && hands[target.index()]
+                            .iter()
+                            .rev()
+                            .copied()
+                            .find(|card| *card != focus && !gotten.contains(card))
+                            .is_some_and(|card| {
+                                connection_allows(
+                                    view,
+                                    facts[card.index()],
+                                    connection_card(view, previous),
+                                )
+                            })
+                }))
         })
-        .fold(0, |mask, identity| mask | (1 << identity.index()));
-    IdentitySet::from_mask(mask)
+        .fold(0, |mask, id| mask | (1 << id.index()));
+    IdentitySet::from_bits(mask)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1505,13 +1520,27 @@ pub(in crate::h_group) fn snapshot_playable(
     pending_connections: &ConnectionManager,
     convention_facts: &ConventionFacts,
     chop_moved: &CardSet,
-    stack_heights: [u8; 5],
+    stack_heights: &[usize],
     historical_view: Option<HistoricalView<'_>>,
     allow_blind_reverse_empathy: bool,
 ) -> bool {
-    let height = usize::from(stack_heights[identity.suit.index()]);
-    let rank = usize::from(identity.rank.number());
-    if rank <= height {
+    let Some(id) = view.variant.standard_identity_id(identity) else {
+        return false;
+    };
+    let predecessors = connection_predecessors(view, stack_heights, identity);
+    let suit = view
+        .variant
+        .stack_suits()
+        .iter()
+        .position(|suit| *suit == identity.suit)
+        .unwrap();
+    let rank = view
+        .variant
+        .card_ranks()
+        .iter()
+        .position(|rank| *rank == identity.rank)
+        .unwrap();
+    if rank < stack_heights[suit] {
         return false;
     }
     if rule_enabled(profile, HGroupRuleId::Extras)
@@ -1533,15 +1562,14 @@ pub(in crate::h_group) fn snapshot_playable(
     {
         return true;
     }
-    if rank == height + 1 {
+    if view.variant.playable(stack_heights, id) {
         return true;
     }
-    let missing = ((height + 1)..rank)
-        .filter_map(|needed_rank| {
-            let needed = Card::new(identity.suit, Rank::ALL[needed_rank - 1]);
-            (!pending_connections.identity_is_queued(needed)
-                && !snapshot_accounted(needed, focus, view, hands, facts, gotten))
-            .then_some(needed)
+    let missing = predecessors
+        .into_iter()
+        .filter(|needed| {
+            !pending_connections.identity_is_queued(*needed)
+                && !snapshot_accounted(*needed, focus, view, hands, facts, gotten)
         })
         .collect::<Vec<_>>();
     if missing.is_empty() {
@@ -1597,7 +1625,7 @@ pub(in crate::h_group) fn snapshot_connection_exists(
     already_playing: &CardSet,
     pending_connections: &ConnectionManager,
     convention_facts: &ConventionFacts,
-    stack_heights: [u8; 5],
+    stack_heights: &[usize],
     allow_blind_reverse_empathy: bool,
 ) -> bool {
     let first_actor = (giver.index() + 1) % hands.len();
@@ -1681,7 +1709,7 @@ pub(in crate::h_group) fn snapshot_connection_exists(
             unknown_observer_finesse = true;
             continue;
         }
-        let mut simulated = stack_heights;
+        let mut simulated = stack_heights.to_vec();
         for (position, card) in unclued.iter().enumerate() {
             let Some(identity) = identity_of(view, *card) else {
                 break;
@@ -1692,10 +1720,10 @@ pub(in crate::h_group) fn snapshot_connection_exists(
                 }
                 break;
             }
-            if position > 0 && !layered || !is_playable_at(simulated, identity) {
+            if position > 0 && !layered || !connection_playable(view, &simulated, identity) {
                 break;
             }
-            simulated[identity.suit.index()] = identity.rank.number();
+            connection_advance(view, &mut simulated, identity);
         }
     }
     unknown_observer_finesse
@@ -1713,7 +1741,7 @@ fn snapshot_prompt_exists(
     already_playing: &CardSet,
     pending_connections: &ConnectionManager,
     convention_facts: &ConventionFacts,
-    stack_heights: [u8; 5],
+    stack_heights: &[usize],
     player_order: &[usize],
 ) -> bool {
     let mut unknown_observer_prompt = false;
@@ -1730,13 +1758,14 @@ fn snapshot_prompt_exists(
                     && gotten.contains(card)
                     && !already_playing.contains(card)
                     && pending_card_allows_identity(
+                        view,
                         pending_connections,
                         convention_facts,
                         *card,
                         expected,
                         stack_heights,
                     )
-                    && facts[card.index()].allows(expected)
+                    && connection_allows(view, facts[card.index()], expected)
             })
             .collect::<Vec<_>>();
         if candidates.is_empty() {
@@ -1753,14 +1782,15 @@ fn snapshot_prompt_exists(
                 candidates[..correct].iter().all(|card| {
                     identity_of(view, *card).map_or_else(
                         || {
-                            let possibilities =
-                                IdentitySet::from_mask(facts[card.index()].identity_mask());
+                            let possibilities = IdentitySet::from_bits(
+                                facts[card.index()].identity_mask_in(&view.variant),
+                            );
                             !possibilities.is_empty()
                                 && possibilities
-                                    .iter()
-                                    .all(|identity| is_playable_at(stack_heights, identity))
+                                    .iter_ids()
+                                    .all(|id| view.variant.playable(stack_heights, id))
                         },
-                        |identity| is_playable_at(stack_heights, identity),
+                        |identity| connection_playable(view, stack_heights, identity),
                     )
                 })
             })
@@ -1784,7 +1814,7 @@ fn snapshot_direct_reverse_finesse_exists(
     already_playing: &CardSet,
     first_actor: usize,
     ordinary_search_len: usize,
-    stack_heights: [u8; 5],
+    stack_heights: &[usize],
     layered: bool,
     allow_blind_reverse_empathy: bool,
 ) -> bool {
@@ -1809,23 +1839,28 @@ fn snapshot_direct_reverse_finesse_exists(
         })
         .collect::<Vec<_>>();
     let visible = finesse_candidates.iter().any(|(actor_index, cards)| {
-        let mut simulated = stack_heights;
+        let mut simulated = stack_heights.to_vec();
         cards.iter().enumerate().any(|(position, card)| {
-            let identity = identity_of(view, *card).or_else(|| {
-                (*actor_index == view.observer.index()
-                    && facts[card.index()].identity_mask() == 1 << expected.index())
+            let identity = if *actor_index == view.observer.index() {
+                (facts[card.index()].identity_mask_in(&view.variant)
+                    == view
+                        .variant
+                        .standard_identity_id(expected)
+                        .map_or(0, |id| 1_u64 << id.index()))
                 .then_some(expected)
-            });
+            } else {
+                identity_of(view, *card)
+            };
             let Some(identity) = identity else {
                 return false;
             };
             if identity == expected {
                 return position == 0 || layered;
             }
-            if !layered || !is_playable_at(simulated, identity) {
+            if !layered || !connection_playable(view, &simulated, identity) {
                 return false;
             }
-            simulated[identity.suit.index()] = identity.rank.number();
+            connection_advance(view, &mut simulated, identity);
             false
         })
     });
@@ -1833,7 +1868,8 @@ fn snapshot_direct_reverse_finesse_exists(
         || (blind_reverse_finesse_is_eligible(view, giver, allow_blind_reverse_empathy)
             && finesse_candidates.iter().any(|(actor_index, cards)| {
                 cards.first().is_some_and(|card| {
-                    *actor_index == view.observer.index() && facts[card.index()].allows(expected)
+                    *actor_index == view.observer.index()
+                        && connection_allows(view, facts[card.index()], expected)
                 })
             }))
 }
@@ -1850,7 +1886,7 @@ pub(in crate::h_group) fn snapshot_accounted(
         card != excluded
             && gotten.contains(&card)
             && if hands[view.observer.index()].contains(&card) {
-                facts[card.index()].allows(identity)
+                connection_allows(view, facts[card.index()], identity)
             } else {
                 identity_of(view, card) == Some(identity)
             }

@@ -215,13 +215,12 @@ pub(super) fn connection_candidate_is_eligible(
     if kind != HGroupConnectionKind::Prompt {
         return true;
     }
+    let expected = super::identity::connection_domain(deductions.view(), expected);
     let resolved = candidates.iter().find(|candidate| {
-        deductions.possible_identities(**candidate) == Some(IdentitySet::singleton(expected))
-            || notes.iter().any(|note| {
-                note.card == **candidate
-                    && note.saved
-                    && note.identities == IdentitySet::singleton(expected)
-            })
+        deductions.possible_identities(**candidate) == Some(expected)
+            || notes
+                .iter()
+                .any(|note| note.card == **candidate && note.saved && note.identities == expected)
     });
     if let Some(resolved) = resolved {
         return card == *resolved;
@@ -229,7 +228,9 @@ pub(super) fn connection_candidate_is_eligible(
     notes
         .iter()
         .find(|note| note.card == card)
-        .is_none_or(|note| note.identities.len() != 1 || note.identities.contains(expected))
+        .is_none_or(|note| {
+            note.identities.len() != 1 || !note.identities.intersection(expected).is_empty()
+        })
 }
 
 /// Convention knowledge attached to one card in the observer's hand.
