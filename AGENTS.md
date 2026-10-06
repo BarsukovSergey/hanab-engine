@@ -21,10 +21,10 @@ assertions; change when they run, not their strength.
 | Shared inference/replay/planner refactor      | Focused checks first; `scripts/check.sh --fast` after implementation settles |
 | Milestone or explicit full-validation request | Full `scripts/check.sh`                                                      |
 
-For a scoped Rust change, prefer `bash scripts/check-scoped.sh <crate>`
-with focused cargo-test arguments when applicable. The helper reuses the primary
-worktree's Cargo target cache, then runs formatting and a normal crate check.
-Do not add local strict Clippy, `--all-targets`, the CI search-contract matrix,
+For a scoped Rust change, prefer `bash scripts/check-scoped.sh <crate>` with
+focused cargo-test arguments when applicable. The helper reuses the primary
+worktree's Cargo target cache, then runs formatting and a normal crate check. Do
+not add local strict Clippy, `--all-targets`, the CI search-contract matrix,
 broad H-Group regressions, or `check.sh --fast` by default. Those are
 CI/broader-refactor gates unless the change specifically targets them or focused
 compilation reveals API fallout that requires them. Task prompts should not
@@ -33,8 +33,8 @@ widen this default without a concrete risk that the extra check addresses.
 `--fast` retains build, lint, documentation, Python, and dead-code checks but
 omits the expensive ordinary Rust suite. It is for shared
 inference/replay/planner changes, not every small semantic slice. Run relevant
-Rust tests separately. A failing focused test is a reason to keep debugging,
-not to start broad validation.
+Rust tests separately. A failing focused test is a reason to keep debugging, not
+to start broad validation.
 
 PR CI is a targeted gate: formatting/build/Clippy/docs, MSRV, core/protocol
 tests, a small green hanabi-search contract suite, Python live-bridge checks,
@@ -50,8 +50,8 @@ If a local Windows/Git Bash Rust check fails before meaningful compilation
 because of a missing linker, runtime path, or equivalent host-toolchain setup,
 make at most one obvious attempt to use the repository's existing configured
 toolchain. Do not install, repair, or repeatedly reconfigure the host toolchain
-for a scoped code task. Record the deferred local check and rely on Linux CI
-for the broader gate.
+for a scoped code task. Record the deferred local check and rely on Linux CI for
+the broader gate.
 
 Do not overlap full validation runs or CPU-heavy benchmarks. For performance
 comparisons, use the same precompiled workload and configuration, run before and
@@ -146,11 +146,11 @@ is complete.
 ## Context budget
 
 Start scoped tasks from the files named by the task and their direct
-compile/test dependencies. Use targeted search to answer a concrete question;
-do not inventory the repository or read broad audit/refactor/history documents
-just in case. In particular, do not read replay-review material for unrelated
-work. Expand context only when a compile error, failing focused test, or an
-unclear API boundary gives a concrete reason.
+compile/test dependencies. Use targeted search to answer a concrete question; do
+not inventory the repository or read broad audit/refactor/history documents just
+in case. In particular, do not read replay-review material for unrelated work.
+Expand context only when a compile error, failing focused test, or an unclear
+API boundary gives a concrete reason.
 
 ## Replay positions and human review
 
