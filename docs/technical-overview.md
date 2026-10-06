@@ -409,53 +409,18 @@ objective, engine path and timeout, server URL, and debug logging. At the table,
 
 ## Development and CI
 
-Install Node.js/npm and run `npm ci` once before running `scripts/check.sh`. The
-script runs `npm run format:check` across all Prettier-supported files in the
-repository, using `prettier.config.mjs` and respecting `.gitignore`. Use
-`npm run format` to apply formatting. Rust remains covered by `cargo fmt`.
-
-The workspace uses Rust 2024 and supports Rust 1.85 or newer. The checks used by
-GitHub Actions are:
-
-```sh
-cargo fmt --all -- --check
-cargo build --workspace --all-targets --all-features --locked
-cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo nextest run --workspace --all-targets --all-features --locked --fail-fast
-cargo test --workspace --all-features --doc --locked
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
-cargo +1.97.1 hawk check --manifest-path Cargo.toml --only dead-public -D warnings
-scripts/check-exhaustive.sh
-
-# POSIX venv paths shown below. On Windows Git Bash, use
-# .venv/Scripts/python.exe and .venv/Scripts/ty.exe instead.
-.venv/bin/python -m pip install --requirement scripts/requirements-dev.txt
-.venv/bin/ty check
-.venv/bin/python -m py_compile \
-  scripts/hanabi_live_bot.py \
-  scripts/hanabi_live_engine.py \
-  scripts/hanabi_live_game.py \
-  scripts/hanabi_live_trace.py \
-  scripts/tests/test_hanabi_live_bot.py
-.venv/bin/python -W error::ResourceWarning -m unittest discover -s scripts/tests -v
-```
+The workspace uses Rust 2024 and supports Rust 1.85 or newer. Development setup
+is summarized in [the README](../README.md), while the authoritative local/CI
+validation workflow lives in [validation.md](validation.md). Keep runnable check
+lists there rather than duplicating them in this architecture overview.
 
 Compatibility tests use the sibling `hanabi-live` repository when available and
 skip only those cross-repository assertions when it is absent.
 
-The ordinary suite keeps representative full-game rollouts for Levels 1, 10, 18,
-25, and Max. The exhaustive script runs the independently scheduled full-game
-matrix for every cumulative profile; CI runs it in a separate job. Rust test
-binaries use `opt-level = 2` while retaining debug assertions and overflow
-checks. The repository pins cargo-nextest 0.9.143 for fail-fast test scheduling;
-nextest's missing rustdoc support is covered by the separate `cargo test --doc`
-command.
-
-The five curated replays (`game-p4v0s415.json`, `game-p4v0s9.json`,
-`game-p4v0s2.json`, `game-p4v0s3.json`, and `game-p4v0s1.json`) are active
-golden oracles: the planner must choose the fixture action at every position.
-Their decks are specified by seed; custom replay tests can still use explicit
-decks.
+Rust test binaries use `opt-level = 2` while retaining debug assertions and
+overflow checks. Reviewed replay expectations and their exact action-parity
+boundaries are defined by the expert manifest and [testing.md](testing.md);
+fixture presence alone does not imply full action parity.
 
 The Python development requirements pin ty, and `ty.toml` checks every Python
 bridge and test module against Python 3.10. The test suite also rejects any
