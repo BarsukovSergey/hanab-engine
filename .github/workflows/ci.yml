@@ -73,6 +73,8 @@ jobs:
         run: |
           bash scripts/check.sh --help
           bash scripts/check-scoped.sh --help
+          bash scripts/check-scoped.sh --print-target-dir
+          bash scripts/run-python.sh scripts/check_lock.py --help
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
       - name: Build all Rust targets

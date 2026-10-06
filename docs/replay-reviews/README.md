@@ -7,7 +7,7 @@ inputs to engine move selection.
 Before investigating a turn:
 
 ```bash
-python3 scripts/replay_reviews.py p4v0s1 --turn 11
+bash scripts/run-python.sh scripts/replay_reviews.py p4v0s1 --turn 11
 rg -n 'discard|finesse' docs/replay-reviews
 ```
 

@@ -40,8 +40,8 @@ For a scoped Rust fix or semantic slice, use
 when one focused Cargo test invocation covers the changed behavior. The helper
 reuses the primary worktree Cargo target cache, runs the optional focused tests,
 then Rust formatting and a normal crate check. Run additional focused tests
-separately when needed. Do not routinely add strict Clippy, `--all-targets`,
-the CI search-contract matrix, broad H-Group regressions, or
+separately when needed. Do not routinely add strict Clippy, `--all-targets`, the
+CI search-contract matrix, broad H-Group regressions, or
 `scripts/check.sh --fast`; PR CI owns those broader gates unless the task
 specifically targets them or focused compilation exposes cross-cutting fallout.
 
@@ -69,21 +69,25 @@ additionally run the exhaustive H-Group profile matrix. Neither CI path is the
 complete ordinary hanabi-search suite. Full local runs remain nonzero on any
 failure; known failures are not ignored or deleted.
 
-Record local work sessions and substantive commands:
+Workflow timing is opt-in. Use it for performance work, full-check comparison,
+or long replay investigations, not ordinary scoped edits. When it is useful,
+invoke it through the portable Python launcher:
 
 ```bash
-python3 scripts/workflow.py start "Fix turn 27 play priority"
-python3 scripts/workflow.py run --label focused -- cargo test -p hanabi-search fourth_replay_red_one_precedes --lib
+bash scripts/run-python.sh scripts/workflow.py start "Fix turn 27 play priority"
+bash scripts/run-python.sh scripts/workflow.py run --label focused -- \
+  cargo test -p hanabi-search fourth_replay_red_one_precedes --lib
 scripts/check.sh --fast
-python3 scripts/workflow.py finish
-python3 scripts/workflow.py report
+bash scripts/run-python.sh scripts/workflow.py finish
+bash scripts/run-python.sh scripts/workflow.py report
 ```
 
 Both check modes automatically record output, per-stage timings, exit status,
-commit and tracked-diff fingerprint in ignored `target/workflow/`. Other
-commands must use the wrapper to be recorded. The local records survive prompts
-but are removed by `cargo clean`; archive them elsewhere before cleaning if
-needed. They are not a reconstruction of historical prompt latency.
+commit and tracked-diff fingerprint in ignored `target/workflow/`. Extra
+commands only need the workflow wrapper when a recorded timing session is
+intentionally in use. The local records survive prompts but are removed by
+`cargo clean`; archive them elsewhere before cleaning if needed. They are not a
+reconstruction of historical prompt latency.
 
 Use `wait-start` and `wait-end` to record intervals actually spent waiting for
 tools. Do not mark time spent editing/investigating while a check runs as
@@ -98,7 +102,7 @@ After inspecting a completed full-check log, explicitly capture a diagnostic
 failure baseline with its originating revision:
 
 ```bash
-python3 scripts/workflow.py baseline /tmp/reviewed-check.log --revision COMMIT
+bash scripts/run-python.sh scripts/workflow.py baseline /tmp/reviewed-check.log --revision COMMIT
 ```
 
 Subsequent completed full runs report new, still-failing, and no-longer-reported

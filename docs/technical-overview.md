@@ -427,6 +427,8 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --lock
 cargo +1.97.1 hawk check --manifest-path Cargo.toml --only dead-public -D warnings
 scripts/check-exhaustive.sh
 
+# POSIX venv paths shown below. On Windows Git Bash, use
+# .venv/Scripts/python.exe and .venv/Scripts/ty.exe instead.
 .venv/bin/python -m pip install --requirement scripts/requirements-dev.txt
 .venv/bin/ty check
 .venv/bin/python -m py_compile \
