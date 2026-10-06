@@ -8,6 +8,7 @@ const MAX_TEST_CONTINUATION_TURNS: usize = 512;
 mod architecture;
 mod basic_semantics;
 mod clue_vocabulary;
+mod generic_connections;
 mod replay;
 mod replay_memo;
 mod snapshots;

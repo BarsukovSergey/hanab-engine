@@ -93,13 +93,36 @@ Complete for the requested base semantic slice:
 - focused tests cover No Variant parity, sixth-suit identities, Rainbow/Pink
   touching, Black copy counts, exhausted predecessors, and observer safety
 
+### M4-V2 - Generic connection engine
+
+Complete for historical and prospective basic Prompt/Finesse paths:
+
+- snapshot Play domains, Prompt/Finesse discovery, speculative and committed
+  scheduling, loaded planning, and recipient Prompt/completion inference map
+  retained `Card` promises through the active `VariantSpec` identity universe
+- connection clue matching uses physical variant touches; predecessor traversal
+  and dynamic stack simulation use the variant's stack and rank order
+- active and queued owner-facing promises, Prompt candidate eligibility, and
+  projected stacks before the owner's turn also use active identity IDs
+- historical connection planning reads public clue-time dynamic stacks and
+  restricted historical identities; prospective delayed-line scoring uses the
+  same physical predecessor semantics
+- `ConnectionManager`, PromiseId, provenance, Prompt-before-Finesse precedence,
+  deferred/ambiguous transfers, Self-Finesse eligibility, Reverse search, and
+  Fix lifecycle remain in place
+- focused contract tests cover No Variant/sixth-suit parity, Rainbow/Pink touches,
+  six-player ordering, nonconsecutive ranks and reordered identity IDs, loaded
+  progression, hidden information, and lifecycle/provenance retention; existing
+  reviewed replay assertions remain the No Variant semantic authority
+
 ## Current M4 boundaries
 
 Important remaining boundaries:
 
 - H-Group production policy is still intentionally No Variant-only
-- Prompt/Finesse and broader connection semantics still depend heavily on
-  standard `Card`, `Clue`, `Rank::ALL`, and fixed five-stack state
+- basic connection promises intentionally retain `Card` fields, with active
+  identity lookup at the migrated boundaries; broader advanced interpretation,
+  knowledge materialization, and convention claims still have legacy domains
 - the H-Group replay reducer still contains standard-only storage such as
   `[u8; 5]` stack heights and `[u8; 25]` public removed counts
 - `standard_h_group_clue` remains on active convention paths
@@ -128,16 +151,19 @@ acceptance, validation, and pull-request sizing rules.
 
 ## Next slice
 
-M4-V2 - Generic connection engine.
+M4-V3 - Focus/chop/tempo/stall/discard families.
 
-Migrate Prompt/Finesse discovery and progression to generic identities and
-variant successor/predecessor semantics, preserving reviewed No Variant
-connections and their provenance.
+Migrate those recognition families without changing their convention meanings.
+M4-V4 owns advanced connections and Bluff families, including advanced historical
+Finesse recognition adapters, Elimination, layered/hidden/clandestine/queued
+recognizers, and variant-specific convention families. Their shared basic
+planner now accepts active identities, but their family-specific evidence and
+knowledge paths are not claimed generic.
 
-Intentional V2+ boundaries remain: `snapshot_play_identities`, ConnectionManager,
-reducer connection/context storage, and advanced recognizers still use standard
-cards, fixed stack/count arrays, or `standard_h_group_clue`. The reducer adapts
-its No Variant snapshots to dynamic slices at the migrated base semantic calls.
+Legacy reducer stack/count arrays, advanced `Rank::ALL`/`Suit::ALL` loops,
+legacy identity claim masks, and `standard_h_group_clue` remain outside the
+migrated basic connection boundaries. Basic planning receives dynamic public
+snapshots while those advanced recognition interfaces remain standard-only.
 The global No Variant policy gate stays until the remaining M4 slices are ready.
 Pink Promise, Black clue-choice rules, and other variant convention packs remain
 outside this base semantic slice.

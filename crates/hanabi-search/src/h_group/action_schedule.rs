@@ -1,5 +1,9 @@
 use hanabi_core::{Card, CardId, PlayerId, PlayerView, Rank};
 
+use super::identity::{
+    connection_advance, connection_card, connection_domain, connection_heights, connection_playable,
+};
+
 use super::{
     CardSet, HGroupConnection, HGroupMoveKind, HGroupState, IdentityClaims, IdentitySet, PromiseId,
     identity_of, is_playable_at, next_player,
@@ -206,7 +210,22 @@ impl ActionSchedule {
 
     /// Projects only forced, unambiguous plays before `observer` next acts.
     pub(super) fn stack_heights_before(&self, view: &PlayerView, observer: PlayerId) -> [u8; 5] {
-        let mut heights = StackTimeline::current(view).heights();
+        self.stack_heights_before_in(view, observer)
+            .into_iter()
+            .map(|height| u8::try_from(height).expect("legacy stack height"))
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("legacy schedule requires five stacks")
+    }
+
+    /// Dynamic projection shared by basic connection knowledge. The legacy
+    /// adapter above remains for advanced convention families.
+    pub(super) fn stack_heights_before_in(
+        &self,
+        view: &PlayerView,
+        observer: PlayerId,
+    ) -> Vec<usize> {
+        let mut heights = connection_heights(view, None);
         let mut player = view.current_player;
         while player != observer {
             let playable = self
@@ -214,11 +233,18 @@ impl ActionSchedule {
                 .filter_map(|obligation| {
                     let identity = obligation.promised_identity.or_else(|| {
                         (obligation.identities.len() == 1)
-                            .then(|| obligation.identities.iter().next())
+                            .then(|| {
+                                obligation
+                                    .identities
+                                    .iter_ids()
+                                    .next()
+                                    .map(|id| connection_card(view, id))
+                            })
                             .flatten()
                             .or_else(|| identity_of(view, obligation.card))
                     })?;
-                    is_playable_at(heights, identity).then_some((identity, obligation.source))
+                    connection_playable(view, &heights, identity)
+                        .then_some((identity, obligation.source))
                 })
                 .collect::<Vec<_>>();
             // A due blind-play connection precedes an ordinary queued play.
@@ -238,7 +264,7 @@ impl ActionSchedule {
                 None
             };
             if let Some(identity) = selected {
-                heights[identity.suit.index()] += 1;
+                connection_advance(view, &mut heights, identity);
             }
             player = next_player(player, view.hands.len());
         }
@@ -274,7 +300,7 @@ fn scheduled_actions(view: &PlayerView, replay: &HGroupState) -> (Vec<ActionObli
                 actor: connection.actor,
                 card,
                 action: ScheduledAction::Play,
-                identities: IdentitySet::singleton(connection.expected),
+                identities: connection_domain(view, connection.expected),
                 promised_identity: Some(connection.expected),
                 source: ObligationSource::Connection(connection.promise),
             });
@@ -291,7 +317,9 @@ fn scheduled_actions(view: &PlayerView, replay: &HGroupState) -> (Vec<ActionObli
             if scheduled.insert(*card) {
                 let identities = claims
                     .exact_identity(*card)
-                    .map_or_else(IdentitySet::default, IdentitySet::singleton);
+                    .map_or_else(IdentitySet::default, |identity| {
+                        connection_domain(view, identity)
+                    });
                 obligations.push(ActionObligation {
                     actor,
                     card: *card,
@@ -420,8 +448,6 @@ fn owner_of(replay: &HGroupState, card: CardId) -> Option<PlayerId> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum StackHorizon {
     AtClue(u32),
-    Current(u32),
-    BeforePlayerTurn(PlayerId),
 }
 
 /// Stack heights paired with the time at which they are valid.
@@ -436,28 +462,6 @@ impl StackTimeline {
         Self {
             heights,
             horizon: StackHorizon::AtClue(turn),
-        }
-    }
-
-    pub(super) fn current(view: &PlayerView) -> Self {
-        Self {
-            heights: std::array::from_fn(|index| {
-                u8::try_from(view.play_stacks[index].len())
-                    .expect("a standard stack has at most five cards")
-            }),
-            horizon: StackHorizon::Current(view.turn),
-        }
-    }
-
-    pub(super) fn before_player_turn(
-        view: &PlayerView,
-        replay: &HGroupState,
-        player: PlayerId,
-    ) -> Self {
-        let schedule = ActionSchedule::from_replay(view, replay);
-        Self {
-            heights: schedule.stack_heights_before(view, player),
-            horizon: StackHorizon::BeforePlayerTurn(player),
         }
     }
 

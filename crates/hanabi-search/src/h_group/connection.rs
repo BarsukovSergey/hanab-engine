@@ -1,4 +1,4 @@
-use hanabi_core::{Card, CardId, Clue, PlayerId};
+use hanabi_core::{Card, CardId, GenericClue, PlayerId, VariantSpec};
 
 use super::HGroupConnectionKind;
 
@@ -133,18 +133,34 @@ impl ConnectionManager {
     /// A recipient Self-Finesse also resolves when the apparent blind player
     /// chooses an ordinary clued play. That evidence does not transfer a
     /// deferred Prompt, which follows its existing decline rule.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn resolve_deferred_connections(
         &mut self,
+        variant: &VariantSpec,
         turn: u32,
         actor: PlayerId,
         declined: bool,
         ordinary_clued_play: bool,
-        before_heights: [u8; 5],
-        after_heights: [u8; 5],
+        before_heights: &[usize],
+        after_heights: &[usize],
     ) {
         let deferred = core::mem::take(&mut self.deferred_connections);
         for (visible, fallback) in deferred {
-            if after_heights[fallback.expected.suit.index()] >= fallback.expected.rank.number() {
+            let Some(id) = variant.standard_identity_id(fallback.expected) else {
+                continue;
+            };
+            let identity = variant.identities().get(id).unwrap();
+            let suit = variant
+                .stack_suits()
+                .iter()
+                .position(|suit| *suit == identity.suit)
+                .unwrap();
+            let rank = variant
+                .card_ranks()
+                .iter()
+                .position(|rank| *rank == identity.rank)
+                .unwrap();
+            if after_heights[suit] > rank {
                 continue;
             }
             let Some(connection) = self.active.iter().find(|item| item.promise == visible) else {
@@ -153,8 +169,7 @@ impl ConnectionManager {
             if (declined || (ordinary_clued_play && fallback.kind == HGroupConnectionKind::Finesse))
                 && connection.actor == actor
                 && self.is_active(connection)
-                && before_heights[fallback.expected.suit.index()] + 1
-                    == fallback.expected.rank.number()
+                && variant.playable(before_heights, id)
             {
                 self.cancel_where(
                     turn,
@@ -209,14 +224,17 @@ impl ConnectionManager {
     /// a blocked suffix can be a valid Continuation Clue.
     pub(super) fn match_clue(
         &self,
+        variant: &VariantSpec,
         actor: PlayerId,
-        clue: Clue,
+        clue: GenericClue,
         touched: &[CardId],
     ) -> ConnectionClueMatch {
         let matches = |connection: &ConnectionObligation| {
             connection.actor == actor
                 && connection.cards.iter().any(|card| touched.contains(card))
-                && clue.matches(connection.expected)
+                && variant
+                    .standard_identity_id(connection.expected)
+                    .is_some_and(|id| variant.touches(id, clue))
         };
         if self.active().any(matches) {
             ConnectionClueMatch::ActiveRedundant
@@ -771,7 +789,7 @@ impl ConnectionManager {
 
 #[cfg(test)]
 mod tests {
-    use hanabi_core::{Rank, Suit};
+    use hanabi_core::{Clue, Rank, Suit};
 
     use super::*;
 
@@ -798,25 +816,35 @@ mod tests {
         fallback.actor = PlayerId::new(2);
         manager.defer_connection(promise, fallback);
         // A turn before the prerequisite plays is not an opportunity.
-        manager.resolve_deferred_connections(4, PlayerId::new(1), true, false, [0; 5], [0; 5]);
+        manager.resolve_deferred_connections(
+            &VariantSpec::no_variant(),
+            4,
+            PlayerId::new(1),
+            true,
+            false,
+            &[0; 5],
+            &[0; 5],
+        );
         assert_eq!(manager.active[0].actor, PlayerId::new(1));
         // Nor is an excused turn, even after the prerequisite plays.
         manager.resolve_deferred_connections(
+            &VariantSpec::no_variant(),
             8,
             PlayerId::new(1),
             false,
             false,
-            [1, 0, 0, 0, 0],
-            [1, 0, 0, 0, 0],
+            &[1, 0, 0, 0, 0],
+            &[1, 0, 0, 0, 0],
         );
         assert_eq!(manager.active[0].actor, PlayerId::new(1));
         manager.resolve_deferred_connections(
+            &VariantSpec::no_variant(),
             12,
             PlayerId::new(1),
             true,
             false,
-            [1, 0, 0, 0, 0],
-            [1, 0, 0, 0, 0],
+            &[1, 0, 0, 0, 0],
+            &[1, 0, 0, 0, 0],
         );
         assert_eq!(manager.active.len(), 1);
         assert_eq!(manager.active[0].actor, PlayerId::new(2));
@@ -838,12 +866,13 @@ mod tests {
             true,
         );
         manager.resolve_deferred_connections(
+            &VariantSpec::no_variant(),
             4,
             PlayerId::new(1),
             false,
             false,
-            [1, 0, 0, 0, 0],
-            [2, 0, 0, 0, 0],
+            &[1, 0, 0, 0, 0],
+            &[2, 0, 0, 0, 0],
         );
         assert!(manager.deferred_connections.is_empty());
         assert!(manager.active.is_empty());
@@ -944,15 +973,30 @@ mod tests {
         );
 
         assert_eq!(
-            manager.match_clue(PlayerId::new(1), Clue::Suit(Suit::Red), &[CardId::new(5)]),
+            manager.match_clue(
+                &VariantSpec::no_variant(),
+                PlayerId::new(1),
+                Clue::Suit(Suit::Red).into(),
+                &[CardId::new(5)]
+            ),
             ConnectionClueMatch::ActiveRedundant
         );
         assert_eq!(
-            manager.match_clue(PlayerId::new(1), Clue::Suit(Suit::Red), &[CardId::new(7)]),
+            manager.match_clue(
+                &VariantSpec::no_variant(),
+                PlayerId::new(1),
+                Clue::Suit(Suit::Red).into(),
+                &[CardId::new(7)]
+            ),
             ConnectionClueMatch::LaterContinuation
         );
         assert_eq!(
-            manager.match_clue(PlayerId::new(0), Clue::Suit(Suit::Red), &[CardId::new(5)]),
+            manager.match_clue(
+                &VariantSpec::no_variant(),
+                PlayerId::new(0),
+                Clue::Suit(Suit::Red).into(),
+                &[CardId::new(5)]
+            ),
             ConnectionClueMatch::Unrelated
         );
     }
