@@ -1,8 +1,9 @@
+use super::super::identity::{connection_allows, connection_live, connection_playable};
 use super::{
     CardId, CardSet, ConnectionObligation, HGroupClueKind, HGroupConnectionKind, HGroupMoveKind,
     HGroupRuleEffects, HGroupTurnContext, IdentitySet, MAX_CLUE_TOKENS, ObservedEvent, PlayerId,
-    PlayerView, PromiseId, Rank, chop, focus, identity_of, is_playable_at, is_trash_at,
-    next_player, protected_cards, push_signal, same_turn_signal, was_clued_before,
+    PlayerView, PromiseId, Rank, chop, focus, next_player, protected_cards, push_signal,
+    same_turn_signal, was_clued_before,
 };
 
 #[allow(clippy::too_many_lines)]
@@ -51,7 +52,7 @@ pub(in crate::h_group) fn apply_tempo_effects(
 
     let adds_information = touched
         .iter()
-        .any(|card| !context.before.facts[card.index()].has_positive_clue(*clue));
+        .any(|card| !super::super::was_clued_before_with(view, entry.turn, *card, (*clue).into()));
     if !adds_information {
         // A literal reclue supplies no information. Level 9 may admit it as a
         // Burn in a permitted stall situation, but it is never Tempo.
@@ -79,29 +80,33 @@ pub(in crate::h_group) fn apply_tempo_effects(
     ) else {
         return;
     };
-    let focus_possibilities =
-        IdentitySet::from_mask(context.after.facts[tempo_focus.index()].identity_mask());
+    let focus_possibilities = IdentitySet::from_bits(
+        context.after.facts[tempo_focus.index()].identity_mask_in(&view.variant),
+    );
     let recipient_already_knew_playable = {
-        let before =
-            IdentitySet::from_mask(context.before.facts[tempo_focus.index()].identity_mask());
+        let before = IdentitySet::from_bits(
+            context.before.facts[tempo_focus.index()].identity_mask_in(&view.variant),
+        );
         !before.is_empty()
-            && before
-                .iter()
-                .all(|identity| is_playable_at(context.before.stack_heights, identity))
+            && before.iter_ids().all(|id| {
+                view.variant
+                    .playable(&context.before.dynamic_stack_heights, id)
+            })
     } || effects.clues.iter().any(|interpretation| {
         interpretation.turn < entry.turn
             && interpretation.focus == tempo_focus
             && !interpretation.play_identities.is_empty()
-            && interpretation
-                .play_identities
-                .iter()
-                .all(|identity| is_playable_at(context.before.stack_heights, identity))
+            && interpretation.play_identities.iter_ids().all(|id| {
+                view.variant
+                    .playable(&context.before.dynamic_stack_heights, id)
+            })
     });
     if recipient_already_knew_playable
         || super::super::primary::prior_play_is_ready(
+            view,
             tempo_focus,
             context.before.facts[tempo_focus.index()],
-            context.before.stack_heights,
+            &context.before.dynamic_stack_heights,
             effects.clues.iter().filter(|clue| clue.turn < entry.turn),
         )
     {
@@ -110,9 +115,10 @@ pub(in crate::h_group) fn apply_tempo_effects(
         return;
     }
     let gets_focus_to_play = !focus_possibilities.is_empty()
-        && focus_possibilities
-            .iter()
-            .all(|identity| is_playable_at(context.before.stack_heights, identity));
+        && focus_possibilities.iter_ids().all(|id| {
+            view.variant
+                .playable(&context.before.dynamic_stack_heights, id)
+        });
     if !gets_focus_to_play {
         return;
     }
@@ -139,17 +145,20 @@ pub(in crate::h_group) fn apply_tempo_effects(
         .rev()
         .position(|card| *card == tempo_focus);
     let focus_cannot_be_prompted = focus_possibilities
-        .iter()
+        .iter_in(view.variant.identities())
         .all(|identity| identity.rank != Rank::Five)
         && focus_position.is_some_and(|position| {
             target_hand.iter().rev().take(position).any(|card| {
                 was_clued_before(view, entry.turn, *card) && {
-                    let possibilities =
-                        IdentitySet::from_mask(context.before.facts[card.index()].identity_mask());
+                    let possibilities = IdentitySet::from_bits(
+                        context.before.facts[card.index()].identity_mask_in(&view.variant),
+                    );
                     !possibilities.is_empty()
-                        && possibilities
-                            .iter()
-                            .any(|identity| !is_playable_at(context.before.stack_heights, identity))
+                        && possibilities.iter_ids().any(|id| {
+                            !view
+                                .variant
+                                .playable(&context.before.dynamic_stack_heights, id)
+                        })
                 }
             })
         });
@@ -213,7 +222,7 @@ pub(in crate::h_group) fn apply_emergency_discard_effects(
     let hands_before = &context.before.hands;
     let hands_after = context.after.hands;
     let facts = &context.before.facts;
-    let stack_heights = context.before.stack_heights;
+    let stack_heights = &context.before.dynamic_stack_heights;
     let explicitly_clued = effects.explicitly_clued;
     let pending_connections = &*effects.pending;
     // Emergency-discard interpretation must be reproducible from public
@@ -227,10 +236,11 @@ pub(in crate::h_group) fn apply_emergency_discard_effects(
                 && connection.cards.contains(candidate)
                 && pending_connections.is_active(connection)
         }) || {
-            let identities = IdentitySet::from_mask(facts[candidate.index()].identity_mask());
+            let identities =
+                IdentitySet::from_bits(facts[candidate.index()].identity_mask_in(&view.variant));
             let live_identities = identities
-                .iter()
-                .filter(|identity| !is_trash_at(stack_heights, *identity))
+                .iter_ids()
+                .filter(|id| connection_live(view, stack_heights, *id))
                 .collect::<Vec<_>>();
             let has_useful_touch = explicitly_clued.contains(candidate)
                 && !effects.signals.iter().any(|signal| {
@@ -246,14 +256,14 @@ pub(in crate::h_group) fn apply_emergency_discard_effects(
                 });
             (identities.len() == 1
                 && identities
-                    .iter()
+                    .iter_ids()
                     .next()
-                    .is_some_and(|identity| is_playable_at(stack_heights, identity)))
+                    .is_some_and(|id| view.variant.playable(stack_heights, id)))
                 || (has_useful_touch
                     && !live_identities.is_empty()
                     && live_identities
                         .iter()
-                        .all(|identity| is_playable_at(stack_heights, *identity)))
+                        .all(|id| view.variant.playable(stack_heights, *id)))
         }
     });
     let known_trash_order = actor_hand
@@ -263,12 +273,13 @@ pub(in crate::h_group) fn apply_emergency_discard_effects(
         .rev()
         .copied()
         .filter(|candidate| {
-            let possibilities = IdentitySet::from_mask(facts[candidate.index()].identity_mask());
+            let possibilities =
+                IdentitySet::from_bits(facts[candidate.index()].identity_mask_in(&view.variant));
             explicitly_clued.contains(candidate)
                 && !possibilities.is_empty()
                 && possibilities
-                    .iter()
-                    .all(|identity| is_trash_at(stack_heights, identity))
+                    .iter_ids()
+                    .all(|id| !connection_live(view, stack_heights, id))
         })
         .collect::<Vec<_>>();
     let known_trash_cards = known_trash_order.iter().copied().collect::<CardSet>();
@@ -292,7 +303,7 @@ pub(in crate::h_group) fn apply_emergency_discard_effects(
     let player_after = |distance: usize| {
         PlayerId::new(
             u8::try_from((player.index() + distance) % hands_after.len())
-                .expect("standard Hanabi has at most five players"),
+                .expect("standard Hanabi has at most six players"),
         )
     };
     if trash_order_enabled && discarded_known_trash && !known_playable {
@@ -330,7 +341,7 @@ pub(in crate::h_group) fn apply_emergency_discard_effects(
             .historical
             .identity(candidate)
             .is_none_or(|identity| {
-                if is_playable_at(stack_heights, identity) {
+                if connection_playable(view, stack_heights, identity) {
                     return true;
                 }
                 let removed = view
@@ -349,7 +360,14 @@ pub(in crate::h_group) fn apply_emergency_discard_effects(
                         )
                     })
                     .count();
-                let critical = removed + 1 == usize::from(identity.rank.copies());
+                let critical = view
+                    .variant
+                    .standard_identity_id(identity)
+                    .is_some_and(|id| {
+                        view.variant
+                            .copies(id)
+                            .is_some_and(|copies| removed + 1 == usize::from(copies))
+                    });
                 let needed_two = identity.rank == Rank::Two
                     && !hands_after.iter().flatten().copied().any(|other| {
                         other != candidate && context.historical.identity(other) == Some(identity)
@@ -363,15 +381,16 @@ pub(in crate::h_group) fn apply_emergency_discard_effects(
     // the superficially similar Scream interpretation.
     let has_safe_action = |actor: PlayerId| {
         hands_after[actor.index()].iter().any(|candidate| {
-            let possibilities = IdentitySet::from_mask(facts[candidate.index()].identity_mask());
+            let possibilities =
+                IdentitySet::from_bits(facts[candidate.index()].identity_mask_in(&view.variant));
             !possibilities.is_empty()
                 && (possibilities
-                    .iter()
-                    .all(|identity| is_playable_at(stack_heights, identity))
+                    .iter_ids()
+                    .all(|id| view.variant.playable(stack_heights, id))
                     || (explicitly_clued.contains(candidate)
                         && possibilities
-                            .iter()
-                            .all(|identity| is_trash_at(stack_heights, identity))))
+                            .iter_ids()
+                            .all(|id| !connection_live(view, stack_heights, id))))
         }) || pending_connections.iter().any(|connection| {
             connection.actor == actor && pending_connections.is_active(connection)
         })
@@ -401,11 +420,15 @@ pub(in crate::h_group) fn apply_emergency_discard_effects(
             .and_then(|endangered| context.historical.identity(endangered))
             .is_some_and(|endangered_identity| {
                 hands_after[player.index()].iter().any(|candidate| {
-                    let possibilities =
-                        IdentitySet::from_mask(facts[candidate.index()].identity_mask());
+                    let possibilities = IdentitySet::from_bits(
+                        facts[candidate.index()].identity_mask_in(&view.variant),
+                    );
                     explicitly_clued.contains(candidate)
                         && possibilities.len() > 1
-                        && possibilities.contains(endangered_identity)
+                        && view
+                            .variant
+                            .standard_identity_id(endangered_identity)
+                            .is_some_and(|id| possibilities.contains_id(id))
                 })
             });
         if cautious {
@@ -475,7 +498,7 @@ pub(in crate::h_group) fn apply_positional_effects(
     let entry = context.entry;
     let hands = context.after.hands;
     let historical_deck_size = context.after.deck_size;
-    let stack_heights = context.after.stack_heights;
+    let stack_heights = &context.after.dynamic_stack_heights;
     let explicitly_clued = effects.explicitly_clued;
     let invisibly_clued = &*effects.invisibly_clued;
     let chop_moved = &*effects.chop_moved;
@@ -528,8 +551,10 @@ pub(in crate::h_group) fn apply_positional_effects(
             let index = (player.index() + distance) % hands.len();
             let target = PlayerId::new(u8::try_from(index).ok()?);
             let card = hands[index].get(indicated_slot).copied()?;
-            let playable = identity_of(view, card)
-                .is_some_and(|identity| is_playable_at(stack_heights, identity));
+            let playable = context
+                .historical
+                .identity(card)
+                .is_some_and(|identity| connection_playable(view, stack_heights, identity));
             playable.then_some((target, card))
         })
         .collect::<Vec<_>>();
@@ -565,7 +590,7 @@ pub(in crate::h_group) fn apply_positional_effects(
     let indicated_cards = targets.iter().map(|(_, card)| *card).collect::<Vec<_>>();
     for (target, indicated) in &targets {
         forced_playable.insert(*indicated);
-        if let Some(identity) = identity_of(view, *indicated) {
+        if let Some(identity) = context.historical.identity(*indicated) {
             pending.start(
                 entry.turn,
                 ConnectionObligation {
@@ -596,7 +621,7 @@ pub(in crate::h_group) fn apply_positional_effects(
         indicated_cards,
         targets
             .first()
-            .and_then(|(_, indicated)| identity_of(view, *indicated)),
+            .and_then(|(_, indicated)| context.historical.identity(*indicated)),
     );
 }
 #[allow(clippy::too_many_lines)]
@@ -750,21 +775,31 @@ pub(in crate::h_group) fn apply_stall_effects(
                 _ => false,
             })
             .count();
-        actor_chop.is_some_and(|card| context.before.facts[card.index()].allows(identity))
-            && removed + 1 == usize::from(identity.rank.copies())
-            && !is_trash_at(context.before.stack_heights, identity)
+        actor_chop.is_some_and(|card| {
+            connection_allows(view, context.before.facts[card.index()], identity)
+        }) && view
+            .variant
+            .standard_identity_id(identity)
+            .is_some_and(|id| {
+                connection_live(view, &context.before.dynamic_stack_heights, id)
+                    && view
+                        .variant
+                        .copies(id)
+                        .is_some_and(|copies| removed + 1 == usize::from(copies))
+            })
     });
 
     let all_previously_gotten = touched.iter().all(|card| prior_gotten.contains(card));
     let adds_information = touched.iter().any(|card| {
         let before = super::super::primary::prior_superposition(
+            view,
             *card,
             context.before.facts[card.index()],
-            context.before.stack_heights,
+            &context.before.dynamic_stack_heights,
             effects.clues.iter().filter(|prior| prior.turn < entry.turn),
         );
-        let after = before.intersection(IdentitySet::from_mask(
-            context.after.facts[card.index()].identity_mask(),
+        let after = before.intersection(IdentitySet::from_bits(
+            context.after.facts[card.index()].identity_mask_in(&view.variant),
         ));
         super::super::primary::strictly_narrows(before, after)
     });

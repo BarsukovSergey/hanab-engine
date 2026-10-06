@@ -711,9 +711,12 @@ fn required_first_five_stall_actions(
                 .find(|note| note.card == *card)
                 .is_some_and(|note| {
                     !note.identities.is_empty()
-                        && note.identities.iter().all(|identity| {
-                            is_convention_trash(view, identity, &gotten, &inferred.cards)
-                        })
+                        && note
+                            .identities
+                            .iter_in(view.variant.identities())
+                            .all(|identity| {
+                                is_convention_trash(view, identity, &gotten, &inferred.cards)
+                            })
                 })
         });
     let has_normal_play_or_save = clues
@@ -768,8 +771,10 @@ fn five_stall_distance_from_chop(
         .iter()
         .enumerate()
         .filter(|(_, card)| {
-            card.identity
-                .is_some_and(|identity| clue.matches(identity) && identity.rank == Rank::Five)
+            card.identity.is_some_and(|identity| {
+                super::physical_clue_matches(view, clue.into(), identity)
+                    && identity.rank == Rank::Five
+            })
         })
         .map(|(position, _)| {
             view.hands[target.index()][position + 1..]
@@ -1633,14 +1638,15 @@ fn gentlemans_discard_candidate(
     let own_hand = &view.hands[view.observer.index()];
     inferred.playable_now.iter().copied().find_map(|candidate| {
         let observed = own_hand.iter().find(|card| card.id == candidate)?;
-        let positively_clued = Suit::ALL
-            .iter()
-            .copied()
-            .any(|suit| observed.clues.has_positive_clue(Clue::Suit(suit)))
-            || Rank::ALL
-                .iter()
-                .copied()
-                .any(|rank| observed.clues.has_positive_clue(Clue::Rank(rank)));
+        let positively_clued = view.variant.clue_colors().iter().copied().any(|color| {
+            observed
+                .clues
+                .has_positive_physical_clue(hanabi_core::GenericClue::Color(color))
+        }) || view.variant.clue_ranks().iter().copied().any(|rank| {
+            observed
+                .clues
+                .has_positive_physical_clue(hanabi_core::GenericClue::Rank(rank))
+        });
         if !positively_clued {
             return None;
         }
@@ -1648,7 +1654,10 @@ fn gentlemans_discard_candidate(
             .cards
             .iter()
             .find(|note| note.card == candidate)
-            .and_then(|note| (note.identities.len() == 1).then(|| note.identities.iter().next()))
+            .and_then(|note| {
+                (note.identities.len() == 1)
+                    .then(|| note.identities.iter_in(view.variant.identities()).next())
+            })
             .flatten()?;
         (1..view.hands.len())
             .any(|distance| {
@@ -1741,34 +1750,40 @@ pub(super) fn convention_known_trash_discard(
             .find(|note| note.card == card.id)
             .is_some_and(|note| {
                 !note.identities.is_empty()
-                    && note.identities.iter().all(|identity| {
-                        !is_eventually_useful(view, identity)
-                            || view.hands.iter().flatten().any(|other| {
-                                other.id != card.id
-                                    && gotten.contains(&other.id)
-                                    && (other.identity == Some(identity)
-                                        || (other.identity.is_none()
-                                            && independent_duplicate_note(
-                                                inferred, card, other, identity,
-                                            )
-                                            && inferred.cards.iter().any(|other_note| {
-                                                other_note.card == other.id
-                                                    && other_note.identities
-                                                        == IdentitySet::singleton(identity)
-                                            })))
-                            })
-                    })
+                    && note
+                        .identities
+                        .iter_in(view.variant.identities())
+                        .all(|identity| {
+                            !is_eventually_useful(view, identity)
+                                || view.hands.iter().flatten().any(|other| {
+                                    other.id != card.id
+                                        && gotten.contains(&other.id)
+                                        && (other.identity == Some(identity)
+                                            || (other.identity.is_none()
+                                                && independent_duplicate_note(
+                                                    view, inferred, card, other, identity,
+                                                )
+                                                && inferred.cards.iter().any(|other_note| {
+                                                    other_note.card == other.id
+                                                        && other_note.identities
+                                                            == super::identity::connection_domain(
+                                                                view, identity,
+                                                            )
+                                                })))
+                                })
+                        })
             })
     };
     hand.iter()
         .rev()
         .find(|card| {
-            let positively_clued = Suit::ALL
-                .iter()
-                .any(|suit| card.clues.has_positive_clue(Clue::Suit(*suit)))
-                || Rank::ALL
-                    .iter()
-                    .any(|rank| card.clues.has_positive_clue(Clue::Rank(*rank)));
+            let positively_clued = view.variant.clue_colors().iter().any(|color| {
+                card.clues
+                    .has_positive_physical_clue(hanabi_core::GenericClue::Color(*color))
+            }) || view.variant.clue_ranks().iter().any(|rank| {
+                card.clues
+                    .has_positive_physical_clue(hanabi_core::GenericClue::Rank(*rank))
+            });
             positively_clued && is_trash(card)
         })
         .or_else(|| hand.iter().find(|card| is_trash(card)))
@@ -1779,6 +1794,7 @@ pub(super) fn convention_known_trash_discard(
 /// two physical copies. Neither peer may certify the other's disposal before
 /// an independent clue or literal identification establishes the duplicate.
 fn independent_duplicate_note(
+    view: &PlayerView,
     inferred: &HGroupInferences,
     card: &hanabi_core::ObservedCard,
     other: &hanabi_core::ObservedCard,
@@ -1788,7 +1804,9 @@ fn independent_duplicate_note(
         clue.new_non_focus.contains(&card.id) && clue.new_non_focus.contains(&other.id)
     });
     shared.is_none_or(|shared| {
-        other.clues.identity_mask() == 1 << identity.index()
+        view.variant
+            .standard_identity_id(identity)
+            .is_some_and(|id| other.clues.identity_mask_in(&view.variant) == 1 << id.index())
             || inferred.clues.iter().any(|clue| {
                 clue.turn > shared.turn
                     && clue.focus == other.id
@@ -1909,18 +1927,20 @@ fn completion_without_discard(view: &PlayerView, cards: &[(PlayerId, Card)]) -> 
 /// Use public clue facts and focused play promises only: visible faces and unknown draws cannot establish
 /// that the owner knows a remaining card. The schedule charges every idle turn.
 pub(super) fn secured_finish_without_discard(view: &PlayerView, replay: &HGroupState) -> bool {
-    let remaining: Vec<_> = Suit::ALL
-        .into_iter()
-        .flat_map(|suit| {
-            Rank::ALL
-                .into_iter()
-                .skip(view.play_stacks[suit.index()].len())
-                .map(move |rank| Card::new(suit, rank))
-        })
+    let heights = super::identity::connection_heights(view, None);
+    let remaining: Vec<_> = IdentitySet::all_in(view.variant.identities())
+        .iter_ids()
+        .filter(|id| super::identity::connection_live(view, &heights, *id))
+        .map(|id| super::identity::connection_card(view, id))
         .collect();
-    let live_mask = remaining
-        .iter()
-        .fold(0, |mask, card| mask | (1 << card.index()));
+    let live_mask = remaining.iter().fold(0_u64, |mask, card| {
+        mask | (1
+            << view
+                .variant
+                .standard_identity_id(*card)
+                .expect("active identity")
+                .index())
+    });
     let plays: Option<Vec<_>> = remaining
         .iter()
         .map(|identity| {
@@ -1932,11 +1952,22 @@ pub(super) fn secured_finish_without_discard(view: &PlayerView, replay: &HGroupS
                             .iter()
                             .flatten()
                             .filter(|other| {
-                                other.id != card.id && other.clues.identity_mask().is_power_of_two()
+                                other.id != card.id
+                                    && other
+                                        .clues
+                                        .identity_mask_in(&view.variant)
+                                        .is_power_of_two()
                             })
-                            .fold(0, |mask, other| mask | other.clues.identity_mask());
-                        card.clues.identity_mask() & live_mask & !accounted == 1 << identity.index()
-                            && (card.clues.identity_mask() == 1 << identity.index()
+                            .fold(0, |mask, other| {
+                                mask | other.clues.identity_mask_in(&view.variant)
+                            });
+                        let id = view
+                            .variant
+                            .standard_identity_id(*identity)
+                            .expect("active identity");
+                        card.clues.identity_mask_in(&view.variant) & live_mask & !accounted
+                            == 1 << id.index()
+                            && (card.clues.identity_mask_in(&view.variant) == 1 << id.index()
                                 || replay
                                     .clues
                                     .iter()
@@ -1946,7 +1977,7 @@ pub(super) fn secured_finish_without_discard(view: &PlayerView, replay: &HGroupS
                                         matches!(
                                             clue.kind,
                                             HGroupClueKind::Play | HGroupClueKind::PlayOrSave
-                                        ) && clue.play_identities.contains(*identity)
+                                        ) && clue.play_identities.contains_id(id)
                                     }))
                     })
                     .then_some((
@@ -2069,16 +2100,20 @@ fn funded_completion_schedule(
         let was_final = final_turns.is_some();
         let play = plays.iter().position(|(owner, candidate)| {
             *owner == actor
-                && usize::from(candidate.rank.number()) == heights[candidate.suit.index()] + 1
+                && super::identity::connection_playable(view, &heights, *candidate)
                 && (step != 0 || initial_play == Some(*candidate))
         });
         if let Some(index) = play {
             let (_, played) = plays.remove(index);
-            heights[played.suit.index()] += 1;
+            super::identity::connection_advance(view, &mut heights, played);
             if plays.is_empty() && unannounced.is_empty() {
                 return true;
             }
-            if played.rank == Rank::Five {
+            if view
+                .variant
+                .standard_identity_id(played)
+                .is_some_and(|id| view.variant.successor(id).is_none())
+            {
                 tokens = (tokens + 1).min(MAX_CLUE_TOKENS);
             }
             if deck > 0 {
@@ -3054,6 +3089,70 @@ fn select_h_group_action_from_analysis(
     crate::ConventionAgnosticPolicy
         .select_action(deductions)
         .ok()
+}
+
+#[cfg(test)]
+mod v3_focus_context_tests {
+    use super::*;
+    use crate::{HGroupCardInference, HGroupIdentityStatus, HGroupLevel};
+    use hanabi_core::{
+        ClueColorId, ClueFacts, ClueRank, FullState, GenericClue, VariantId, VariantSpec,
+        standard_deck,
+    };
+
+    #[test]
+    fn v3_focus_context_prospective_gentleman_and_trash_use_active_notes() {
+        let mut view = FullState::new_standard(6, standard_deck())
+            .unwrap()
+            .view_for(PlayerId::new(0))
+            .unwrap();
+        view.variant = VariantSpec::from_catalog(VariantId::Black6Suits);
+        view.play_stacks.push(vec![]);
+        let identity = Card::new(Suit::new(5), Rank::Three);
+        view.play_stacks[5] = [Rank::One, Rank::Two]
+            .into_iter()
+            .enumerate()
+            .map(|(index, rank)| (CardId::new(40 + index), Card::new(Suit::new(5), rank)))
+            .collect();
+        let candidate = view.hands[0][0].id;
+        let mut facts = ClueFacts::default();
+        facts.record_physical(GenericClue::Color(ClueColorId::new(5)), true);
+        facts.record_physical(GenericClue::Rank(ClueRank::new(3)), true);
+        view.hands[0][0].clues = facts;
+        view.hands[5].last_mut().unwrap().identity = Some(identity);
+        let inferred = HGroupInferences {
+            playable_now: vec![candidate],
+            cards: vec![HGroupCardInference {
+                card: candidate,
+                identities: super::super::identity::connection_domain(&view, identity),
+                promised_identity: None,
+                identity_status: HGroupIdentityStatus::Settled,
+                focused: false,
+                saved: false,
+                finessed: false,
+                play_obligation: None,
+            }],
+            ..HGroupInferences::default()
+        };
+        for hidden in [None, Some(Card::new(Suit::Red, Rank::Five)), Some(identity)] {
+            view.hands[0][0].identity = hidden;
+            assert_eq!(
+                gentlemans_discard_candidate(
+                    &view,
+                    &inferred,
+                    HGroupProfile::Level(HGroupLevel::Level10),
+                    &CardSet::default()
+                ),
+                Some((candidate, identity))
+            );
+            assert_eq!(convention_known_trash_discard(&view, &inferred), None);
+        }
+        view.play_stacks[5].push((CardId::new(42), identity));
+        assert_eq!(
+            convention_known_trash_discard(&view, &inferred),
+            Some(candidate)
+        );
+    }
 }
 
 #[cfg(test)]

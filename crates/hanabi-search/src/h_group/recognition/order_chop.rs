@@ -1,7 +1,7 @@
 use super::{
     CardId, Clue, ConventionJournal, HGroupClueInterpretation, HGroupMoveKind, HGroupRuleEffects,
-    HGroupTurnContext, IdentitySet, ObservedEvent, PlayerId, PlayerView, Rank, chop, is_trash_at,
-    next_player, protected_cards, push_signal,
+    HGroupTurnContext, IdentitySet, ObservedEvent, PlayerId, PlayerView, Rank, chop, next_player,
+    protected_cards, push_signal,
 };
 
 /// Recognizes the Level-4 Order Chop Move from a deliberately out-of-order 1.
@@ -45,7 +45,7 @@ pub(in crate::h_group) fn apply_order_chop_move_effects(
 
     // Exact identity knowledge explains the choice and suppresses an OCM.
     let played_possibilities =
-        IdentitySet::from_mask(context.before.facts[card.index()].identity_mask());
+        IdentitySet::from_bits(context.before.facts[card.index()].identity_mask_in(&view.variant));
     if played_possibilities.len() == 1
         || effects.signals.iter().any(|signal| {
             signal.turn < origin.turn
@@ -141,7 +141,12 @@ fn order_chop_move_order(
         convention_facts.known_identity(candidate).or_else(|| {
             if candidate == origin.focus {
                 return (origin.focus_identities.len() == 1)
-                    .then(|| origin.focus_identities.iter().next())
+                    .then(|| {
+                        origin
+                            .focus_identities
+                            .iter_in(view.variant.identities())
+                            .next()
+                    })
                     .flatten();
             }
             origin
@@ -150,7 +155,7 @@ fn order_chop_move_order(
                 .find(|(card, _)| *card == candidate)
                 .and_then(|(_, identities)| {
                     (identities.len() == 1)
-                        .then(|| identities.iter().next())
+                        .then(|| identities.iter_in(view.variant.identities()).next())
                         .flatten()
                 })
         })
@@ -161,14 +166,28 @@ fn order_chop_move_order(
         .filter(|candidate| positive_clue_count(*candidate) == played_clue_count)
         .filter(|candidate| {
             if let Some(identity) = contextual_identity(*candidate) {
-                return !is_trash_at(context.before.stack_heights, identity);
+                return view
+                    .variant
+                    .standard_identity_id(identity)
+                    .is_some_and(|id| {
+                        super::super::identity::connection_live(
+                            view,
+                            &context.before.dynamic_stack_heights,
+                            id,
+                        )
+                    });
             }
-            let possibilities =
-                IdentitySet::from_mask(context.before.facts[candidate.index()].identity_mask());
+            let possibilities = IdentitySet::from_bits(
+                context.before.facts[candidate.index()].identity_mask_in(&view.variant),
+            );
             !possibilities.is_empty()
-                && possibilities
-                    .iter()
-                    .any(|identity| !is_trash_at(context.before.stack_heights, identity))
+                && possibilities.iter_ids().any(|id| {
+                    super::super::identity::connection_live(
+                        view,
+                        &context.before.dynamic_stack_heights,
+                        id,
+                    )
+                })
         })
         .collect::<Vec<_>>();
     ordered.sort_by_key(|candidate| {

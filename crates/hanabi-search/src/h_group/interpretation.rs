@@ -58,11 +58,10 @@ pub(super) fn h_group_clue_candidates(
 // Trash collateral and color-versus-rank do not improve a Burn.
 fn burn_clue_score(view: &PlayerView, target: PlayerId, clue: Clue, playable: bool) -> u16 {
     let fill_in = view.hands[target.index()].iter().any(|card| {
-        !card.clues.has_positive_clue(clue)
+        !card.clues.has_positive_physical_clue(clue.into())
             && card.identity.is_some_and(|identity| {
-                clue.matches(identity)
-                    && usize::from(identity.rank.number())
-                        > view.play_stacks[identity.suit.index()].len()
+                super::physical_clue_matches(view, clue.into(), identity)
+                    && !card_is_trash(view, identity)
             })
     });
     (if playable { 25 } else { 20 }) + u16::from(fill_in)
@@ -88,19 +87,14 @@ pub(super) fn h_group_clue_candidates_from_replay_inner(
     if view.clue_tokens == 0 {
         return Vec::new();
     }
-    let stacks: [u8; 5] = view
-        .play_stacks
-        .iter()
-        .map(|stack| u8::try_from(stack.len()).expect("five ranks"))
-        .collect::<Vec<_>>()
-        .try_into()
-        .expect("H-Group No Variant analysis requires five stacks");
+    let stacks = connection_heights(view, None);
     let endgame_cards = (view.deck_size <= view.hands.len())
         .then(|| super::convention_card_inferences(deductions, replay));
     if rule_enabled(profile, HGroupRuleId::Stalling)
         && replay.required_fixes.iter().next().is_none()
         && super::primary::fully_clued_endgame(
-            stacks,
+            &view.variant,
+            &stacks,
             view.deck_size,
             view.hands.len(),
             view.hands.iter().flatten().map(|card| {
@@ -109,17 +103,21 @@ pub(super) fn h_group_clue_candidates_from_replay_inner(
                         endgame_cards
                             .as_ref()
                             .and_then(|cards| cards.iter().find(|note| note.card == card.id))
-                            .map_or_else(IdentitySet::all, |note| note.identities)
+                            .map_or_else(
+                                || IdentitySet::all_in(view.variant.identities()),
+                                |note| note.identities,
+                            )
                     },
-                    IdentitySet::singleton,
+                    |identity| connection_domain(view, identity),
                 );
                 (replay.cards.explicitly_clued.contains(&card.id), identities)
             }),
         )
     {
         return view
-            .legal_actions()
+            .legal_physical_actions()
             .into_iter()
+            .filter_map(|action| Action::try_from(action).ok())
             .filter_map(|action| {
                 let Action::Clue { target, clue } = action else {
                     return None;
@@ -127,7 +125,8 @@ pub(super) fn h_group_clue_candidates_from_replay_inner(
                 let playable = view.hands[target.index()].iter().any(|card| {
                     replay.cards.explicitly_clued.contains(&card.id)
                         && card.identity.is_some_and(|identity| {
-                            clue.matches(identity) && is_playable_now(view, identity)
+                            super::physical_clue_matches(view, clue.into(), identity)
+                                && is_playable_now(view, identity)
                         })
                 });
                 Some(ClueProposal::new(
@@ -1123,7 +1122,11 @@ pub(super) fn advanced_clue_candidates(
     let promptable = replay.promptable();
     let previously_fixed = replay.cards.facts.fixed_cards();
     let mut candidates = Vec::new();
-    for action in view.legal_actions() {
+    for action in view
+        .legal_physical_actions()
+        .into_iter()
+        .filter_map(|action| Action::try_from(action).ok())
+    {
         let Action::Clue { target, clue } = action else {
             continue;
         };
@@ -1131,7 +1134,11 @@ pub(super) fn advanced_clue_candidates(
         let layout = &replay.hands[target.index()];
         let touched = hand
             .iter()
-            .filter(|card| card.identity.is_some_and(|identity| clue.matches(identity)))
+            .filter(|card| {
+                card.identity.is_some_and(|identity| {
+                    super::physical_clue_matches(view, clue.into(), identity)
+                })
+            })
             .map(|card| card.id)
             .collect::<Vec<_>>();
         if touched.is_empty() {
@@ -1152,14 +1159,14 @@ pub(super) fn advanced_clue_candidates(
                 replay.pending_connections.iter().any(|connection| {
                     connection.actor == target
                         && connection.cards.contains(card)
-                        && clue.matches(connection.expected)
+                        && super::physical_clue_matches(view, clue.into(), connection.expected)
                 })
             })
             && touched.iter().any(|card| {
                 replay.pending_connections.iter().any(|connection| {
                     connection.actor == target
                         && connection.cards.contains(card)
-                        && clue.matches(connection.expected)
+                        && super::physical_clue_matches(view, clue.into(), connection.expected)
                         && replay.pending_connections.is_active(connection)
                 })
             });
@@ -1184,9 +1191,9 @@ pub(super) fn advanced_clue_candidates(
                 .find(|candidate| candidate.id == card)
                 .is_some_and(|card| {
                     let mut facts = card.clues;
-                    facts.add_positive_clue(clue);
-                    IdentitySet::from_mask(facts.identity_mask())
-                        .iter()
+                    facts.record_physical(clue.into(), true);
+                    IdentitySet::from_bits(facts.identity_mask_in(&view.variant))
+                        .iter_in(view.variant.identities())
                         .all(|identity| card_is_trash(view, identity))
                 })
         });
@@ -1216,7 +1223,11 @@ pub(super) fn advanced_clue_candidates(
                             && promptable.contains(&card.id)
                             && (card.identity == Some(identity)
                                 || convention_cards.iter().any(|note| {
-                                    note.card == card.id && note.identities.contains(identity)
+                                    note.card == card.id
+                                        && !note
+                                            .identities
+                                            .intersection(connection_domain(view, identity))
+                                            .is_empty()
                                 }))
                     })
             });
@@ -1224,6 +1235,7 @@ pub(super) fn advanced_clue_candidates(
             .then(|| five_pulled_card(layout, &touched, gotten))
             .flatten();
         let five_tech_kind = five_pulled
+            .filter(|_| rule_enabled(profile, HGroupRuleId::FiveTech))
             .and_then(|card| identity_of(view, card))
             .and_then(|identity| {
                 let height = view.play_stacks[identity.suit.index()].len();
@@ -1259,7 +1271,7 @@ pub(super) fn advanced_clue_candidates(
                         !card.identities.is_empty()
                             && card
                                 .identities
-                                .iter()
+                                .iter_in(view.variant.identities())
                                 .all(|identity| is_playable_now(view, identity))
                     })
                     .map(|card| card.card)
@@ -1322,7 +1334,7 @@ pub(super) fn advanced_clue_candidates(
         let fills_in = touched.iter().copied().any(|card| {
             hand.iter()
                 .find(|candidate| candidate.id == card)
-                .is_some_and(|card| !card.clues.has_positive_clue(clue))
+                .is_some_and(|card| !card.clues.has_positive_physical_clue(clue.into()))
         });
         let false_two_save_on_five = clue == Clue::Rank(Rank::Five)
             && touched
@@ -1330,19 +1342,23 @@ pub(super) fn advanced_clue_candidates(
                 .all(|card| replay.cards.explicitly_clued.contains(card))
             && chop(layout, gotten).is_some_and(|target_chop| {
                 let saved_twos = replay.clues.iter().rev().find_map(|interpretation| {
-                    let twos = IdentitySet::from_mask(
+                    let twos = IdentitySet::from_bits(
                         interpretation
                             .save_identities
-                            .iter()
-                            .filter(|identity| {
-                                identity.rank == Rank::Two && is_eventually_useful(view, *identity)
+                            .iter_ids()
+                            .filter(|id| {
+                                let identity = super::identity::connection_card(view, *id);
+                                identity.rank == Rank::Two && is_eventually_useful(view, identity)
                             })
-                            .fold(0, |mask, identity| mask | (1 << identity.index())),
+                            .fold(0, |mask, id| mask | (1 << id.index())),
                     );
                     (!twos.is_empty() && !layout.contains(&interpretation.focus)).then_some(twos)
                 });
                 saved_twos.is_some_and(|twos| {
-                    identity_of(view, target_chop).is_none_or(|actual| !twos.contains(actual))
+                    identity_of(view, target_chop).is_none_or(|actual| {
+                        twos.intersection(connection_domain(view, actual))
+                            .is_empty()
+                    })
                 })
             });
         if false_two_save_on_five {
@@ -1955,14 +1971,17 @@ pub(super) fn advanced_clue_candidates(
                     .find(|note| note.card == *card)
                     .is_some_and(|note| {
                         !note.identities.is_empty()
-                            && note.identities.iter().all(|identity| {
-                                is_convention_trash(
-                                    view,
-                                    identity,
-                                    &clued_or_promised,
-                                    convention_cards,
-                                )
-                            })
+                            && note
+                                .identities
+                                .iter_in(view.variant.identities())
+                                .all(|identity| {
+                                    is_convention_trash(
+                                        view,
+                                        identity,
+                                        &clued_or_promised,
+                                        convention_cards,
+                                    )
+                                })
                     })
             });
             let target_distance = (target.index() + view.hands.len() - view.current_player.index())
@@ -3160,20 +3179,28 @@ pub(super) fn tempo_clue_candidates(
 ) -> Vec<ClueProposal> {
     let mut candidates = Vec::new();
     let promptable = replay.promptable();
-    for action in view.legal_actions() {
+    for action in view
+        .legal_physical_actions()
+        .into_iter()
+        .filter_map(|action| Action::try_from(action).ok())
+    {
         let Action::Clue { target, clue } = action else {
             continue;
         };
         let hand = &view.hands[target.index()];
         let touched = hand
             .iter()
-            .filter(|card| card.identity.is_some_and(|identity| clue.matches(identity)))
+            .filter(|card| {
+                card.identity.is_some_and(|identity| {
+                    super::physical_clue_matches(view, clue.into(), identity)
+                })
+            })
             .map(|card| card.id)
             .collect::<Vec<_>>();
         if touched.iter().all(|card| {
             hand.iter()
                 .find(|candidate| candidate.id == *card)
-                .is_some_and(|card| card.clues.has_positive_clue(clue))
+                .is_some_and(|card| card.clues.has_positive_physical_clue(clue.into()))
         }) {
             continue;
         }

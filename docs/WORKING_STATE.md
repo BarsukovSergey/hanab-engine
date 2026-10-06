@@ -115,6 +115,46 @@ Complete for historical and prospective basic Prompt/Finesse paths:
   progression, hidden information, and lifecycle/provenance retention; existing
   reviewed replay assertions remain the No Variant semantic authority
 
+### M4-V3 - Focus/chop/tempo/stall/discard families
+
+Complete for the requested historical and prospective base semantic slice:
+
+- turn contexts carry active dynamic stack heights before and after each event;
+  the legacy reducer arrays remain available to V4/V5 paths
+- current/eventual/accounted trash, endgame coverage, and prior Play narrowing
+  use active identity IDs, physical copy counts, and variant stack/rank order
+- Trash/5/Order Chop Moves, Tempo/TCCM, Emergency Discards, Positional, and
+  Stalling recognition consume active clue facts and dynamic playability
+- Gentleman/Baton/Sarcastic transfer recognition uses historical visibility and
+  dynamic layer progression; layered Gentleman remains legal and layered Baton
+  remains illegal
+- prospective Tempo/TCCM/TCM/5CM/5 Stall/Fill-In/Burn facts, first-5-stall chop
+  distance, Gentleman candidates, and ordinary convention-trash discards use
+  active physical identities; Burn completion scheduling uses variant progression
+- focused physical/epistemic contracts cover precedence, sixth suits, custom
+  identity and rank order, six-player targeting, hidden-truth independence, and
+  prior Play narrowing; reviewed replay tests remain the semantic authority
+
+Tempo still precedes TCM, 5 Stall still precedes 5CM, and Sarcastic transfers
+still precede Gentleman/Baton. Chop movement remains protection without an
+identity claim or Prompt; Fill-In/Burn/Stall create no ordinary Play promise.
+Rank-1/rank-2/rank-5 convention meanings are unchanged.
+
+Local V3 validation: all 10 `v3_focus_context` contracts, scoped formatting/crate
+check, and `git diff --check` pass. Five of the eight requested reviewed replay
+regressions pass. The other three also fail at the exact starting revision
+`3335caa443bb1dbd016f42bd0ad77d55b6c19daa`:
+
+- `second_replay_order_chop_move_protects_alices_red_two`: OCM protection passes;
+  the later choice assertion selects 2s to Bob instead of purple to Cathy
+- `first_seed_generation_discard_projects_reviewed_direct_green_line`: empty
+  projection at the reviewed-line assertion (5s root on V3, purple root on base)
+- `fifth_replay_burn_preserves_the_final_playing_clock`: the budget-exhausted
+  planner selects discard #35 instead of a clue
+
+Assertions and fixtures remain unchanged. This is a migrated V3 boundary, not
+a fully green replay-validation claim. No full suite or fast validation ran.
+
 ## Current M4 boundaries
 
 Important remaining boundaries:
@@ -151,19 +191,21 @@ acceptance, validation, and pull-request sizing rules.
 
 ## Next slice
 
-M4-V3 - Focus/chop/tempo/stall/discard families.
-
-Migrate those recognition families without changing their convention meanings.
+M4-V4 - Advanced connections and bluffs.
 M4-V4 owns advanced connections and Bluff families, including advanced historical
 Finesse recognition adapters, Elimination, layered/hidden/clandestine/queued
-recognizers, and variant-specific convention families. Their shared basic
+recognizers, Ejection/Discharge, Charm, Five-Tech, and ignition. Their shared basic
 planner now accepts active identities, but their family-specific evidence and
 knowledge paths are not claimed generic.
 
 Legacy reducer stack/count arrays, advanced `Rank::ALL`/`Suit::ALL` loops,
 legacy identity claim masks, and `standard_h_group_clue` remain outside the
 migrated basic connection boundaries. Basic planning receives dynamic public
-snapshots while those advanced recognition interfaces remain standard-only.
+snapshots, and V3 turn-context recognizers consume dynamic snapshots, while
+those advanced recognition interfaces remain standard-only. Special Finesse
+discard evidence also remains an advanced boundary.
 The global No Variant policy gate stays until the remaining M4 slices are ready.
 Pink Promise, Black clue-choice rules, and other variant convention packs remain
-outside this base semantic slice.
+M4-V6 work, along with production enablement and resolution of the retained
+legacy action/clue-label boundary. No Brown/Omni/Null/Pink-specific convention
+meanings are introduced by V3.
