@@ -86,7 +86,7 @@ acquire_check_lock() {
       return 1
     fi
   fi
-  printf '%s\n' "$" > "$check_lock_dir/pid"
+  printf '%s\n' "$BASHPID" > "$check_lock_dir/pid"
 }
 
 release_check_lock() {
