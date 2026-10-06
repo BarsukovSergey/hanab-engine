@@ -20,9 +20,9 @@ The independent knowledge rebuild remains intentional and must not be cached
 away: it verifies the compiler result.
 
 General validation scope, cross-platform helper behavior, CI coverage, and
-workflow/failure recording are documented in
-[validation.md](validation.md). This document stays focused on test provenance,
-replay-specific diagnostics, and coverage boundaries.
+workflow/failure recording are documented in [validation.md](validation.md).
+This document stays focused on test provenance, replay-specific diagnostics, and
+coverage boundaries.
 
 ## Replay diagnostics and expensive checks
 
