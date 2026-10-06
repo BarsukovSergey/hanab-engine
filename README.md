@@ -46,6 +46,7 @@ npm ci
 python3 -m venv .venv
 ```
 
+On Windows, use `python -m venv .venv` if `python3` is not available.
 Then install `scripts/requirements-dev.txt` with the venv Python:
 `.venv/bin/python` on POSIX or `.venv/Scripts/python.exe` on Windows.
 
