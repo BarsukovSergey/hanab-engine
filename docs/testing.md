@@ -40,8 +40,8 @@ For a scoped Rust fix or semantic slice, use
 when one focused Cargo test invocation covers the changed behavior. The helper
 reuses the primary worktree Cargo target cache, runs the optional focused tests,
 then Rust formatting and a normal crate check. Run additional focused tests
-separately when needed. Do not routinely add strict Clippy, `--all-targets`,
-the CI search-contract matrix, broad H-Group regressions, or
+separately when needed. Do not routinely add strict Clippy, `--all-targets`, the
+CI search-contract matrix, broad H-Group regressions, or
 `scripts/check.sh --fast`; PR CI owns those broader gates unless the task
 specifically targets them or focused compilation exposes cross-cutting fallout.
 
