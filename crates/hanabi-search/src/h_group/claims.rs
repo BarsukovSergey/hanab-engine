@@ -1,4 +1,4 @@
-use hanabi_core::{Card, CardId, PlayerView};
+use hanabi_core::{Card, CardId, PlayerView, VariantSpec};
 
 use super::{
     CardSet, ClueFacts, ConnectionManager, ConventionFacts, HGroupClueInterpretation, HGroupState,
@@ -69,6 +69,7 @@ impl<'a> IdentityClaims<'a> {
 /// boundary accepts the canonical components directly.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn claimed_identities_at_clue(
+    variant: &VariantSpec,
     focus: CardId,
     hands: &[Vec<CardId>],
     historical: &HistoricalView<'_>,
@@ -95,10 +96,12 @@ pub(super) fn claimed_identities_at_clue(
             // source, but never simulator-only truth.
             let identity = historical
                 .identity(card)
+                .and_then(|identity| variant.identities().id_for(identity.suit, identity.rank))
                 .or_else(|| {
-                    let logical = IdentitySet::from_mask(clue_facts[card.index()].identity_mask());
+                    let logical =
+                        IdentitySet::from_bits(clue_facts[card.index()].identity_mask_in(variant));
                     (logical.len() == 1)
-                        .then(|| logical.iter().next())
+                        .then(|| logical.iter_ids().next())
                         .flatten()
                 })
                 .or_else(|| {
@@ -107,11 +110,11 @@ pub(super) fn claimed_identities_at_clue(
                     // protection, not an assertion that another clue cannot
                     // retain the same identity in a Play/Save superposition.
                     (prior.play_identities.len() == 1)
-                        .then(|| prior.play_identities.iter().next())
+                        .then(|| prior.play_identities.iter_ids().next())
                         .flatten()
                 });
             identity.map_or(claimed, |identity| {
-                claimed.union(IdentitySet::singleton(identity))
+                claimed.union(IdentitySet::singleton_id(identity))
             })
         });
     pending.iter().fold(claimed, |claimed, connection| {
@@ -120,7 +123,10 @@ pub(super) fn claimed_identities_at_clue(
             .first()
             .filter(|card| **card != focus && live_cards.contains(card))
             .map_or(claimed, |_| {
-                claimed.union(IdentitySet::singleton(connection.expected))
+                variant
+                    .identities()
+                    .id_for(connection.expected.suit, connection.expected.rank)
+                    .map_or(claimed, |id| claimed.union(IdentitySet::singleton_id(id)))
             })
     })
 }

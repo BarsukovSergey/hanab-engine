@@ -374,20 +374,24 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
                     .fold(0, |mask, identity| mask | (1 << identity.index())),
             );
             let view = self.deductions.view();
-            let mut discarded = [0; 25];
+            let mut discarded = vec![0; view.variant.identities().identities().len()];
             for (_, identity) in &view.discard_pile {
-                discarded[identity.index()] += 1;
+                let id = view
+                    .variant
+                    .identities()
+                    .id_for(identity.suit, identity.rank)
+                    .unwrap();
+                discarded[id.index()] += 1;
             }
+            let heights = view.play_stacks.iter().map(Vec::len).collect::<Vec<_>>();
             let identities = snapshot_good_touch_identities(
                 clue.focus,
                 identities,
                 view,
                 &self.replay.hands,
                 &self.replay.cards.explicitly_clued,
-                std::array::from_fn(|suit| {
-                    u8::try_from(view.play_stacks[suit].len()).expect("standard stack")
-                }),
-                discarded,
+                &heights,
+                &discarded,
             );
             if !identities.is_empty() {
                 self.knowledge.update(
@@ -1936,37 +1940,54 @@ pub(in crate::h_group) fn snapshot_save_identities(
     .save_identities
 }
 
+/// Useful identities with every missing predecessor physically available.
+/// Heights count completed ranks; counts use the active universe's ID order.
+/// Exact duplicates require a live gotten card and observer-visible identity.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::h_group) fn snapshot_good_touch_identities(
+pub(in crate::h_group) fn snapshot_good_touch_identities<C>(
     card: CardId,
     identities: IdentitySet,
-    view: &PlayerView,
+    view: &PlayerView<C>,
     hands: &[Vec<CardId>],
     gotten: &CardSet,
-    stack_heights: [u8; 5],
-    discarded: [u8; 25],
+    stack_heights: &[usize],
+    discarded: &[usize],
 ) -> IdentitySet {
-    let mask = identities
-        .iter()
-        .filter(|identity| {
-            let rank = identity.rank.number();
-            rank > stack_heights[identity.suit.index()]
-                && Rank::ALL
+    let variant = &view.variant;
+    identities
+        .iter_ids()
+        .filter(|id| {
+            let identity = variant.identities().get(*id).expect("active identity");
+            let suit = variant
+                .stack_suits()
+                .iter()
+                .position(|suit| *suit == identity.suit)
+                .expect("active suit");
+            let rank = variant
+                .card_ranks()
+                .iter()
+                .position(|rank| *rank == identity.rank)
+                .expect("active rank");
+            rank >= stack_heights[suit]
+                && variant.card_ranks()[stack_heights[suit]..rank]
                     .iter()
-                    .copied()
-                    .filter(|lower| {
-                        lower.number() > stack_heights[identity.suit.index()]
-                            && lower.number() < rank
-                    })
                     .all(|lower| {
-                        discarded[Card::new(identity.suit, lower).index()] < lower.copies()
+                        let lower = variant
+                            .identities()
+                            .id_for(identity.suit, *lower)
+                            .expect("active lower identity");
+                        discarded[lower.index()]
+                            < usize::from(variant.copies(lower).expect("active copies"))
                     })
                 && !hands.iter().flatten().copied().any(|candidate| {
                     candidate != card
                         && gotten.contains(&candidate)
-                        && identity_of(view, candidate) == Some(*identity)
+                        && identity_of(view, candidate).and_then(|visible| {
+                            variant.identities().id_for(visible.suit, visible.rank)
+                        }) == Some(*id)
                 })
         })
-        .fold(0, |mask, identity| mask | (1 << identity.index()));
-    IdentitySet::from_mask(mask)
+        .fold(IdentitySet::default(), |set, id| {
+            set.union(IdentitySet::singleton_id(id))
+        })
 }

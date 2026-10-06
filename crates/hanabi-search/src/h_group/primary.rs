@@ -1,4 +1,4 @@
-use hanabi_core::{Card, CardId, Clue, ClueFacts, GenericClue, Rank, VariantSpec};
+use hanabi_core::{Card, CardId, ClueFacts, GenericClue, Rank, VariantSpec};
 
 use super::{HGroupClueInterpretation, HGroupClueKind, HGroupSaveKind, IdentitySet};
 
@@ -136,7 +136,7 @@ pub(super) struct PrimaryClueInputs<'a> {
     pub(super) variant: &'a VariantSpec,
     pub(super) play_identities: IdentitySet,
     pub(super) save_identities: IdentitySet,
-    pub(super) stack_heights: [u8; 5],
+    pub(super) stack_heights: &'a [usize],
     pub(super) eight_clue_save: bool,
     /// Ordered highest-to-lowest precedence overrides that apply to this
     /// clue. An array keeps the hot path allocation-free while avoiding an
@@ -267,52 +267,43 @@ impl ClueInterpretationPlan {
         plan
     }
 
-    /// Base Level 1 primary meaning composed from the physical Play and Save
-    /// kernels. Contextual overrides and replay integration remain deferred.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn direct_level_one(inputs: SaveClueInputs<'_>) -> Self {
-        let play = Self::direct_play(
-            inputs.variant,
-            inputs.stack_heights,
-            inputs.clue,
-            inputs.focus_identities,
-        );
-        let save = Self::direct_save(inputs);
-        let play_identities = play.play_identities.without(save.save_identities);
-        let kind = match (play_identities.is_empty(), save.save_identities.is_empty()) {
-            (true, true) => HGroupClueKind::Unrecognized,
-            (false, true) => HGroupClueKind::Play,
-            (true, false) => save.kind,
-            (false, false) => HGroupClueKind::PlayOrSave,
-        };
-        Self {
-            kind,
-            play_identities,
-            save_identities: save.save_identities,
-            suppression: None,
-        }
-    }
-
     pub(super) fn resolve(inputs: PrimaryClueInputs<'_>) -> Self {
-        let clue = super::standard_h_group_clue(inputs.variant, inputs.clue);
+        let clue = inputs.clue;
         // Rank 2/5 saves and non-playable critical saves take precedence over
         // a hypothetical play reading. This preserves explicit Play-or-Save
         // superpositions only where neither branch outranks the other.
-        let save_precedence = IdentitySet::from_mask(
-            inputs
-                .save_identities
-                .iter()
-                .filter(|identity| {
-                    inputs.eight_clue_save
-                        || matches!(
-                            (clue, identity.rank),
-                            (Clue::Rank(Rank::Two), Rank::Two)
-                                | (Clue::Rank(Rank::Five), Rank::Five)
-                        )
-                        || identity.rank.number() > inputs.stack_heights[identity.suit.index()] + 1
-                })
-                .fold(0, |mask, identity| mask | (1 << identity.index())),
-        );
+        let save_precedence = inputs
+            .save_identities
+            .iter_ids()
+            .filter(|id| {
+                let identity = inputs
+                    .variant
+                    .identities()
+                    .get(*id)
+                    .expect("active identity");
+                let suit = inputs
+                    .variant
+                    .stack_suits()
+                    .iter()
+                    .position(|suit| *suit == identity.suit)
+                    .expect("active suit");
+                let rank = inputs
+                    .variant
+                    .card_ranks()
+                    .iter()
+                    .position(|rank| *rank == identity.rank)
+                    .expect("active rank");
+                let explicit_rank_save = matches!(
+                    clue,
+                    GenericClue::Rank(clue_rank)
+                        if matches!(identity.rank.number(), 2 | 5)
+                            && clue_rank.value() == identity.rank.number()
+                );
+                inputs.eight_clue_save || explicit_rank_save || rank > inputs.stack_heights[suit]
+            })
+            .fold(IdentitySet::default(), |set, id| {
+                set.union(IdentitySet::singleton_id(id))
+            });
         let mut play_identities = inputs.play_identities.without(save_precedence);
         let suppression = inputs.suppressions.into_iter().flatten().next();
         let kind = if suppression.is_some() {
@@ -332,14 +323,20 @@ impl ClueInterpretationPlan {
     }
 }
 
-fn kind_from_masks(clue: Clue, play: IdentitySet, save: IdentitySet) -> HGroupClueKind {
+fn kind_from_masks(clue: GenericClue, play: IdentitySet, save: IdentitySet) -> HGroupClueKind {
     match (play.is_empty(), save.is_empty()) {
         (false, false) => HGroupClueKind::PlayOrSave,
         (false, true) => HGroupClueKind::Play,
         (true, false) => match clue {
-            Clue::Rank(Rank::Five) => HGroupClueKind::Save(HGroupSaveKind::Five),
-            Clue::Rank(Rank::Two) => HGroupClueKind::Save(HGroupSaveKind::Two),
-            Clue::Suit(_) | Clue::Rank(_) => HGroupClueKind::Save(HGroupSaveKind::Critical),
+            GenericClue::Rank(rank) if rank.value() == 5 => {
+                HGroupClueKind::Save(HGroupSaveKind::Five)
+            }
+            GenericClue::Rank(rank) if rank.value() == 2 => {
+                HGroupClueKind::Save(HGroupSaveKind::Two)
+            }
+            GenericClue::Color(_) | GenericClue::Rank(_) => {
+                HGroupClueKind::Save(HGroupSaveKind::Critical)
+            }
         },
         (true, true) => HGroupClueKind::Unrecognized,
     }
@@ -347,7 +344,7 @@ fn kind_from_masks(clue: Clue, play: IdentitySet, save: IdentitySet) -> HGroupCl
 
 #[cfg(test)]
 mod tests {
-    use hanabi_core::{Card, Suit};
+    use hanabi_core::{Card, Clue, Suit};
 
     use super::*;
 
@@ -366,7 +363,7 @@ mod tests {
 
     #[test]
     #[allow(clippy::too_many_lines)]
-    fn direct_level_one_composes_base_play_and_save_with_save_precedence() {
+    fn primary_resolution_composes_base_play_and_save_with_save_precedence() {
         let standard = VariantSpec::no_variant();
         let rainbow = VariantSpec::from_catalog(hanabi_core::VariantId::Rainbow6Suits);
         let rank = |value| GenericClue::Rank(hanabi_core::ClueRank::new(value));
@@ -459,7 +456,7 @@ mod tests {
             for id in critical.iter_ids() {
                 discards[id.index()] = usize::from(variant.copies(id).unwrap()) - 1;
             }
-            let plan = ClueInterpretationPlan::direct_level_one(SaveClueInputs {
+            let save_plan = ClueInterpretationPlan::direct_save(SaveClueInputs {
                 clue,
                 variant,
                 focus_identities: focus,
@@ -470,10 +467,74 @@ mod tests {
                 two_save_visible_other_chop_counts: &visible,
                 critical_visible_other_counts: &visible,
             });
+            let play_plan = ClueInterpretationPlan::direct_play(variant, &heights, clue, focus);
+            let plan = ClueInterpretationPlan::resolve(PrimaryClueInputs {
+                clue,
+                variant,
+                play_identities: play_plan.play_identities,
+                save_identities: save_plan.save_identities,
+                stack_heights: &heights,
+                eight_clue_save: false,
+                suppressions: [None; 7],
+            });
             assert_eq!(plan.kind, kind, "{name}");
             assert_eq!(plan.play_identities, play, "{name}");
             assert_eq!(plan.save_identities, save, "{name}");
             assert_eq!(plan.suppression, None, "{name}");
+        }
+    }
+
+    #[test]
+    fn primary_resolution_preserves_generic_delayed_play_and_contextual_precedence() {
+        let variant = VariantSpec::from_catalog(hanabi_core::VariantId::Black6Suits);
+        let three = physical_identity(&variant, 5, 3);
+        let four = physical_identity(&variant, 5, 4);
+        // Replay may supply a delayed connection identity, not just direct_play.
+        let inputs = PrimaryClueInputs {
+            clue: GenericClue::Color(hanabi_core::ClueColorId::new(5)),
+            variant: &variant,
+            play_identities: three.union(four),
+            save_identities: three,
+            stack_heights: &[0; 6],
+            eight_clue_save: false,
+            suppressions: [None; 7],
+        };
+        let plan = ClueInterpretationPlan::resolve(inputs);
+        assert_eq!(plan.kind, HGroupClueKind::PlayOrSave);
+        assert_eq!(plan.play_identities, four);
+        assert_eq!(plan.save_identities, three);
+        let critical = ClueInterpretationPlan::resolve(PrimaryClueInputs {
+            play_identities: three,
+            ..inputs
+        });
+        assert_eq!(
+            critical.kind,
+            HGroupClueKind::Save(HGroupSaveKind::Critical)
+        );
+        assert!(critical.play_identities.is_empty());
+        let eight = ClueInterpretationPlan::resolve(PrimaryClueInputs {
+            eight_clue_save: true,
+            ..inputs
+        });
+        assert_eq!(eight.kind, HGroupClueKind::Save(HGroupSaveKind::EightClue));
+        assert_eq!(eight.play_identities, four);
+        for suppression in [
+            PrimarySuppression::Fix,
+            PrimarySuppression::FiveChopMove,
+            PrimarySuppression::LowScoreFive,
+            PrimarySuppression::EarlyFiveStall,
+            PrimarySuppression::EightClueFiveStall,
+            PrimarySuppression::NoInformationReclue,
+            PrimarySuppression::AlreadyPlayingReclue,
+        ] {
+            let suppressed = ClueInterpretationPlan::resolve(PrimaryClueInputs {
+                suppressions: [Some(suppression); 7],
+                ..inputs
+            });
+            assert_eq!(suppressed.kind, HGroupClueKind::Unrecognized);
+            assert!(suppressed.play_identities.is_empty());
+            assert_eq!(suppressed.save_identities, three);
+            assert_eq!(suppressed.suppression, Some(suppression));
         }
     }
 
@@ -772,7 +833,7 @@ mod tests {
             variant: &VariantSpec::no_variant(),
             play_identities: identity(Suit::Red, Rank::Five),
             save_identities: IdentitySet::default(),
-            stack_heights: [4; 5],
+            stack_heights: &[4; 5],
             eight_clue_save: false,
             suppressions: [
                 None,
@@ -797,7 +858,7 @@ mod tests {
             variant: &VariantSpec::no_variant(),
             play_identities: red_two,
             save_identities: red_two,
-            stack_heights: [1, 0, 0, 0, 0],
+            stack_heights: &[1, 0, 0, 0, 0],
             eight_clue_save: false,
             suppressions: [None; 7],
         });

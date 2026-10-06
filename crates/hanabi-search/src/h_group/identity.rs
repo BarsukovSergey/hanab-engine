@@ -4,7 +4,7 @@ use super::{CardSet, ConventionFacts, HGroupCardInference};
 
 /// Identity visible in the source view at its current turn. Historical rule
 /// interpretation must use `HistoricalView` instead.
-pub(super) fn identity_of(view: &PlayerView, card: CardId) -> Option<Card> {
+pub(super) fn identity_of<C>(view: &PlayerView<C>, card: CardId) -> Option<Card> {
     view.hands
         .iter()
         .flatten()
