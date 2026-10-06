@@ -1,4 +1,4 @@
-# Bootstrap/provenance prose is maintained manually.
+# Long-form project/provenance prose is maintained manually.
 README.md
 UPSTREAM.md
 SOURCES.md
@@ -6,3 +6,4 @@ docs/M1_BASELINE.md
 docs/REPOSITORY_STRATEGY.md
 docs/WORKING_STATE.md
 docs/M1_ACCEPTANCE.md
+docs/M4_VERTICAL_EXECUTION_PLAN.md
