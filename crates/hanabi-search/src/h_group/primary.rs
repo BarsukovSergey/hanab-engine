@@ -156,6 +156,35 @@ pub(super) struct ClueInterpretationPlan {
 }
 
 impl ClueInterpretationPlan {
+    /// Immediate Level 1 Play possibilities only. The domain and stack heights
+    /// must belong to the active variant; heights count completed stack ranks.
+    /// Save precedence, suppressions, and delayed connections are resolved by
+    /// the standard replay path, not by this physical semantic kernel.
+    pub(super) fn direct_play(
+        variant: &VariantSpec,
+        stack_heights: &[usize],
+        clue: GenericClue,
+        focus_identities: IdentitySet,
+    ) -> Self {
+        let play_identities = focus_identities
+            .filter_clue(variant, clue, true)
+            .iter_ids()
+            .filter(|identity| variant.playable(stack_heights, *identity))
+            .fold(IdentitySet::default(), |set, identity| {
+                set.union(IdentitySet::singleton_id(identity))
+            });
+        Self {
+            kind: if play_identities.is_empty() {
+                HGroupClueKind::Unrecognized
+            } else {
+                HGroupClueKind::Play
+            },
+            play_identities,
+            save_identities: IdentitySet::default(),
+            suppression: None,
+        }
+    }
+
     pub(super) fn resolve(inputs: PrimaryClueInputs<'_>) -> Self {
         let clue = super::standard_h_group_clue(inputs.variant, inputs.clue);
         // Rank 2/5 saves and non-playable critical saves take precedence over
@@ -216,6 +245,115 @@ mod tests {
 
     fn identity(suit: Suit, rank: Rank) -> IdentitySet {
         IdentitySet::singleton(Card::new(suit, rank))
+    }
+
+    fn physical_identity(variant: &VariantSpec, suit: u8, rank: u8) -> IdentitySet {
+        IdentitySet::singleton_id(
+            variant
+                .identities()
+                .id_for(Suit::new(suit), Rank::new(rank))
+                .unwrap(),
+        )
+    }
+
+    #[test]
+    fn direct_play_supports_a_sixth_suit_outside_standard_identities() {
+        let variant = VariantSpec::from_catalog(hanabi_core::VariantId::Black6Suits);
+        let focus = physical_identity(&variant, 5, 2);
+        assert!(focus.iter_ids().next().unwrap().value() >= 25);
+        let plan = ClueInterpretationPlan::direct_play(
+            &variant,
+            &[0, 0, 0, 0, 0, 1],
+            GenericClue::Color(hanabi_core::ClueColorId::new(5)),
+            focus,
+        );
+        assert_eq!(plan.kind, HGroupClueKind::Play);
+        assert_eq!(plan.play_identities, focus);
+        assert!(plan.save_identities.is_empty());
+        assert_eq!(plan.suppression, None);
+    }
+
+    #[test]
+    fn direct_play_rainbow_uses_physical_color_touching_and_focus_domain() {
+        let variant = VariantSpec::from_catalog(hanabi_core::VariantId::Rainbow6Suits);
+        let rainbow = physical_identity(&variant, 5, 1);
+        let red = physical_identity(&variant, 0, 1);
+        let blue = physical_identity(&variant, 3, 1);
+        let focus = rainbow.union(red).union(blue);
+        for color in variant.clue_colors() {
+            let clue = GenericClue::Color(*color);
+            assert!(variant.touches(rainbow.iter_ids().next().unwrap(), clue));
+            let plan = ClueInterpretationPlan::direct_play(&variant, &[0; 6], clue, focus);
+            let expected = match color.value() {
+                0 => rainbow.union(red),
+                3 => rainbow.union(blue),
+                _ => rainbow,
+            };
+            assert_eq!(plan.kind, HGroupClueKind::Play);
+            assert_eq!(plan.play_identities, expected);
+        }
+    }
+
+    #[test]
+    fn direct_play_excludes_touched_nonplayable_and_untouched_playable_identities() {
+        let variant = VariantSpec::from_catalog(hanabi_core::VariantId::Rainbow6Suits);
+        let rainbow_two = physical_identity(&variant, 5, 2);
+        let blue_one = physical_identity(&variant, 3, 1);
+        let clue = GenericClue::Color(hanabi_core::ClueColorId::new(0));
+        assert!(variant.touches(rainbow_two.iter_ids().next().unwrap(), clue));
+        for focus in [
+            rainbow_two,
+            rainbow_two.union(blue_one),
+            IdentitySet::default(),
+        ] {
+            let plan = ClueInterpretationPlan::direct_play(&variant, &[0; 6], clue, focus);
+            assert_eq!(plan.kind, HGroupClueKind::Unrecognized);
+            assert!(plan.play_identities.is_empty());
+        }
+        // A completed touched identity cannot promise another immediate play.
+        let plan =
+            ClueInterpretationPlan::direct_play(&variant, &[0, 0, 0, 0, 0, 2], clue, rainbow_two);
+        assert_eq!(plan.kind, HGroupClueKind::Unrecognized);
+        assert!(plan.play_identities.is_empty());
+    }
+
+    #[test]
+    fn direct_play_preserves_no_variant_color_and_rank_parity() {
+        let variant = VariantSpec::no_variant();
+        for stacks in [[0; 5], [1, 2, 3, 4, 5], [5; 5]] {
+            for clue in Suit::ALL
+                .into_iter()
+                .map(Clue::Suit)
+                .chain(Rank::ALL.into_iter().map(Clue::Rank))
+            {
+                for focus in [IdentitySet::all(), identity(Suit::Red, Rank::Two)] {
+                    let expected = IdentitySet::from_mask(
+                        focus
+                            .iter()
+                            .filter(|card| {
+                                clue.matches(*card)
+                                    && card.rank.number() == stacks[card.suit.index()] + 1
+                            })
+                            .fold(0, |mask, card| mask | (1 << card.index())),
+                    );
+                    let plan = ClueInterpretationPlan::direct_play(
+                        &variant,
+                        &stacks.map(usize::from),
+                        GenericClue::from(clue),
+                        focus,
+                    );
+                    assert_eq!(plan.play_identities, expected);
+                    assert_eq!(
+                        plan.kind,
+                        if expected.is_empty() {
+                            HGroupClueKind::Unrecognized
+                        } else {
+                            HGroupClueKind::Play
+                        }
+                    );
+                }
+            }
+        }
     }
 
     #[test]
