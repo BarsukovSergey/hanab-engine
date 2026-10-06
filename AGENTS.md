@@ -12,19 +12,26 @@ Optimize for short, evidence-backed interactive turns. Full validation is a
 checkpoint, not an automatic tax on every prompt. Preserve all tests and their
 assertions; change when they run, not their strength.
 
-| Change                                        | Local validation before responding                                                     |
-| --------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Discussion / diagnosis                        | Relevant read-only inspection; no full suite                                           |
-| Documentation                                 | Formatting and any affected examples/scripts                                           |
-| Fixture edit                                  | Parse and replay legality; inspect/test the affected position                          |
-| Localized convention fix                      | Reproduce the failure; focused regression and related tests; `scripts/check.sh --fast` |
-| Shared inference/planner refactor             | Focused checks first; one full `scripts/check.sh` after implementation settles         |
-| Milestone or explicit full-validation request | Full `scripts/check.sh`                                                                |
+| Change                                        | Local validation before responding                                                        |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Discussion / diagnosis                        | Relevant read-only inspection; no full suite                                              |
+| Documentation                                 | Formatting and any affected examples/scripts                                              |
+| Fixture edit                                  | Parse and replay legality; inspect/test the affected position                             |
+| Scoped Rust / localized convention change     | Changed/focused tests; `cargo fmt --all -- --check`; normal `cargo check -p <crate> --locked` |
+| Shared inference/replay/planner refactor      | Focused checks first; `scripts/check.sh --fast` after implementation settles             |
+| Milestone or explicit full-validation request | Full `scripts/check.sh`                                                                   |
+
+For a scoped Rust change, do not add local strict Clippy, `--all-targets`,
+the CI search-contract matrix, broad H-Group regressions, or `check.sh --fast`
+by default. Those are CI/broader-refactor gates unless the change specifically
+targets them or focused compilation reveals API fallout that requires them.
+Task prompts should not widen this default without a concrete risk that the
+extra check addresses.
 
 `--fast` retains build, lint, documentation, Python, and dead-code checks but
-omits the expensive ordinary Rust suite. Run relevant Rust tests separately. Run
-inexpensive formatting/Clippy before launching broad tests. A failing focused
-test is a reason to keep debugging, not to start full validation.
+omits the expensive ordinary Rust suite. It is for shared inference/replay/planner
+changes, not every small semantic slice. Run relevant Rust tests separately. A
+failing focused test is a reason to keep debugging, not to start broad validation.
 
 PR CI is a targeted gate: formatting/build/Clippy/docs, MSRV, core/protocol
 tests, a small green hanabi-search contract suite, Python live-bridge checks,
@@ -35,6 +42,13 @@ suite. `scripts/check.sh` remains the full local validation checkpoint.
 Do not wait for CI unless requested or necessary for the task. Never describe
 focused/local success or an unobserved CI run as a full pass. Report what ran,
 what was deferred, and any known failures.
+
+If a local Windows/Git Bash Rust check fails before meaningful compilation
+because of a missing linker, runtime path, or equivalent host-toolchain setup,
+make at most one obvious attempt to use the repository's existing configured
+toolchain. Do not install, repair, or repeatedly reconfigure the host toolchain
+for a scoped code task. Record the deferred local check and rely on Linux CI
+for the broader gate.
 
 Do not overlap full validation runs or CPU-heavy benchmarks. For performance
 comparisons, use the same precompiled workload and configuration, run before and
