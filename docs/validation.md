@@ -89,32 +89,22 @@ Do not wait for CI unless requested or necessary for the task. Never describe an
 unobserved CI run as passing, and never describe focused/local success as a full
 pass. Report what actually ran, what was deferred, and any known failures.
 
-## Workflow timing and failure records
-
-Workflow recording is opt-in. Use it for performance work, full-check
-comparison, or long replay investigations, not for ordinary scoped edits. Invoke
-it through the portable Python launcher:
-
-```sh
-bash scripts/run-python.sh scripts/workflow.py start "Fix turn 27 play priority"
-bash scripts/run-python.sh scripts/workflow.py run --label focused -- \
-  cargo test -p hanabi-search fourth_replay_red_one_precedes --lib
-scripts/check.sh --fast
-bash scripts/run-python.sh scripts/workflow.py finish
-bash scripts/run-python.sh scripts/workflow.py report
-```
+## Check records and failure baselines
 
 Both check modes automatically record command output, per-stage timings, exit
 status, commit, and tracked-diff fingerprint under ignored `target/workflow/`.
-Extra commands only need the workflow wrapper when a recorded timing session is
-intentionally active. The records survive prompts but are removed by
-`cargo clean`.
+The records survive prompts but are removed by `cargo clean`.
 
-Use `wait-start` and `wait-end` only for intervals actually spent waiting for
-tools. Do not count editing or investigation while a command runs as waiting.
-The report separates session elapsed time, the union of command intervals,
-explicitly recorded waiting, and full-run count. These quantities overlap and
-must not be added together. Zero recorded wait does not prove there was no wait.
+For an ad hoc command where a durable timing/log record is useful, invoke the
+recorder through the portable Python launcher:
+
+```sh
+bash scripts/run-python.sh scripts/workflow.py run --label focused -- \
+  cargo test -p hanabi-search fourth_replay_red_one_precedes --lib
+```
+
+Recording is deliberately command-scoped. There is no task-session or waiting
+state to maintain between commands.
 
 After inspecting a completed full-check log, record a diagnostic failure
 baseline explicitly:
