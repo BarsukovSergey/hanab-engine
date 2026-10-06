@@ -4,6 +4,9 @@ This is the durable milestone sequence. Current implementation details belong in
 [`WORKING_STATE.md`](WORKING_STATE.md); historical architecture decisions belong
 in the focused architecture/review documents.
 
+The current M4 implementation sequence is documented separately in
+[`M4_VERTICAL_EXECUTION_PLAN.md`](M4_VERTICAL_EXECUTION_PLAN.md).
+
 | Milestone | Goal                                  | Status      |
 | --------- | ------------------------------------- | ----------- |
 | M1        | Working hanab.live baseline           | Complete    |
