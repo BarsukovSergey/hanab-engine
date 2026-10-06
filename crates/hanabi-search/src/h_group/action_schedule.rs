@@ -1,4 +1,4 @@
-use hanabi_core::{Card, CardId, Clue, PlayerId, PlayerView, Rank};
+use hanabi_core::{Card, CardId, PlayerId, PlayerView, Rank};
 
 use super::{
     CardSet, HGroupConnection, HGroupMoveKind, HGroupState, IdentityClaims, IdentitySet, PromiseId,
@@ -366,7 +366,7 @@ fn historical_fixes(replay: &HGroupState) -> Vec<(CardId, [u8; 5])> {
 
 fn latest_rank_focus(view: &PlayerView, replay: &HGroupState) -> Option<(CardId, Vec<CardId>)> {
     replay.clues.last().and_then(|clue| {
-        (clue.target == view.observer && matches!(clue.clue, Clue::Rank(rank) if rank != Rank::One))
+        (clue.target == view.observer && matches!(clue.clue, hanabi_core::GenericClue::Rank(rank) if rank.value() != Rank::One.number()))
             .then(|| (clue.focus, clue.touched.clone()))
     })
 }

@@ -265,7 +265,7 @@ pub(super) fn deduce(
             {
                 let chosen = Action::Clue {
                     target: clue.target,
-                    clue: clue.clue,
+                    clue: crate::h_group::standard_h_group_clue(&view.variant, clue.clue),
                 };
                 let Some(before) = HistoricalChoice::new(view, clue.turn, chosen) else {
                     continue;

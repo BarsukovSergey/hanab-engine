@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use hanabi_core::{
-    Action, Card, CardId, Clue, ClueFacts, GameStatus, MAX_CLUE_TOKENS, ObservedCard,
+    Action, Card, CardId, Clue, ClueFacts, GameStatus, GenericClue, MAX_CLUE_TOKENS, ObservedCard,
     ObservedEvent, ObservedHistoryEntry, PlayerId, PlayerView, Rank, Suit,
 };
 
@@ -1153,9 +1153,31 @@ fn was_clued_before(view: &PlayerView, turn: u32, card: CardId) -> bool {
     )
 }
 
-fn was_clued_before_with(view: &PlayerView, turn: u32, card: CardId, clue: Clue) -> bool {
+/// H-Group convention semantics remain No Variant-only. A physical label alone
+/// cannot establish that boundary: callers must supply the active public rules.
+fn standard_h_group_clue(variant: &hanabi_core::VariantSpec, clue: GenericClue) -> Clue {
+    assert_eq!(
+        variant.catalog_id(),
+        Some(hanabi_core::VariantId::NoVariant),
+        "H-Group semantics require No Variant"
+    );
+    Clue::try_from(clue).expect("No Variant H-Group clue must be a standard label")
+}
+
+fn physical_clue_matches(view: &PlayerView, clue: GenericClue, card: Card) -> bool {
+    view.variant
+        .standard_identity_id(card)
+        .is_some_and(|identity| view.variant.touches(identity, clue))
+}
+
+fn was_clued_before_with<C: Copy + Into<GenericClue>>(
+    view: &PlayerView<C>,
+    turn: u32,
+    card: CardId,
+    clue: GenericClue,
+) -> bool {
     view.history.iter().take_while(|entry| entry.turn < turn).any(
-        |entry| matches!(&entry.event, ObservedEvent::Clued { clue: prior, touched, .. } if *prior == clue && touched.contains(&card)),
+        |entry| matches!(&entry.event, ObservedEvent::Clued { clue: prior, touched, .. } if (*prior).into() == clue && touched.contains(&card)),
     )
 }
 
@@ -1299,7 +1321,7 @@ struct ConnectionPlanningContext<'a> {
     giver: PlayerId,
     target: PlayerId,
     focus: CardId,
-    clue: Clue,
+    clue: GenericClue,
     touches: CurrentClueTouches<'a>,
     hands: &'a [Vec<CardId>],
     facts: &'a [ClueFacts],
@@ -1348,7 +1370,7 @@ impl ConnectionPlanningContext<'_> {
             self.giver,
             self.target,
             self.focus,
-            self.clue,
+            standard_h_group_clue(&self.view.variant, self.clue),
             self.touches.0,
             Some(identity),
             self.hands,
@@ -1396,7 +1418,7 @@ impl ConnectionPlanningContext<'_> {
             self.giver,
             self.target,
             self.focus,
-            self.clue,
+            standard_h_group_clue(&self.view.variant, self.clue),
             self.touches.0,
             identity,
             self.hands,

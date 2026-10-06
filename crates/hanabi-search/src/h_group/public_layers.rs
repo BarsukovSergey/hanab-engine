@@ -50,7 +50,8 @@ pub(super) fn demonstrated_hidden_layer(
         return None;
     }
     let mut candidates = clues.iter().enumerate().filter_map(|(clue_index, clue)| {
-        let Clue::Suit(suit) = clue.clue else {
+        let Clue::Suit(suit) = crate::h_group::standard_h_group_clue(&view.variant, clue.clue)
+        else {
             return None;
         };
         let height = clue.stack_heights[suit.index()];

@@ -711,7 +711,8 @@ pub(in crate::h_group) fn apply_charm_effects(
             }) else {
                 return;
             };
-            let Clue::Suit(suit) = prior.clue else {
+            let Clue::Suit(suit) = crate::h_group::standard_h_group_clue(&view.variant, prior.clue)
+            else {
                 return;
             };
             let focus_identity = Card::new(suit, Rank::Four);
@@ -839,7 +840,7 @@ pub(in crate::h_group) fn apply_charm_effects(
                 .union(IdentitySet::all().iter().fold(
                     IdentitySet::default(),
                     |identities, identity| {
-                        if delayed.clue.matches(identity) {
+                        if crate::h_group::physical_clue_matches(view, delayed.clue, identity) {
                             identities.union(IdentitySet::singleton(identity))
                         } else {
                             identities

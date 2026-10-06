@@ -3237,7 +3237,7 @@ pub(super) fn infer_clue_to_self(
         return;
     }
     let view = deductions.view();
-    let demonstrated_ejection = matches!(clue.clue, Clue::Suit(_))
+    let demonstrated_ejection = matches!(clue.clue, hanabi_core::GenericClue::Color(_))
         && !clue.new_non_focus.is_empty()
         && deductions
             .possible_identities(clue.focus)
@@ -3339,7 +3339,7 @@ pub(super) fn infer_clue_to_self(
                     )
             })
         });
-    let completed_good_touch_chain = matches!(clue.clue, Clue::Suit(_))
+    let completed_good_touch_chain = matches!(clue.clue, hanabi_core::GenericClue::Color(_))
         && focus_possibilities.iter().next().is_some_and(|first| {
             focus_possibilities
                 .iter()

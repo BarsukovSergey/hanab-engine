@@ -97,7 +97,7 @@ fn enumerate(
         .iter()
         .filter(|c| {
             c.kind == super::HGroupClueKind::Play
-                && matches!(c.clue, hanabi_core::Clue::Rank(_))
+                && matches!(c.clue, hanabi_core::GenericClue::Rank(_))
                 && c.non_focus_trash_identities.is_empty()
                 && !c.previously_gotten.contains(&c.focus)
         })

@@ -307,11 +307,14 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
             })
         {
             for card in claim.cards.iter().copied() {
-                let is_original_focus = self
-                    .replay
-                    .clues
-                    .iter()
-                    .any(|clue| clue.focus == card && clue.clue.matches(claim.identity));
+                let is_original_focus = self.replay.clues.iter().any(|clue| {
+                    clue.focus == card
+                        && crate::h_group::physical_clue_matches(
+                            self.deductions.view(),
+                            clue.clue,
+                            claim.identity,
+                        )
+                });
                 if !is_original_focus
                     || self
                         .deductions
@@ -361,9 +364,11 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
                 logical
                     .iter()
                     .filter(|identity| {
-                        clue.clue.matches(*identity)
-                            && identity.rank.number()
-                                > clue.stack_heights[identity.suit.index()] + 1
+                        crate::h_group::physical_clue_matches(
+                            self.deductions.view(),
+                            clue.clue,
+                            *identity,
+                        ) && identity.rank.number() > clue.stack_heights[identity.suit.index()] + 1
                     })
                     .fold(0, |mask, identity| mask | (1 << identity.index())),
             );
@@ -689,7 +694,7 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
         for clue in &self.replay.clues {
             if clue.turn + 1 != view.turn
                 || clue.target != view.observer
-                || clue.clue != Clue::Rank(Rank::Three)
+                || clue.clue != hanabi_core::GenericClue::from(Clue::Rank(Rank::Three))
                 || super::super::next_player(clue.giver, view.hands.len()) != view.observer
                 || clue.kind != super::super::HGroupClueKind::Play
                 || clue.focus_identities.is_empty()
@@ -919,7 +924,8 @@ fn compile_convention_card_inferences(
                 })
             })
         };
-        let has_existing_prompt_for_delayed_identity = clue.clue == Clue::Rank(Rank::Two)
+        let has_existing_prompt_for_delayed_identity = clue.clue
+            == hanabi_core::GenericClue::from(Clue::Rank(Rank::Two))
             && clue.play_identities.iter().any(|identity| {
                 let height = usize::from(clue.stack_heights[identity.suit.index()]);
                 let rank = usize::from(identity.rank.number());
@@ -959,7 +965,7 @@ fn compile_convention_card_inferences(
                             .filter(|identity| {
                                 crate::h_group::bluff::bluff_target_kind_at(
                                     clue.stack_heights,
-                                    clue.clue,
+                                    crate::h_group::standard_h_group_clue(&view.variant, clue.clue),
                                     *identity,
                                 )
                                 .is_some()
@@ -1000,7 +1006,7 @@ fn compile_convention_card_inferences(
                         .pending_connections
                         .iter()
                         .any(|connection| connection.focus == clue.focus);
-                    let loaded_color_clue_remains_ambiguous = matches!(clue.clue, Clue::Suit(_))
+                    let loaded_color_clue_remains_ambiguous = matches!(clue.clue, hanabi_core::GenericClue::Color(_))
                         && replay.pending_connections.actor_had_pending_before(
                             clue.target,
                             clue.turn,
@@ -1054,7 +1060,7 @@ fn compile_convention_card_inferences(
                     let direct_interpretation_is_live = !direct_at_clue
                         .intersection(clue.focus_identities)
                         .is_empty();
-                    let provisional_direct = matches!(clue.clue, Clue::Suit(_))
+                    let provisional_direct = matches!(clue.clue, hanabi_core::GenericClue::Color(_))
                         && delayed_plan
                         && !focus_has_active_connection
                         && !delayed_plan_was_demonstrated
@@ -1125,7 +1131,7 @@ fn compile_convention_card_inferences(
                                 })
                         });
                         let queued_interpretation_is_live = has_queued_delayed_identity
-                            && (!matches!(clue.clue, Clue::Suit(_)) || active_focus_connection);
+                            && (!matches!(clue.clue, hanabi_core::GenericClue::Color(_)) || active_focus_connection);
                         let direct_focus_is_live = !direct_at_clue
                             .intersection(clue.focus_identities)
                             .is_empty();
@@ -1176,7 +1182,7 @@ fn compile_convention_card_inferences(
                     // known on another clued card. Owner-visible promises
                     // matter here even though the owner cannot see that card.
                     // https://hanabi.github.io/level-1/#good-touch-principle
-                    if matches!(clue.clue, Clue::Suit(_))
+                    if matches!(clue.clue, hanabi_core::GenericClue::Color(_))
                         && clue.touched.len() > 1
                         && narrowed.len() > 1
                         && !replay
@@ -1191,7 +1197,7 @@ fn compile_convention_card_inferences(
                             narrowed = nonduplicating;
                         }
                     }
-                    if matches!(clue.clue, Clue::Suit(_))
+                    if matches!(clue.clue, hanabi_core::GenericClue::Color(_))
                         && clue.touched.len() > 1
                         && narrowed.len() > 1
                     {
@@ -1243,7 +1249,7 @@ fn compile_convention_card_inferences(
         let intentionally_duplicates = [HGroupMoveKind::FixClue, HGroupMoveKind::Duplication]
             .into_iter()
             .any(|kind| replay.signals.has_at_turn(clue.turn, kind));
-        let clarity_resolved_focus = matches!(clue.clue, Clue::Suit(_))
+        let clarity_resolved_focus = matches!(clue.clue, hanabi_core::GenericClue::Color(_))
             && clue.touched.len() > 1
             && clue.focus_identities.len() > 1;
         let effective_focus_identities = if clarity_resolved_focus || resolved_bluff {

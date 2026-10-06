@@ -107,7 +107,9 @@ fn playable_order_key(context: &PlayableOrderContext<'_>, card: CardId) -> Playa
         .iter()
         .any(|clue| clue.focus == card && clue.focus_was_chop);
     let saved_five_focus = context.inferred.clues.iter().any(|clue| {
-        clue.focus == card && clue.focus_was_chop && clue.clue == Clue::Rank(Rank::Five)
+        clue.focus == card
+            && clue.focus_was_chop
+            && clue.clue == hanabi_core::GenericClue::from(Clue::Rank(Rank::Five))
     });
     let blind = note.is_some_and(|note| note.play_obligation.is_some());
     let accounted_rank_focus = context.inferred.priority_plays.contains(&card);

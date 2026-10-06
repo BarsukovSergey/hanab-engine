@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::hash::{BuildHasherDefault, Hasher};
 
-use hanabi_core::{Card, CardId, Clue, PlayerId};
+use hanabi_core::{Card, CardId, GenericClue, PlayerId};
 
 use crate::IdentitySet;
 
@@ -106,7 +106,8 @@ pub struct HGroupClueInterpretation {
     pub turn: u32,
     pub giver: PlayerId,
     pub target: PlayerId,
-    pub clue: Clue,
+    /// Public physical label; standard-only semantics are adapted at rule edges.
+    pub clue: GenericClue,
     /// Every card physically touched by the clue, including cards that were
     /// already gotten. This preserves causal evidence for later Good Touch
     /// closure without reconstructing it from current hand state.

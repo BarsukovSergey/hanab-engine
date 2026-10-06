@@ -7,8 +7,8 @@ use super::{
     ConnectionPlanningContext, ConnectionTransitionReason, ConventionCardSetSnapshot,
     ConventionCardState, ConventionJournal, ConventionKnowledge, ConventionTransitionDelta,
     ConventionTransitionResult, CurrentClueTouches, DirectPlayDeclines, EffectSource,
-    FixObligations, HGroupClueInterpretation, HGroupClueKind, HGroupConnectionKind, HGroupMoveKind,
-    HGroupProfile, HGroupRuleEffects, HGroupRuleId, HGroupState, HGroupTurnContext,
+    FixObligations, GenericClue, HGroupClueInterpretation, HGroupClueKind, HGroupConnectionKind,
+    HGroupMoveKind, HGroupProfile, HGroupRuleEffects, HGroupRuleId, HGroupState, HGroupTurnContext,
     HGroupTurnSnapshot, HGroupTurnView, HistoricalView, IdentitySet, LogicalDeductions,
     MAX_CLUE_TOKENS, ObservedEvent, ObservedHistoryEntry, PerspectiveDepth, PlayerId, PlayerSet,
     PlayerView, PrimaryClueInputs, PromiseId, PromptableBeforeClue, ProvenancedCardSet, Rank,
@@ -17,10 +17,11 @@ use super::{
     build_convention_knowledge, chop, claimed_identities_at_clue,
     clue_permits_direct_play_deferral, elimination_finesse_card, finesse_position_id,
     five_chop_moved_card, focus, interpretation, is_playable_at, loaded_connection_plan,
-    next_player, primary, protected_cards, public_layers, push_signal,
+    next_player, physical_clue_matches, primary, protected_cards, public_layers, push_signal,
     reconcile_connection_fact_lifecycles, record_declined_direct_plays, remove_card, rule_enabled,
     snapshot_good_touch_identities, snapshot_play_identities, snapshot_save_identities,
-    subjective_action_context_before, was_clued_before, was_clued_before_with,
+    standard_h_group_clue, subjective_action_context_before, was_clued_before,
+    was_clued_before_with,
 };
 
 struct ReplayReducer {
@@ -545,6 +546,7 @@ impl ReplayReducer {
         else {
             return false;
         };
+        let public_clue = GenericClue::from(*clue);
         let Some(prior) = self.clues.last() else {
             return false;
         };
@@ -574,7 +576,7 @@ impl ReplayReducer {
             for identity in IdentitySet::from_mask(self.facts[card.index()].identity_mask())
                 .iter()
                 .filter(|identity| {
-                    clue.matches(*identity)
+                    physical_clue_matches(frame.view, public_clue, *identity)
                         && !is_playable_at(self.stack_heights, *identity)
                         && frame.historical.has_unseen_copy(*identity, &self.hands)
                 })
@@ -606,7 +608,7 @@ impl ReplayReducer {
                     required.actor == *giver
                         && required.target == *target
                         && required.focus == *card
-                        && clue.matches(required.identity)
+                        && physical_clue_matches(frame.view, public_clue, required.identity)
                 }) {
                     return true;
                 }
@@ -635,6 +637,8 @@ impl ReplayReducer {
         else {
             unreachable!("event dispatcher selects its handler")
         };
+        let public_clue = GenericClue::from(*clue);
+        let clue = &standard_h_group_clue(&view.variant, public_clue);
 
         let priority_load = if rule_enabled(profile, HGroupRuleId::Priority) {
             super::recognition::retract_loaded_priority(
@@ -708,7 +712,7 @@ impl ReplayReducer {
                     turn: entry.turn,
                     giver: *giver,
                     target: *target,
-                    clue: *clue,
+                    clue: public_clue,
                     touched: touched.clone(),
                     stack_heights: self.stack_heights,
                     focus,
@@ -726,11 +730,11 @@ impl ReplayReducer {
                 });
             }
             for card in touched {
-                self.facts[card.index()].add_positive_clue(*clue);
+                self.facts[card.index()].record_physical(public_clue, true);
                 self.explicitly_clued.insert(*card);
             }
             for card in untouched {
-                self.facts[card.index()].add_negative_clue(*clue);
+                self.facts[card.index()].record_physical(public_clue, false);
             }
             self.historical_clue_tokens = self.historical_clue_tokens.saturating_sub(1);
             push_signal(
@@ -753,7 +757,7 @@ impl ReplayReducer {
         let promised_card_fix = self.pending_connections.iter().any(|connection| {
             connection.actor == *target
                 && self.pending_connections.is_active(connection)
-                && !clue.matches(connection.expected)
+                && !physical_clue_matches(view, public_clue, connection.expected)
                 && connection
                     .cards
                     .first()
@@ -783,7 +787,7 @@ impl ReplayReducer {
                         live && claim.turn < entry.turn
                             && claim.target == Some(*target)
                             && claim.cards.first() == Some(card)
-                            && !clue.matches(claim.identity)
+                            && !physical_clue_matches(view, public_clue, claim.identity)
                             && matches!(
                                 claim.source,
                                 HGroupMoveKind::Finesse
@@ -816,7 +820,7 @@ impl ReplayReducer {
                     identity.suit,
                     Rank::ALL[usize::from(prior.stack_heights[identity.suit.index()])],
                 );
-                if matches!(prior.clue, Clue::Rank(_))
+                if matches!(prior.clue, hanabi_core::GenericClue::Rank(_))
                     && !self
                         .pending_connections
                         .identity_was_demonstrated_after(first_connector, prior.turn)
@@ -848,12 +852,12 @@ impl ReplayReducer {
                     required.actor == *giver
                         && required.target == *target
                         && touched.contains(&required.focus)
-                        && clue.matches(required.identity)
+                        && physical_clue_matches(view, public_clue, required.identity)
                 })
             })
         });
         let out_of_order_repairs = if rule_enabled(profile, HGroupRuleId::OutOfOrderPlay) {
-            self.out_of_order_repairs(view, entry, *giver, *target, *clue, touched)
+            self.out_of_order_repairs(view, entry, *giver, *target, public_clue, touched)
         } else {
             Vec::new()
         };
@@ -867,8 +871,8 @@ impl ReplayReducer {
                 required.actor == *giver
                     && required.target == *target
                     && touched.contains(&required.focus)
-                    && clue.matches(required.identity)
-                    && !was_clued_before_with(view, entry.turn, required.focus, *clue)
+                    && physical_clue_matches(view, public_clue, required.identity)
+                    && !was_clued_before_with(view, entry.turn, required.focus, public_clue)
             });
         frame.outcome.declined_with_clue = Some(*giver);
         frame.outcome.required_clue_deferral = is_required_fix;
@@ -981,10 +985,10 @@ impl ReplayReducer {
             // https://hanabi.github.io/level-1/#the-5-save
             let focus_was_chop = old_chop == Some(focus);
             for card in touched {
-                self.facts[card.index()].add_positive_clue(*clue);
+                self.facts[card.index()].record_physical(public_clue, true);
             }
             for card in untouched {
-                self.facts[card.index()].add_negative_clue(*clue);
+                self.facts[card.index()].record_physical(public_clue, false);
             }
             self.explicitly_clued.extend(touched.iter().copied());
             let raw_focus_identities = focus_identity.map_or_else(
@@ -1024,7 +1028,7 @@ impl ReplayReducer {
                 .find(|connection| {
                     connection.actor == *target
                         && connection.cards.first() == Some(&focus)
-                        && clue.matches(connection.expected)
+                        && physical_clue_matches(view, public_clue, connection.expected)
                         && self.pending_connections.is_active(connection)
                 })
                 .map(|connection| connection.expected);
@@ -1108,7 +1112,7 @@ impl ReplayReducer {
                 giver: *giver,
                 target: *target,
                 focus,
-                clue: *clue,
+                clue: public_clue,
                 touches: CurrentClueTouches(touched),
                 hands: &self.hands,
                 facts: &self.facts,
@@ -1319,7 +1323,7 @@ impl ReplayReducer {
                 && five_chop_moved_card(&self.hands[target.index()], touched, &gotten).is_some();
             let no_information_reclue = touched
                 .iter()
-                .all(|card| was_clued_before_with(view, entry.turn, *card, *clue));
+                .all(|card| was_clued_before_with(view, entry.turn, *card, public_clue));
             // Reconfirming an existing play is a Burn/Fill-In, not a
             // fresh Play or Tempo promise. Preserve the older promise.
             // https://hanabi.github.io/level-6/#the-tempo-clue
@@ -1337,7 +1341,8 @@ impl ReplayReducer {
                             .is_some_and(|identity| is_playable_at(self.stack_heights, identity)))
             });
             let interpretation_plan = ClueInterpretationPlan::resolve(PrimaryClueInputs {
-                clue: *clue,
+                clue: public_clue,
+                variant: &view.variant,
                 play_identities,
                 save_identities,
                 stack_heights: self.stack_heights,
@@ -1655,7 +1660,7 @@ impl ReplayReducer {
                 turn: entry.turn,
                 giver: *giver,
                 target: *target,
-                clue: *clue,
+                clue: public_clue,
                 touched: touched.clone(),
                 stack_heights: self.stack_heights,
                 focus,
@@ -1712,7 +1717,7 @@ impl ReplayReducer {
                     giver: *giver,
                     target: *target,
                     focus,
-                    clue: *clue,
+                    clue: public_clue,
                     touches: CurrentClueTouches(touched),
                     hands: &self.hands,
                     facts: &self.facts,
@@ -1907,15 +1912,15 @@ impl ReplayReducer {
                     !(required.actor == *giver
                         && required.target == *target
                         && touched.contains(&required.focus)
-                        && clue.matches(required.identity))
+                        && physical_clue_matches(view, public_clue, required.identity))
                 });
             }
         } else {
             for card in touched {
-                self.facts[card.index()].add_positive_clue(*clue);
+                self.facts[card.index()].record_physical(public_clue, true);
             }
             for card in untouched {
-                self.facts[card.index()].add_negative_clue(*clue);
+                self.facts[card.index()].record_physical(public_clue, false);
             }
             self.explicitly_clued.extend(touched.iter().copied());
         }
@@ -1975,7 +1980,7 @@ impl ReplayReducer {
         entry: &ObservedHistoryEntry,
         giver: PlayerId,
         target: PlayerId,
-        clue: Clue,
+        clue: GenericClue,
         touched: &[CardId],
     ) -> Vec<ConnectionObligation> {
         self.pending_connections
@@ -1985,7 +1990,7 @@ impl ReplayReducer {
                     || !touched.contains(&connection.focus)
                     || connection.kind != HGroupConnectionKind::Finesse
                     || !self.pending_connections.is_active(connection)
-                    || !clue.matches(connection.focus_identity)
+                    || !physical_clue_matches(view, clue, connection.focus_identity)
                     || was_clued_before_with(view, entry.turn, connection.focus, clue)
                 {
                     return None;
@@ -1993,11 +1998,11 @@ impl ReplayReducer {
                 let prior = self.clues.iter().rev().find(|prior| {
                     prior.focus == connection.focus
                         && prior.target == target
-                        && prior.clue == Clue::Suit(connection.expected.suit)
+                        && prior.clue == GenericClue::from(Clue::Suit(connection.expected.suit))
                         && prior.turn < entry.turn
                 })?;
                 let mut focus_facts = self.facts[connection.focus.index()];
-                focus_facts.add_positive_clue(clue);
+                focus_facts.record_physical(clue, true);
                 if focus_facts.identity_mask() != 1 << connection.focus_identity.index() {
                     return None;
                 }
