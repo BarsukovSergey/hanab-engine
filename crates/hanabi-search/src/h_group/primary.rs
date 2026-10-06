@@ -362,6 +362,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn direct_level_one_composes_base_play_and_save_with_save_precedence() {
         let standard = VariantSpec::no_variant();
         let rainbow = VariantSpec::from_catalog(hanabi_core::VariantId::Rainbow6Suits);
