@@ -45,7 +45,9 @@ if (( $# != 0 )); then
   exit 2
 fi
 find_host_python() {
-  if command -v python3 >/dev/null 2>&1; then
+  if (( windows_shell != 0 )) && command -v python >/dev/null 2>&1; then
+    command -v python
+  elif command -v python3 >/dev/null 2>&1; then
     command -v python3
   elif command -v python >/dev/null 2>&1; then
     command -v python
@@ -69,31 +71,20 @@ fi
 # queue or overlap another full run, which also invalidates timing comparisons.
 # Use an atomic directory lock rather than flock so Git Bash can run the script.
 check_lock_dir="target/check.lock.d"
-acquire_check_lock() {
-  local holder_pid=""
-  mkdir -p target
-  if ! mkdir "$check_lock_dir" 2>/dev/null; then
-    if [[ -f "$check_lock_dir/pid" ]]; then
-      holder_pid="$(cat "$check_lock_dir/pid" 2>/dev/null || true)"
-    fi
-    if [[ "$holder_pid" =~ ^[0-9]+$ ]] && kill -0 "$holder_pid" 2>/dev/null; then
-      echo 'Another check.sh run is already active in this repository.' >&2
-      return 1
-    fi
-    rm -rf -- "$check_lock_dir"
-    if ! mkdir "$check_lock_dir" 2>/dev/null; then
-      echo 'Could not acquire the check.sh repository lock.' >&2
-      return 1
-    fi
-  fi
-  printf '%s\n' "$BASHPID" > "$check_lock_dir/pid"
-}
+mkdir -p target
+if ! mkdir "$check_lock_dir" 2>/dev/null; then
+  cat >&2 <<EOF
+Another check.sh run is already active, or a stale lock remains at:
+  $check_lock_dir
+If no check is running, remove that directory and retry.
+EOF
+  exit 1
+fi
 
 release_check_lock() {
   rm -rf -- "$check_lock_dir"
 }
 
-acquire_check_lock
 trap release_check_lock EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
