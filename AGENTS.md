@@ -9,6 +9,7 @@ editing tools can accidentally create files owned by `root:root`.
 ## Validation
 
 Use the smallest validation scope that answers the risk in the current change.
+Preserve tests and their assertions; change when they run, not their strength.
 Detailed command behavior, platform notes, CI scope, timing, and failure-baseline
 mechanics live in [docs/validation.md](docs/validation.md).
 
