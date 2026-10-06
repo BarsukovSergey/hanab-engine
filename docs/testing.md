@@ -69,9 +69,9 @@ additionally run the exhaustive H-Group profile matrix. Neither CI path is the
 complete ordinary hanabi-search suite. Full local runs remain nonzero on any
 failure; known failures are not ignored or deleted.
 
-Workflow timing is opt-in. Use it for performance work, full-check
-comparison, or long replay investigations, not ordinary scoped edits. When it is
-useful, invoke it through the portable Python launcher:
+Workflow timing is opt-in. Use it for performance work, full-check comparison,
+or long replay investigations, not ordinary scoped edits. When it is useful,
+invoke it through the portable Python launcher:
 
 ```bash
 bash scripts/run-python.sh scripts/workflow.py start "Fix turn 27 play priority"
@@ -86,8 +86,8 @@ Both check modes automatically record output, per-stage timings, exit status,
 commit and tracked-diff fingerprint in ignored `target/workflow/`. Extra
 commands only need the workflow wrapper when a recorded timing session is
 intentionally in use. The local records survive prompts but are removed by
-`cargo clean`; archive them elsewhere before cleaning if needed. They are not
-a reconstruction of historical prompt latency.
+`cargo clean`; archive them elsewhere before cleaning if needed. They are not a
+reconstruction of historical prompt latency.
 
 Use `wait-start` and `wait-end` to record intervals actually spent waiting for
 tools. Do not mark time spent editing/investigating while a check runs as
