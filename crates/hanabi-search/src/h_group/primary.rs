@@ -312,7 +312,12 @@ impl ClueInterpretationPlan {
         } else if inputs.eight_clue_save && !inputs.save_identities.is_empty() {
             HGroupClueKind::Save(HGroupSaveKind::EightClue)
         } else {
-            kind_from_masks(clue, play_identities, inputs.save_identities)
+            kind_from_masks(
+                inputs.variant,
+                clue,
+                play_identities,
+                inputs.save_identities,
+            )
         };
         Self {
             kind,
@@ -323,15 +328,28 @@ impl ClueInterpretationPlan {
     }
 }
 
-fn kind_from_masks(clue: GenericClue, play: IdentitySet, save: IdentitySet) -> HGroupClueKind {
+fn kind_from_masks(
+    variant: &VariantSpec,
+    clue: GenericClue,
+    play: IdentitySet,
+    save: IdentitySet,
+) -> HGroupClueKind {
+    let saves_rank = |rank| {
+        save.iter_ids().any(|id| {
+            variant
+                .identities()
+                .get(id)
+                .is_some_and(|identity| identity.rank.number() == rank)
+        })
+    };
     match (play.is_empty(), save.is_empty()) {
         (false, false) => HGroupClueKind::PlayOrSave,
         (false, true) => HGroupClueKind::Play,
         (true, false) => match clue {
-            GenericClue::Rank(rank) if rank.value() == 5 => {
+            GenericClue::Rank(rank) if rank.value() == 5 && saves_rank(5) => {
                 HGroupClueKind::Save(HGroupSaveKind::Five)
             }
-            GenericClue::Rank(rank) if rank.value() == 2 => {
+            GenericClue::Rank(rank) if rank.value() == 2 && saves_rank(2) => {
                 HGroupClueKind::Save(HGroupSaveKind::Two)
             }
             GenericClue::Color(_) | GenericClue::Rank(_) => {
@@ -535,6 +553,42 @@ mod tests {
             assert!(suppressed.play_identities.is_empty());
             assert_eq!(suppressed.save_identities, three);
             assert_eq!(suppressed.suppression, Some(suppression));
+        }
+    }
+
+    #[test]
+    fn primary_resolution_broad_rank_touch_requires_an_actual_rank_save_identity() {
+        let variant = VariantSpec::from_catalog(hanabi_core::VariantId::Pink6Suits);
+        let three = physical_identity(&variant, 5, 3);
+        for rank in [2, 5] {
+            let clue = GenericClue::Rank(hanabi_core::ClueRank::new(rank));
+            assert_eq!(three.filter_clue(&variant, clue, true), three);
+            let mut discarded = [0; 30];
+            discarded[three.iter_ids().next().unwrap().index()] = 1;
+            let save = ClueInterpretationPlan::direct_save(SaveClueInputs {
+                clue,
+                variant: &variant,
+                focus_identities: three,
+                focus_was_chop: true,
+                stack_heights: &[0; 6],
+                discarded_counts: &discarded,
+                two_save_visible_other_counts: &[0; 30],
+                two_save_visible_other_chop_counts: &[0; 30],
+                critical_visible_other_counts: &[0; 30],
+            });
+            assert_eq!(save.kind, HGroupClueKind::Save(HGroupSaveKind::Critical));
+            let plan = ClueInterpretationPlan::resolve(PrimaryClueInputs {
+                clue,
+                variant: &variant,
+                play_identities: three,
+                save_identities: save.save_identities,
+                stack_heights: &[0; 6],
+                eight_clue_save: false,
+                suppressions: [None; 7],
+            });
+            assert_eq!(plan.kind, save.kind);
+            assert_eq!(plan.save_identities, three);
+            assert!(plan.play_identities.is_empty());
         }
     }
 
