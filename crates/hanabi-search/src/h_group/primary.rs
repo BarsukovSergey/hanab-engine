@@ -155,6 +155,22 @@ pub(super) struct ClueInterpretationPlan {
     pub(super) suppression: Option<PrimarySuppression>,
 }
 
+/// Public snapshot inputs only; counts are indexed by `IdentityId::index()`.
+/// Domains, heights, and count slices must belong to the active variant.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct SaveClueInputs<'a> {
+    pub(super) clue: GenericClue,
+    pub(super) variant: &'a VariantSpec,
+    pub(super) focus_identities: IdentitySet,
+    pub(super) focus_was_chop: bool,
+    pub(super) stack_heights: &'a [usize],
+    pub(super) discarded_counts: &'a [usize],
+    /// Other copies visible to the giver, excluding the focus.
+    pub(super) visible_other_counts: &'a [usize],
+    /// Subset of visible other copies on chop, for Level 1 Double Chop 2.
+    pub(super) visible_other_chop_counts: &'a [usize],
+}
+
 impl ClueInterpretationPlan {
     /// Immediate Level 1 Play possibilities only. The domain and stack heights
     /// must belong to the active variant; heights count completed stack ranks.
@@ -183,6 +199,69 @@ impl ClueInterpretationPlan {
             save_identities: IdentitySet::default(),
             suppression: None,
         }
+    }
+
+    /// Physical/base Level 1 Save possibilities, without contextual clue-choice
+    /// or Loaded conventions. This kernel is deliberately unwired.
+    pub(super) fn direct_save(inputs: SaveClueInputs<'_>) -> Self {
+        let mut plan = Self {
+            kind: HGroupClueKind::Unrecognized,
+            play_identities: IdentitySet::default(),
+            save_identities: IdentitySet::default(),
+            suppression: None,
+        };
+        if !inputs.focus_was_chop {
+            return plan;
+        }
+        for id in inputs
+            .focus_identities
+            .filter_clue(inputs.variant, inputs.clue, true)
+            .iter_ids()
+        {
+            let identity = inputs.variant.identities().get(id).unwrap();
+            let suit_index = inputs
+                .variant
+                .stack_suits()
+                .iter()
+                .position(|suit| *suit == identity.suit)
+                .unwrap();
+            let rank_index = inputs
+                .variant
+                .card_ranks()
+                .iter()
+                .position(|rank| *rank == identity.rank)
+                .unwrap();
+            if rank_index < inputs.stack_heights[suit_index] {
+                continue;
+            }
+            let visible = inputs.visible_other_counts[id.index()];
+            let kind = if identity.rank.number() == 5
+                && matches!(inputs.clue, GenericClue::Rank(rank) if rank.value() == 5)
+            {
+                HGroupSaveKind::Five
+            } else if identity.rank.number() == 2
+                && matches!(inputs.clue, GenericClue::Rank(rank) if rank.value() == 2)
+                && (visible == 0 || visible == inputs.visible_other_chop_counts[id.index()])
+            {
+                HGroupSaveKind::Two
+            } else if identity.rank.number() != 5
+                && !inputs.variant.playable(inputs.stack_heights, id)
+                && inputs.discarded_counts[id.index()] + 1
+                    == usize::from(inputs.variant.copies(id).unwrap())
+                && visible == 0
+            {
+                HGroupSaveKind::Critical
+            } else {
+                continue;
+            };
+            plan.save_identities = plan.save_identities.union(IdentitySet::singleton_id(id));
+            // Explicit rank saves outrank a critical possibility touched by
+            // the same physical clue in a variant with broader touching.
+            if plan.kind == HGroupClueKind::Unrecognized || kind != HGroupSaveKind::Critical {
+                plan.kind = HGroupClueKind::Save(kind);
+            }
+        }
+        plan
     }
 
     pub(super) fn resolve(inputs: PrimaryClueInputs<'_>) -> Self {
@@ -254,6 +333,128 @@ mod tests {
                 .id_for(Suit::new(suit), Rank::new(rank))
                 .unwrap(),
         )
+    }
+
+    #[test]
+    fn direct_save_no_variant_base_rules_and_precedence() {
+        let variant = VariantSpec::no_variant();
+        let color = GenericClue::Color(hanabi_core::ClueColorId::new(0));
+        let rank_clue = |rank| GenericClue::Rank(hanabi_core::ClueRank::new(rank));
+        // rank, clue, stack height, discards, visible others, visible on chop,
+        // focus on chop, expected base Save kind.
+        let cases = [
+            (5, rank_clue(5), 0, 0, 0, 0, true, Some(HGroupSaveKind::Five)),
+            (5, rank_clue(5), 4, 0, 0, 0, true, Some(HGroupSaveKind::Five)),
+            (2, rank_clue(2), 0, 0, 0, 0, true, Some(HGroupSaveKind::Two)),
+            (2, rank_clue(2), 0, 1, 0, 0, true, Some(HGroupSaveKind::Two)),
+            (2, rank_clue(2), 1, 1, 0, 0, true, Some(HGroupSaveKind::Two)),
+            (2, rank_clue(2), 0, 0, 1, 0, true, None),
+            (2, rank_clue(2), 0, 0, 1, 1, true, Some(HGroupSaveKind::Two)),
+            (3, color, 0, 1, 0, 0, true, Some(HGroupSaveKind::Critical)),
+            (3, rank_clue(3), 0, 1, 0, 0, true, Some(HGroupSaveKind::Critical)),
+            (3, color, 2, 1, 0, 0, true, None),
+            (3, color, 0, 0, 0, 0, true, None),
+            (3, color, 0, 2, 0, 0, true, None),
+            (3, color, 0, 1, 1, 1, true, None),
+            (5, color, 0, 0, 0, 0, true, None),
+            (2, color, 0, 1, 0, 0, true, Some(HGroupSaveKind::Critical)),
+            (5, rank_clue(5), 5, 0, 0, 0, true, None),
+            (2, rank_clue(2), 2, 0, 0, 0, true, None),
+            (3, color, 3, 1, 0, 0, true, None),
+            (5, rank_clue(5), 0, 0, 0, 0, false, None),
+            (2, rank_clue(2), 0, 0, 0, 0, false, None),
+            (3, color, 0, 1, 0, 0, false, None),
+            (3, rank_clue(2), 0, 1, 0, 0, true, None),
+        ];
+        for (rank, clue, height, discards, visible, chop_visible, on_chop, expected) in cases {
+            let focus = physical_identity(&variant, 0, rank);
+            let id = focus.iter_ids().next().unwrap();
+            let mut discarded_counts = [0; 25];
+            let mut visible_other_counts = [0; 25];
+            let mut visible_other_chop_counts = [0; 25];
+            discarded_counts[id.index()] = discards;
+            visible_other_counts[id.index()] = visible;
+            visible_other_chop_counts[id.index()] = chop_visible;
+            let plan = ClueInterpretationPlan::direct_save(SaveClueInputs {
+                clue,
+                variant: &variant,
+                focus_identities: focus,
+                focus_was_chop: on_chop,
+                stack_heights: &[height, 0, 0, 0, 0],
+                discarded_counts: &discarded_counts,
+                visible_other_counts: &visible_other_counts,
+                visible_other_chop_counts: &visible_other_chop_counts,
+            });
+            assert_eq!(
+                plan.kind,
+                expected.map_or(HGroupClueKind::Unrecognized, HGroupClueKind::Save),
+                "{rank} {clue:?}, height={height}, discards={discards}, visible={visible}, chop_visible={chop_visible}, on_chop={on_chop}"
+            );
+            assert_eq!(
+                plan.save_identities,
+                expected.map_or(IdentitySet::default(), |_| focus)
+            );
+            assert!(plan.play_identities.is_empty());
+            assert_eq!(plan.suppression, None);
+        }
+    }
+
+    #[test]
+    fn direct_save_black_sixth_suit_uses_variant_multiplicity() {
+        let variant = VariantSpec::from_catalog(hanabi_core::VariantId::Black6Suits);
+        let focus = physical_identity(&variant, 5, 3);
+        let id = focus.iter_ids().next().unwrap();
+        assert!(id.index() >= 25);
+        assert_eq!(variant.copies(id), Some(1));
+        let plan = ClueInterpretationPlan::direct_save(SaveClueInputs {
+            clue: GenericClue::Rank(hanabi_core::ClueRank::new(3)),
+            variant: &variant,
+            focus_identities: focus,
+            focus_was_chop: true,
+            stack_heights: &[0; 6],
+            discarded_counts: &[0; 30],
+            visible_other_counts: &[0; 30],
+            visible_other_chop_counts: &[0; 30],
+        });
+        assert_eq!(plan.kind, HGroupClueKind::Save(HGroupSaveKind::Critical));
+        assert_eq!(plan.save_identities, focus);
+        assert!(plan.play_identities.is_empty());
+        assert_eq!(plan.suppression, None);
+    }
+
+    #[test]
+    fn direct_save_rainbow_critical_three_uses_every_physical_color_touch() {
+        let variant = VariantSpec::from_catalog(hanabi_core::VariantId::Rainbow6Suits);
+        let rainbow = physical_identity(&variant, 5, 3);
+        let red = physical_identity(&variant, 0, 3);
+        let blue = physical_identity(&variant, 3, 3);
+        let mut discarded_counts = [0; 30];
+        for id in rainbow.union(red).union(blue).iter_ids() {
+            discarded_counts[id.index()] = 1;
+        }
+        for color in variant.clue_colors() {
+            let clue = GenericClue::Color(*color);
+            assert!(variant.touches(rainbow.iter_ids().next().unwrap(), clue));
+            let plan = ClueInterpretationPlan::direct_save(SaveClueInputs {
+                clue,
+                variant: &variant,
+                focus_identities: rainbow.union(red).union(blue),
+                focus_was_chop: true,
+                stack_heights: &[0; 6],
+                discarded_counts: &discarded_counts,
+                visible_other_counts: &[0; 30],
+                visible_other_chop_counts: &[0; 30],
+            });
+            let expected = match color.value() {
+                0 => rainbow.union(red),
+                3 => rainbow.union(blue),
+                _ => rainbow,
+            };
+            assert_eq!(plan.kind, HGroupClueKind::Save(HGroupSaveKind::Critical));
+            assert_eq!(plan.save_identities, expected);
+            assert!(plan.play_identities.is_empty());
+            assert_eq!(plan.suppression, None);
+        }
     }
 
     #[test]
