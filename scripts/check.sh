@@ -2,6 +2,11 @@
 
 set -euo pipefail # Exit on errors and undefined variables.
 
+source "$(dirname -- "${BASH_SOURCE[0]}")/shell-common.sh"
+
+repository_root="$HANABI_REPOSITORY_ROOT"
+cd "$repository_root"
+
 check_started_seconds=$SECONDS
 check_failed=0
 
@@ -20,14 +25,11 @@ run_check() {
   fi
 }
 
-repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$repository_root"
-
-host_uname="$(uname -s 2>/dev/null || printf 'unknown')"
-case "$host_uname" in
-  MINGW*|MSYS*|CYGWIN*) windows_shell=1 ;;
-  *) windows_shell=0 ;;
-esac
+if hanabi_is_windows_shell; then
+  windows_shell=1
+else
+  windows_shell=0
+fi
 
 mode=full
 case "${1:-}" in
@@ -116,27 +118,9 @@ fi
 echo 'Checking repository formatting with Prettier...'
 run_check 'Prettier' npm run format:check
 
-if [[ -d "$HOME/.cargo/bin" ]]; then
-  export PATH="$HOME/.cargo/bin:$PATH"
-fi
+hanabi_add_cargo_bin_to_path
 
-find_venv_tool() {
-  local tool="$1"
-  local candidate
-  for candidate in \
-    ".venv/bin/$tool" \
-    ".venv/Scripts/$tool.exe" \
-    ".venv/Scripts/$tool"
-  do
-    if [[ -f "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return
-    fi
-  done
-  return 1
-}
-
-if ! venv_python="$(find_venv_tool python)" || ! venv_ty="$(find_venv_tool ty)"; then
+if ! venv_python="$(hanabi_find_venv_tool python)" || ! venv_ty="$(hanabi_find_venv_tool ty)"; then
   cat >&2 <<'EOF'
 Python development dependencies are missing. Create .venv with Python 3, then
 install scripts/requirements-dev.txt with the venv Python. The executable is

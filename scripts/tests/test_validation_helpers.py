@@ -90,11 +90,15 @@ class ValidationHelperTests(unittest.TestCase):
             base = Path(directory) / "repo"
             linked = Path(directory) / "linked"
             (base / "scripts").mkdir(parents=True)
-            shutil.copy2(SCRIPTS / "check-scoped.sh", base / "scripts" / "check-scoped.sh")
+            for helper in ("check-scoped.sh", "shell-common.sh"):
+                shutil.copy2(SCRIPTS / helper, base / "scripts" / helper)
             subprocess.run(["git", "init", "-q", str(base)], check=True)
             subprocess.run(["git", "-C", str(base), "config", "user.email", "test@example.invalid"], check=True)
             subprocess.run(["git", "-C", str(base), "config", "user.name", "Validation Test"], check=True)
-            subprocess.run(["git", "-C", str(base), "add", "scripts/check-scoped.sh"], check=True)
+            subprocess.run(
+                ["git", "-C", str(base), "add", "scripts/check-scoped.sh", "scripts/shell-common.sh"],
+                check=True,
+            )
             subprocess.run(["git", "-C", str(base), "commit", "-qm", "fixture"], check=True)
             subprocess.run(
                 ["git", "-C", str(base), "worktree", "add", "-q", "-b", "linked-test", str(linked)],

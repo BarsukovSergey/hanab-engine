@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
-repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+source "$(dirname -- "${BASH_SOURCE[0]}")/shell-common.sh"
+
+repository_root="$HANABI_REPOSITORY_ROOT"
 cd "$repository_root"
-export PATH="$HOME/.cargo/bin:$PATH"
+hanabi_add_cargo_bin_to_path
 cargo test --release --locked -p hanabi-search --test self_play \
   h_group_max_self_play_200 -- --ignored --exact --nocapture
