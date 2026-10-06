@@ -12,14 +12,14 @@ Optimize for short, evidence-backed interactive turns. Full validation is a
 checkpoint, not an automatic tax on every prompt. Preserve all tests and their
 assertions; change when they run, not their strength.
 
-| Change                                        | Local validation before responding                                                        |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Discussion / diagnosis                        | Relevant read-only inspection; no full suite                                              |
-| Documentation                                 | Formatting and any affected examples/scripts                                              |
-| Fixture edit                                  | Parse and replay legality; inspect/test the affected position                             |
-| Scoped Rust / localized convention change     | `bash scripts/check-scoped.sh <crate> [focused cargo-test args...]`                         |
-| Shared inference/replay/planner refactor      | Focused checks first; `scripts/check.sh --fast` after implementation settles             |
-| Milestone or explicit full-validation request | Full `scripts/check.sh`                                                                   |
+| Change                                        | Local validation before responding                                           |
+| --------------------------------------------- | ---------------------------------------------------------------------------- |
+| Discussion / diagnosis                        | Relevant read-only inspection; no full suite                                 |
+| Documentation                                 | Formatting and any affected examples/scripts                                 |
+| Fixture edit                                  | Parse and replay legality; inspect/test the affected position                |
+| Scoped Rust / localized convention change     | `bash scripts/check-scoped.sh <crate> [focused cargo-test args...]`          |
+| Shared inference/replay/planner refactor      | Focused checks first; `scripts/check.sh --fast` after implementation settles |
+| Milestone or explicit full-validation request | Full `scripts/check.sh`                                                      |
 
 For a scoped Rust change, prefer `bash scripts/check-scoped.sh <crate>`
 with focused cargo-test arguments when applicable. The helper reuses the primary
@@ -31,9 +31,10 @@ compilation reveals API fallout that requires them. Task prompts should not
 widen this default without a concrete risk that the extra check addresses.
 
 `--fast` retains build, lint, documentation, Python, and dead-code checks but
-omits the expensive ordinary Rust suite. It is for shared inference/replay/planner
-changes, not every small semantic slice. Run relevant Rust tests separately. A
-failing focused test is a reason to keep debugging, not to start broad validation.
+omits the expensive ordinary Rust suite. It is for shared
+inference/replay/planner changes, not every small semantic slice. Run relevant
+Rust tests separately. A failing focused test is a reason to keep debugging,
+not to start broad validation.
 
 PR CI is a targeted gate: formatting/build/Clippy/docs, MSRV, core/protocol
 tests, a small green hanabi-search contract suite, Python live-bridge checks,
