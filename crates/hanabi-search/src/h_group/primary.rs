@@ -165,10 +165,12 @@ pub(super) struct SaveClueInputs<'a> {
     pub(super) focus_was_chop: bool,
     pub(super) stack_heights: &'a [usize],
     pub(super) discarded_counts: &'a [usize],
-    /// Other copies visible to the giver, excluding the focus.
-    pub(super) visible_other_counts: &'a [usize],
+    /// Other copies visible for the 2 Save Visible Rule, excluding the focus.
+    pub(super) two_save_visible_other_counts: &'a [usize],
     /// Subset of visible other copies on chop, for Level 1 Double Chop 2.
-    pub(super) visible_other_chop_counts: &'a [usize],
+    pub(super) two_save_visible_other_chop_counts: &'a [usize],
+    /// Other visible physical copies for Critical Save, excluding the focus.
+    pub(super) critical_visible_other_counts: &'a [usize],
 }
 
 impl ClueInterpretationPlan {
@@ -202,7 +204,7 @@ impl ClueInterpretationPlan {
     }
 
     /// Physical/base Level 1 Save possibilities, without contextual clue-choice
-    /// or Loaded conventions. This kernel is deliberately unwired.
+    /// or Loaded conventions. Shared by replay and prospective Save scoring.
     pub(super) fn direct_save(inputs: SaveClueInputs<'_>) -> Self {
         let mut plan = Self {
             kind: HGroupClueKind::Unrecognized,
@@ -234,21 +236,22 @@ impl ClueInterpretationPlan {
             if rank_index < inputs.stack_heights[suit_index] {
                 continue;
             }
-            let visible = inputs.visible_other_counts[id.index()];
+            let visible = inputs.two_save_visible_other_counts[id.index()];
             let kind = if identity.rank.number() == 5
                 && matches!(inputs.clue, GenericClue::Rank(rank) if rank.value() == 5)
             {
                 HGroupSaveKind::Five
             } else if identity.rank.number() == 2
                 && matches!(inputs.clue, GenericClue::Rank(rank) if rank.value() == 2)
-                && (visible == 0 || visible == inputs.visible_other_chop_counts[id.index()])
+                && (visible == 0
+                    || visible == inputs.two_save_visible_other_chop_counts[id.index()])
             {
                 HGroupSaveKind::Two
             } else if identity.rank.number() != 5
                 && !inputs.variant.playable(inputs.stack_heights, id)
                 && inputs.discarded_counts[id.index()] + 1
                     == usize::from(inputs.variant.copies(id).unwrap())
-                && visible == 0
+                && inputs.critical_visible_other_counts[id.index()] == 0
             {
                 HGroupSaveKind::Critical
             } else {
@@ -463,8 +466,9 @@ mod tests {
                 focus_was_chop: chop,
                 stack_heights: &heights,
                 discarded_counts: &discards,
-                visible_other_counts: &visible,
-                visible_other_chop_counts: &visible,
+                two_save_visible_other_counts: &visible,
+                two_save_visible_other_chop_counts: &visible,
+                critical_visible_other_counts: &visible,
             });
             assert_eq!(plan.kind, kind, "{name}");
             assert_eq!(plan.play_identities, play, "{name}");
@@ -535,11 +539,11 @@ mod tests {
             let focus = physical_identity(&variant, 0, rank);
             let id = focus.iter_ids().next().unwrap();
             let mut discarded_counts = [0; 25];
-            let mut visible_other_counts = [0; 25];
-            let mut visible_other_chop_counts = [0; 25];
+            let mut two_save_visible_other_counts = [0; 25];
+            let mut two_save_visible_other_chop_counts = [0; 25];
             discarded_counts[id.index()] = discards;
-            visible_other_counts[id.index()] = visible;
-            visible_other_chop_counts[id.index()] = chop_visible;
+            two_save_visible_other_counts[id.index()] = visible;
+            two_save_visible_other_chop_counts[id.index()] = chop_visible;
             let plan = ClueInterpretationPlan::direct_save(SaveClueInputs {
                 clue,
                 variant: &variant,
@@ -547,8 +551,9 @@ mod tests {
                 focus_was_chop: on_chop,
                 stack_heights: &[height, 0, 0, 0, 0],
                 discarded_counts: &discarded_counts,
-                visible_other_counts: &visible_other_counts,
-                visible_other_chop_counts: &visible_other_chop_counts,
+                two_save_visible_other_counts: &two_save_visible_other_counts,
+                two_save_visible_other_chop_counts: &two_save_visible_other_chop_counts,
+                critical_visible_other_counts: &two_save_visible_other_counts,
             });
             assert_eq!(
                 plan.kind,
@@ -578,8 +583,9 @@ mod tests {
             focus_was_chop: true,
             stack_heights: &[0; 6],
             discarded_counts: &[0; 30],
-            visible_other_counts: &[0; 30],
-            visible_other_chop_counts: &[0; 30],
+            two_save_visible_other_counts: &[0; 30],
+            two_save_visible_other_chop_counts: &[0; 30],
+            critical_visible_other_counts: &[0; 30],
         });
         assert_eq!(plan.kind, HGroupClueKind::Save(HGroupSaveKind::Critical));
         assert_eq!(plan.save_identities, focus);
@@ -607,8 +613,9 @@ mod tests {
                 focus_was_chop: true,
                 stack_heights: &[0; 6],
                 discarded_counts: &discarded_counts,
-                visible_other_counts: &[0; 30],
-                visible_other_chop_counts: &[0; 30],
+                two_save_visible_other_counts: &[0; 30],
+                two_save_visible_other_chop_counts: &[0; 30],
+                critical_visible_other_counts: &[0; 30],
             });
             let expected = match color.value() {
                 0 => rainbow.union(red),

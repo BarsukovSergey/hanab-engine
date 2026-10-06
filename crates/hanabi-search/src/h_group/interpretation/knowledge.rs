@@ -1,3 +1,4 @@
+use super::super::primary::{ClueInterpretationPlan, SaveClueInputs};
 use super::super::{
     HGroupIdentityStatus, IdentityClaimRelation, blind_reverse_finesse_is_eligible,
 };
@@ -1415,24 +1416,6 @@ pub(in crate::h_group) fn convention_playable(
     })
 }
 
-pub(in crate::h_group) fn two_save_allowed(
-    view: &PlayerView,
-    focus: CardId,
-    identity: Card,
-    chops: &[Option<CardId>],
-) -> bool {
-    let visible_copies = view
-        .hands
-        .iter()
-        .flatten()
-        .filter(|card| card.id != focus && card.identity == Some(identity))
-        .collect::<Vec<_>>();
-    visible_copies.is_empty()
-        || visible_copies
-            .iter()
-            .all(|card| chops.contains(&Some(card.id)))
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(in crate::h_group) fn snapshot_play_identities(
     profile: HGroupProfile,
@@ -1888,63 +1871,69 @@ pub(in crate::h_group) fn snapshot_save_identities(
     if !focus_was_chop && !eight_clue_save {
         return IdentitySet::default();
     }
+    if eight_clue_save {
+        // The event compiler has already removed secured identities using its
+        // historical perspective. Keep Eight Clue Save separate from Level 1.
+        return IdentitySet::from_mask(
+            identities
+                .iter()
+                .filter(|identity| identity.rank.number() > stack_heights[identity.suit.index()])
+                .fold(0, |mask, identity| mask | (1 << identity.index())),
+        );
+    }
+    let variant = &view.variant;
+    let stack_heights = variant
+        .stack_suits()
+        .iter()
+        .map(|suit| usize::from(stack_heights[suit.index()]))
+        .collect::<Vec<_>>();
+    let identity_count = variant.stack_suits().len() * variant.card_ranks().len();
+    let mut discarded_counts = vec![0; identity_count];
+    for identity in IdentitySet::from_mask((1 << 25) - 1).iter() {
+        let id = variant
+            .identities()
+            .id_for(identity.suit, identity.rank)
+            .unwrap();
+        discarded_counts[id.index()] = usize::from(discarded[identity.index()]);
+    }
     let chops = hands
         .iter()
         .map(|hand| chop(hand, gotten))
         .collect::<Vec<_>>();
-    let mask = identities
-        .iter()
-        .filter(|identity| {
-            // No Save interpretation can protect a rank already on its stack.
-            if identity.rank.number() <= stack_heights[identity.suit.index()] {
-                return false;
-            }
-            if eight_clue_save {
-                // The event compiler has already removed secured identities
-                // using its historical perspective. Do not consult later
-                // revealed faces here to repeat that accounting.
-                return true;
-            }
-            match clue {
-                Clue::Rank(Rank::Five) => identity.rank == Rank::Five,
-                Clue::Rank(Rank::Two) if identity.rank == Rank::Two => {
-                    identity.rank.number() > stack_heights[identity.suit.index()]
-                        && snapshot_two_save_allowed(view, hands, giver, focus, *identity, &chops)
-                }
-                _ => {
-                    identity.rank != Rank::Five
-                    // A critical card on chop is a Save even when a delayed
-                    // finesse line could eventually play it. Only an
-                    // immediately playable focus takes Play precedence.
-                    && !is_playable_at(stack_heights, *identity)
-                    && discarded[identity.index()] + 1 == identity.rank.copies()
-                    && !hands.iter().flatten().copied().any(|card| {
-                        card != focus && identity_of(view, card) == Some(*identity)
-                    })
+    let mut two_save_visible_other_counts = vec![0; identity_count];
+    let mut two_save_visible_other_chop_counts = vec![0; identity_count];
+    let mut critical_visible_other_counts = vec![0; identity_count];
+    for (player, hand) in hands.iter().enumerate() {
+        for card in hand.iter().copied().filter(|card| *card != focus) {
+            let Some(identity) = identity_of(view, card) else {
+                continue;
+            };
+            let id = variant
+                .identities()
+                .id_for(identity.suit, identity.rank)
+                .unwrap();
+            critical_visible_other_counts[id.index()] += 1;
+            // Preserve the historical giver-relative 2 Save Visible Rule.
+            if player != giver.index() {
+                two_save_visible_other_counts[id.index()] += 1;
+                if chops.contains(&Some(card)) {
+                    two_save_visible_other_chop_counts[id.index()] += 1;
                 }
             }
-        })
-        .fold(0, |mask, identity| mask | (1 << identity.index()));
-    IdentitySet::from_mask(mask)
-}
-
-pub(in crate::h_group) fn snapshot_two_save_allowed(
-    view: &PlayerView,
-    hands: &[Vec<CardId>],
-    giver: PlayerId,
-    focus: CardId,
-    identity: Card,
-    chops: &[Option<CardId>],
-) -> bool {
-    let visible = hands
-        .iter()
-        .enumerate()
-        .filter(|(player, _)| *player != giver.index())
-        .flat_map(|(_, hand)| hand)
-        .copied()
-        .filter(|card| *card != focus && identity_of(view, *card) == Some(identity))
-        .collect::<Vec<_>>();
-    visible.is_empty() || visible.iter().all(|card| chops.contains(&Some(*card)))
+        }
+    }
+    ClueInterpretationPlan::direct_save(SaveClueInputs {
+        clue: hanabi_core::GenericClue::from(clue),
+        variant,
+        focus_identities: identities,
+        focus_was_chop,
+        stack_heights: &stack_heights,
+        discarded_counts: &discarded_counts,
+        two_save_visible_other_counts: &two_save_visible_other_counts,
+        two_save_visible_other_chop_counts: &two_save_visible_other_chop_counts,
+        critical_visible_other_counts: &critical_visible_other_counts,
+    })
+    .save_identities
 }
 
 #[allow(clippy::too_many_arguments)]
