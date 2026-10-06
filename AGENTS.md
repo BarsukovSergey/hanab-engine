@@ -63,20 +63,18 @@ rediscover unchanged pre-existing failures.
 
 ### Timing and failure records
 
-Use `scripts/workflow.py` when timing, performance comparison, full-validation
-failure comparison, or a long replay investigation matters. Small scoped edits
-and ordinary focused fixes do not need a task timer. When a timer is used,
-finish stale sessions before starting another and close it before the final
-response.
+Use `scripts/workflow.py` only when timing, performance comparison,
+full-validation failure comparison, or a long replay investigation materially
+matters. Do not start a task timer or wrap commands for an ordinary scoped edit.
+When workflow recording is intentionally enabled, invoke it portably as
+`bash scripts/run-python.sh scripts/workflow.py ...`, finish stale sessions
+before starting another, and close the session before the final response.
 
-`check.sh` automatically records commands, output logs, stage times, exit codes,
-and Git/worktree identity under ignored `target/workflow/`. Wrap other
-substantive commands with
-`python3 scripts/workflow.py run --label LABEL -- COMMAND ...`. Use `wait-start`
-/ `wait-end` only for intervals spent waiting, not intervals used to investigate
-or edit while checks run. Unrecorded waits are unknown. `report` shows task
-durations, command execution, explicitly recorded waiting, and full-run counts.
-Do not add overlapping command durations to task duration.
+`check.sh` records its own command output, stage times, exit codes, and
+Git/worktree identity under ignored `target/workflow/`. Use `wait-start` /
+`wait-end` only for intervals actually spent waiting. `report` shows task
+duration, command execution, explicitly recorded waiting, and full-run counts;
+do not add overlapping command durations to task duration.
 
 Use an explicit `baseline LOG --revision REVISION` from a completed full run to
 distinguish new, persistent, and no-longer-reported test failures. Never
