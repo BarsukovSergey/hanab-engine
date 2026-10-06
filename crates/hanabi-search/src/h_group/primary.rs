@@ -250,6 +250,23 @@ impl ClueInterpretationPlan {
                     return false;
                 }
 
+                // Black has variant-specific Save clue labels: black 2/5 use
+                // number clues, while black 3/4 use the black color clue.
+                // This is convention semantics keyed by the catalog variant,
+                // not inferred from physical multiplicity alone.
+                if inputs.variant.catalog_id() == Some(hanabi_core::VariantId::Black6Suits)
+                    && identity.suit == *inputs.variant.stack_suits().last().expect("black suit")
+                {
+                    let label_is_save = match identity.rank.value() {
+                        2 | 5 => matches!(inputs.clue, GenericClue::Rank(rank) if rank.value() == identity.rank.value()),
+                        3 | 4 => matches!(inputs.clue, GenericClue::Color(color) if color.value() == identity.suit.value()),
+                        _ => false,
+                    };
+                    if !label_is_save {
+                        return false;
+                    }
+                }
+
                 match inputs.clue {
                     GenericClue::Rank(rank)
                         if rank.value() == 5 && identity.rank.value() == 5 =>
@@ -651,6 +668,46 @@ mod tests {
             plan.save_identities,
             IdentitySet::singleton_id(black_three)
         );
+
+        let wrong_rank = ClueInterpretationPlan::save(SaveClueInputs {
+            clue: GenericClue::Rank(hanabi_core::ClueRank::new(3)),
+            variant: &variant,
+            focus_identities: IdentitySet::singleton_id(black_three),
+            focus_was_chop: true,
+            stack_heights: &[0; 6],
+            discarded_counts: &counts,
+            visible_other_counts: &counts,
+            double_chop_twos: IdentitySet::default(),
+        });
+        assert_eq!(wrong_rank.kind, HGroupClueKind::Unrecognized);
+
+        let black_two = variant
+            .identities()
+            .id_for(hanabi_core::SuitId::new(5), hanabi_core::CardRank::new(2))
+            .unwrap();
+        let color_two = ClueInterpretationPlan::save(SaveClueInputs {
+            clue: GenericClue::Color(hanabi_core::ClueColorId::new(5)),
+            variant: &variant,
+            focus_identities: IdentitySet::singleton_id(black_two),
+            focus_was_chop: true,
+            stack_heights: &[0; 6],
+            discarded_counts: &counts,
+            visible_other_counts: &counts,
+            double_chop_twos: IdentitySet::default(),
+        });
+        assert_eq!(color_two.kind, HGroupClueKind::Unrecognized);
+
+        let rank_two = ClueInterpretationPlan::save(SaveClueInputs {
+            clue: GenericClue::Rank(hanabi_core::ClueRank::new(2)),
+            variant: &variant,
+            focus_identities: IdentitySet::singleton_id(black_two),
+            focus_was_chop: true,
+            stack_heights: &[0; 6],
+            discarded_counts: &counts,
+            visible_other_counts: &counts,
+            double_chop_twos: IdentitySet::default(),
+        });
+        assert_eq!(rank_two.kind, HGroupClueKind::Save(HGroupSaveKind::Two));
     }
 
     #[test]
