@@ -39,7 +39,6 @@ pub(super) use knowledge::{
     build_convention_knowledge, convention_card_inferences, convention_playable,
     delayed_focus_identities, find_prompt, identities_at_distance_at, snapshot_accounted,
     snapshot_good_touch_identities, snapshot_play_identities, snapshot_save_identities,
-    two_save_allowed,
 };
 
 #[allow(clippy::too_many_lines)]

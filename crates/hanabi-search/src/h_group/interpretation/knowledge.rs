@@ -1416,24 +1416,6 @@ pub(in crate::h_group) fn convention_playable(
     })
 }
 
-pub(in crate::h_group) fn two_save_allowed(
-    view: &PlayerView,
-    focus: CardId,
-    identity: Card,
-    chops: &[Option<CardId>],
-) -> bool {
-    let visible_copies = view
-        .hands
-        .iter()
-        .flatten()
-        .filter(|card| card.id != focus && card.identity == Some(identity))
-        .collect::<Vec<_>>();
-    visible_copies.is_empty()
-        || visible_copies
-            .iter()
-            .all(|card| chops.contains(&Some(card.id)))
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(in crate::h_group) fn snapshot_play_identities(
     profile: HGroupProfile,
