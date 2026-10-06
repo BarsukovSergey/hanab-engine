@@ -47,9 +47,9 @@ Use it for milestones, broad changes, or explicit full-validation requests.
 ## Full-check behavior
 
 Run full validations sequentially. `check.sh` uses a repository-local
-cross-platform lock to reject another simultaneous `check.sh` invocation.
-Avoid running standalone CPU-heavy Cargo suites or benchmarks concurrently; the
-lock does not govern arbitrary commands.
+cross-platform lock to reject another simultaneous `check.sh` invocation. Avoid
+running standalone CPU-heavy Cargo suites or benchmarks concurrently; the lock
+does not govern arbitrary commands.
 
 The full script runs all ordinary Rust tests without fail-fast, continues to
 later validation stages after stage failures, prints per-stage timings, and
@@ -105,10 +105,10 @@ bash scripts/run-python.sh scripts/workflow.py report
 ```
 
 Both check modes automatically record command output, per-stage timings, exit
-status, commit, and tracked-diff fingerprint under ignored
-`target/workflow/`. Extra commands only need the workflow wrapper when a
-recorded timing session is intentionally active. The records survive prompts but
-are removed by `cargo clean`.
+status, commit, and tracked-diff fingerprint under ignored `target/workflow/`.
+Extra commands only need the workflow wrapper when a recorded timing session is
+intentionally active. The records survive prompts but are removed by
+`cargo clean`.
 
 Use `wait-start` and `wait-end` only for intervals actually spent waiting for
 tools. Do not count editing or investigation while a command runs as waiting.
@@ -124,8 +124,7 @@ bash scripts/run-python.sh scripts/workflow.py baseline /tmp/reviewed-check.log 
   --revision COMMIT
 ```
 
-Subsequent completed full runs report new, still-failing, and
-no-longer-reported nextest failures. A baseline never changes exit status or
-accepts failures. A focused or incomplete run cannot establish that omitted
-tests were fixed; inspect test counts, stage exit codes, and logs before drawing
-that conclusion.
+Subsequent completed full runs report new, still-failing, and no-longer-reported
+nextest failures. A baseline never changes exit status or accepts failures. A
+focused or incomplete run cannot establish that omitted tests were fixed;
+inspect test counts, stage exit codes, and logs before drawing that conclusion.
