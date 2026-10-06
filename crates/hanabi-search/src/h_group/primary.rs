@@ -158,6 +158,7 @@ pub(super) struct ClueInterpretationPlan {
 /// Public snapshot inputs only; counts are indexed by `IdentityId::index()`.
 /// Domains, heights, and count slices must belong to the active variant.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) struct SaveClueInputs<'a> {
     pub(super) clue: GenericClue,
     pub(super) variant: &'a VariantSpec,
@@ -203,6 +204,7 @@ impl ClueInterpretationPlan {
 
     /// Physical/base Level 1 Save possibilities, without contextual clue-choice
     /// or Loaded conventions. This kernel is deliberately unwired.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn direct_save(inputs: SaveClueInputs<'_>) -> Self {
         let mut plan = Self {
             kind: HGroupClueKind::Unrecognized,
