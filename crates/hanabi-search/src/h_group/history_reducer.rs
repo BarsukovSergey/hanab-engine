@@ -1445,13 +1445,17 @@ impl ReplayReducer {
             let target_already_loaded = self.pending_connections.iter().any(|connection| {
                 connection.actor == *target && self.pending_connections.is_active(connection)
             });
+            let immediate_play = ClueInterpretationPlan::direct_play(
+                &view.variant,
+                &self.stack_heights.map(usize::from),
+                public_clue,
+                play_identities,
+            );
             let direct_play = IdentitySet::from_mask(
-                play_identities
+                immediate_play
+                    .play_identities
                     .iter()
-                    .filter(|identity| {
-                        is_playable_at(self.stack_heights, *identity)
-                            && !self.pending_connections.identity_is_queued(*identity)
-                    })
+                    .filter(|identity| !self.pending_connections.identity_is_queued(*identity))
                     .fold(0, |mask, identity| mask | (1 << identity.index())),
             );
             let connection_hypotheses = play_identities
