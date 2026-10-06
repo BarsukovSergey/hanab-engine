@@ -1,4 +1,4 @@
-use hanabi_core::{Card, CardId, ClueFacts, GenericClue, Rank, VariantSpec};
+use hanabi_core::{Card, CardId, ClueFacts, GenericClue, VariantSpec};
 
 use super::{HGroupClueInterpretation, HGroupClueKind, HGroupSaveKind, IdentitySet};
 
@@ -7,7 +7,8 @@ use super::{HGroupClueInterpretation, HGroupClueKind, HGroupSaveKind, IdentitySe
 /// <https://hanabi.github.io/level-8/#burning-end-game-stalling>
 /// Reviewed in p4v0s1 turn 48. Ambiguous cards cannot cover multiple ranks.
 pub(super) fn fully_clued_endgame(
-    stacks: [u8; 5],
+    variant: &VariantSpec,
+    stacks: &[usize],
     deck: usize,
     players: usize,
     cards: impl Iterator<Item = (bool, IdentitySet)>,
@@ -17,13 +18,21 @@ pub(super) fn fully_clued_endgame(
     }
     let covered = cards
         .filter(|(positive, identities)| *positive && identities.len() == 1)
-        .fold(IdentitySet::from_mask(0), |all, (_, identities)| {
+        .fold(IdentitySet::default(), |all, (_, identities)| {
             all.union(identities)
         });
-    hanabi_core::Suit::ALL.into_iter().all(|suit| {
-        Rank::ALL.into_iter().all(|rank| {
-            rank.number() <= stacks[suit.index()] || covered.contains(Card::new(suit, rank))
-        })
+    variant.identities().identities().iter().all(|identity| {
+        let suit = variant
+            .stack_suits()
+            .iter()
+            .position(|suit| *suit == identity.suit)
+            .expect("active stack");
+        let rank = variant
+            .card_ranks()
+            .iter()
+            .position(|rank| *rank == identity.rank)
+            .expect("active rank");
+        rank < stacks[suit] || covered.contains_id(identity.id)
     })
 }
 
@@ -34,12 +43,13 @@ pub(super) fn strictly_narrows(before: IdentitySet, after: IdentitySet) -> bool 
 /// Pre-clue promise narrowed by accumulated literal information. This is
 /// deliberately independent of the current physical face and current clue.
 pub(super) fn prior_superposition<'a>(
+    view: &hanabi_core::PlayerView,
     card: CardId,
     facts: ClueFacts,
-    stacks: [u8; 5],
+    stacks: &[usize],
     clues: impl DoubleEndedIterator<Item = &'a HGroupClueInterpretation>,
 ) -> IdentitySet {
-    let literal = IdentitySet::from_mask(facts.identity_mask());
+    let literal = IdentitySet::from_bits(facts.identity_mask_in(&view.variant));
     let Some(prior) = clues.rev().find(|prior| prior.focus == card) else {
         return literal;
     };
@@ -50,11 +60,11 @@ pub(super) fn prior_superposition<'a>(
     if promised.is_empty() {
         return literal;
     }
-    let useful = IdentitySet::from_mask(
+    let useful = IdentitySet::from_bits(
         promised
-            .iter()
-            .filter(|identity| identity.rank.number() > stacks[identity.suit.index()])
-            .fold(0, |mask, identity| mask | (1 << identity.index())),
+            .iter_ids()
+            .filter(|id| super::identity::connection_live(view, stacks, *id))
+            .fold(0, |mask, id| mask | (1 << id.index())),
     );
     if useful.is_empty() { promised } else { useful }
 }
@@ -62,18 +72,27 @@ pub(super) fn prior_superposition<'a>(
 /// Exact identity established for a protected card without looking at its
 /// hidden face. Shared by Save and Chop Move value checks.
 pub(super) fn protected_identity_from_clues<'a>(
+    view: &hanabi_core::PlayerView,
     card: CardId,
     facts: ClueFacts,
-    stacks: [u8; 5],
+    stacks: &[usize],
     clues: impl DoubleEndedIterator<Item = &'a HGroupClueInterpretation>,
 ) -> Option<Card> {
-    let literal = IdentitySet::from_mask(facts.identity_mask());
+    let literal = IdentitySet::from_bits(facts.identity_mask_in(&view.variant));
     if literal.len() == 1 {
-        return literal.iter().next();
+        return literal
+            .iter_ids()
+            .next()
+            .map(|id| super::identity::connection_card(view, id));
     }
-    let remaining = remaining_prior_play_identities(card, facts, stacks, clues);
+    let remaining = remaining_prior_play_identities(view, card, facts, stacks, clues);
     (remaining.len() == 1)
-        .then(|| remaining.iter().next())
+        .then(|| {
+            remaining
+                .iter_ids()
+                .next()
+                .map(|id| super::identity::connection_card(view, id))
+        })
         .flatten()
 }
 
@@ -81,38 +100,39 @@ pub(super) fn protected_identity_from_clues<'a>(
 /// and stacks *before* a reclue. Later fill-ins and completed predecessors can
 /// resolve an originally ambiguous Play promise without another Play Clue.
 pub(super) fn prior_play_is_ready<'a>(
+    view: &hanabi_core::PlayerView,
     card: CardId,
     facts: ClueFacts,
-    stacks: [u8; 5],
+    stacks: &[usize],
     clues: impl DoubleEndedIterator<Item = &'a HGroupClueInterpretation>,
 ) -> bool {
-    let remaining = remaining_prior_play_identities(card, facts, stacks, clues);
+    let remaining = remaining_prior_play_identities(view, card, facts, stacks, clues);
     !remaining.is_empty()
         && remaining
-            .iter()
-            .all(|identity| identity.rank.number() == stacks[identity.suit.index()] + 1)
+            .iter_ids()
+            .all(|id| view.variant.playable(stacks, id))
 }
 
 /// Remaining identities of an existing useful Play promise, using only the
 /// literal facts and stack heights available at the event being interpreted.
 pub(super) fn remaining_prior_play_identities<'a>(
+    view: &hanabi_core::PlayerView,
     card: CardId,
     facts: ClueFacts,
-    stacks: [u8; 5],
+    stacks: &[usize],
     clues: impl DoubleEndedIterator<Item = &'a HGroupClueInterpretation>,
 ) -> IdentitySet {
+    let literal = IdentitySet::from_bits(facts.identity_mask_in(&view.variant));
     clues
         .rev()
         .find(|clue| clue.focus == card)
         .map_or_else(IdentitySet::default, |clue| {
-            IdentitySet::from_mask(
+            IdentitySet::from_bits(
                 clue.play_identities
-                    .iter()
-                    .filter(|identity| {
-                        facts.allows(*identity)
-                            && identity.rank.number() > stacks[identity.suit.index()]
-                    })
-                    .fold(0, |mask, identity| mask | (1 << identity.index())),
+                    .intersection(literal)
+                    .iter_ids()
+                    .filter(|id| super::identity::connection_live(view, stacks, *id))
+                    .fold(0, |mask, id| mask | (1 << id.index())),
             )
         })
 }
@@ -362,7 +382,7 @@ fn kind_from_masks(
 
 #[cfg(test)]
 mod tests {
-    use hanabi_core::{Card, Clue, Suit};
+    use hanabi_core::{Card, Clue, Rank, Suit};
 
     use super::*;
 
@@ -846,7 +866,7 @@ mod tests {
 
     #[test]
     fn played_domains_cannot_change_endgame_coverage_when_refined() {
-        let stacks = [4; 5];
+        let stacks = [4_usize; 5];
         let dead = identity(Suit::Red, Rank::One).union(identity(Suit::Blue, Rank::Four));
         for covered_suits in 0..=5 {
             let covered = Suit::ALL[..covered_suits]
@@ -855,7 +875,8 @@ mod tests {
                 .collect::<Vec<_>>();
             let check = |domain| {
                 fully_clued_endgame(
-                    stacks,
+                    &VariantSpec::no_variant(),
+                    &stacks,
                     0,
                     4,
                     covered.iter().copied().chain([(true, domain)]),

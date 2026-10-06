@@ -1,6 +1,6 @@
 use super::{
     Clue, ConventionJournal, HGroupMoveKind, HGroupRuleEffects, HGroupTurnContext, IdentitySet,
-    ObservedEvent, PlayerId, PlayerView, Rank, five_chop_moved_card, identity_of,
+    ObservedEvent, PlayerId, PlayerView, Rank, five_chop_moved_card,
     is_card_identity_accounted_trash, protected_cards, push_signal,
 };
 
@@ -38,49 +38,52 @@ fn card_is_accounted_trash(
     gotten: &super::CardSet,
     card: super::CardId,
 ) -> bool {
-    let possibilities = identity_of(view, card)
-        .map(IdentitySet::singleton)
+    let possibilities = context
+        .historical
+        .identity(card)
+        .map(|identity| super::super::identity::connection_domain(view, identity))
         .or_else(|| {
             effects
                 .signals
                 .facts()
                 .known_identity(card)
-                .map(IdentitySet::singleton)
+                .map(|identity| super::super::identity::connection_domain(view, identity))
         })
         .unwrap_or_else(|| {
-            context
-                .after
-                .facts
-                .get(card.index())
-                .map_or_else(IdentitySet::all, |facts| {
-                    IdentitySet::from_mask(facts.identity_mask())
-                })
+            context.after.facts.get(card.index()).map_or_else(
+                || IdentitySet::all_in(view.variant.identities()),
+                |facts| IdentitySet::from_bits(facts.identity_mask_in(&view.variant)),
+            )
         });
     !possibilities.is_empty()
-        && possibilities.iter().all(|identity| {
-            is_card_identity_accounted_trash(
-                view,
-                card,
-                identity,
-                context.after.stack_heights,
-                gotten,
-                effects.signals.facts(),
-            ) || gotten.iter().copied().any(|other| {
-                if other == card {
-                    return false;
-                }
-                let facts = context.before.facts[other.index()];
-                super::super::primary::protected_identity_from_clues(
-                    other,
-                    facts,
-                    context.before.stack_heights,
-                    effects
-                        .clues
-                        .iter()
-                        .filter(|clue| clue.turn < context.entry.turn),
-                ) == Some(identity)
+        && possibilities
+            .iter_in(view.variant.identities())
+            .all(|identity| {
+                is_card_identity_accounted_trash(
+                    view,
+                    context.historical,
+                    card,
+                    identity,
+                    &context.after.dynamic_stack_heights,
+                    gotten,
+                    effects.signals.facts(),
+                ) || gotten.iter().copied().any(|other| {
+                    if other == card {
+                        return false;
+                    }
+                    let facts = context.before.facts[other.index()];
+                    super::super::primary::protected_identity_from_clues(
+                        view,
+                        other,
+                        facts,
+                        &context.before.dynamic_stack_heights,
+                        effects
+                            .clues
+                            .iter()
+                            .filter(|clue| clue.turn < context.entry.turn),
+                    ) == Some(identity)
+                })
             })
-        })
 }
 
 fn clue_domain_is_accounted(
@@ -91,16 +94,17 @@ fn clue_domain_is_accounted(
     touched: &[super::CardId],
     gotten: &super::CardSet,
 ) -> bool {
-    IdentitySet::all()
-        .iter()
-        .filter(|identity| clue.matches(*identity))
+    IdentitySet::all_in(view.variant.identities())
+        .filter_clue(&view.variant, clue.into(), true)
+        .iter_in(view.variant.identities())
         .all(|identity| {
             touched.iter().copied().any(|card| {
                 is_card_identity_accounted_trash(
                     view,
+                    context.historical,
                     card,
                     identity,
-                    context.after.stack_heights,
+                    &context.after.dynamic_stack_heights,
                     gotten,
                     effects.signals.facts(),
                 )

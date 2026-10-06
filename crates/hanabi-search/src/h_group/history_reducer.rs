@@ -250,6 +250,7 @@ impl ReplayReducer {
                 hands: self.hands.clone(),
                 facts: self.facts.clone(),
                 stack_heights: self.stack_heights,
+                dynamic_stack_heights: connection_heights(view, Some(entry.turn)),
                 clue_tokens: self.historical_clue_tokens,
                 deck_size: self.historical_deck_size,
                 early_game: self.early_game,
@@ -301,6 +302,7 @@ impl ReplayReducer {
                     hands: &self.hands,
                     facts: &self.facts,
                     stack_heights: self.stack_heights,
+                    dynamic_stack_heights: connection_heights(view, Some(entry.turn + 1)),
                     clue_tokens: self.historical_clue_tokens,
                     deck_size: self.historical_deck_size,
                     early_game: self.early_game,
@@ -662,22 +664,30 @@ impl ReplayReducer {
         if rule_enabled(profile, HGroupRuleId::Stalling)
             && self.required_fixes.iter().next().is_none()
             && super::primary::fully_clued_endgame(
-                self.stack_heights,
+                &view.variant,
+                &basic_heights,
                 self.historical_deck_size,
                 self.hands.len(),
                 self.hands.iter().flatten().map(|card| {
                     let identities = historical.identity(*card).map_or_else(
-                        || IdentitySet::from_mask(self.facts[card.index()].identity_mask()),
-                        IdentitySet::singleton,
+                        || {
+                            IdentitySet::from_bits(
+                                self.facts[card.index()].identity_mask_in(&view.variant),
+                            )
+                        },
+                        |identity| super::identity::connection_domain(view, identity),
                     );
                     let identities = if historical.identity(*card).is_none() {
-                        IdentitySet::from_mask(
+                        IdentitySet::from_bits(
                             identities
-                                .iter()
-                                .filter(|identity| {
-                                    historical.has_unseen_copy(*identity, &self.hands)
+                                .iter_ids()
+                                .filter(|id| {
+                                    historical.has_unseen_copy(
+                                        super::identity::connection_card(view, *id),
+                                        &self.hands,
+                                    )
                                 })
-                                .fold(0, |mask, identity| mask | (1 << identity.index())),
+                                .fold(0, |mask, id| mask | (1 << id.index())),
                         )
                     } else {
                         identities
@@ -688,8 +698,8 @@ impl ReplayReducer {
                         // Refining an entirely played domain cannot cover
                         // any missing rank in fully_clued_endgame. Avoid
                         // recursively rebuilding owner knowledge for it.
-                        && identities.iter().any(|identity| {
-                            identity.rank.number() > self.stack_heights[identity.suit.index()]
+                        && identities.iter_ids().any(|id| {
+                            super::identity::connection_live(view, &basic_heights, id)
                         }) {
                         subjective_action_context_before(
                             SubjectiveReplayRequest {
@@ -704,7 +714,7 @@ impl ReplayReducer {
                             *card,
                         )
                         .and_then(|context| context.known_identity)
-                        .map_or(identities, IdentitySet::singleton)
+                        .map_or(identities, |identity| connection_domain(view, identity))
                     } else {
                         identities
                     };
@@ -1273,9 +1283,10 @@ impl ReplayReducer {
                                     }
                                     historical.identity(other) == Some(*identity)
                                         || primary::protected_identity_from_clues(
+                                            view,
                                             other,
                                             before.facts[other.index()],
-                                            self.stack_heights,
+                                            &basic_heights,
                                             self.clues.iter(),
                                         ) == Some(*identity)
                                 })
@@ -1344,9 +1355,10 @@ impl ReplayReducer {
                 previously_promptable.contains(card)
                     && (self.already_playing.contains(card)
                         || primary::prior_play_is_ready(
+                            view,
                             *card,
                             before.facts[card.index()],
-                            self.stack_heights,
+                            &basic_heights,
                             self.clues.iter(),
                         )
                         || convention_facts_before_clue

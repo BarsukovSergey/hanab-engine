@@ -84,7 +84,14 @@ impl<'a> HistoricalView<'a> {
                     | ObservedEvent::Discarded { identity: card, .. } if card == identity)
             })
             .count();
-        visible + revealed < usize::from(identity.rank.copies())
+        visible + revealed
+            < self
+                .source
+                .variant
+                .standard_identity_id(identity)
+                .map_or(0, |id| {
+                    usize::from(self.source.variant.copies(id).unwrap_or(0))
+                })
     }
 }
 
@@ -94,6 +101,7 @@ pub(super) struct HGroupTurnSnapshot {
     pub(super) hands: Vec<Vec<CardId>>,
     pub(super) facts: Vec<ClueFacts>,
     pub(super) stack_heights: [u8; 5],
+    pub(super) dynamic_stack_heights: Vec<usize>,
     pub(super) clue_tokens: u8,
     pub(super) deck_size: usize,
     pub(super) early_game: bool,
@@ -120,6 +128,7 @@ pub(super) struct HGroupTurnView<'a> {
     pub(super) hands: &'a [Vec<CardId>],
     pub(super) facts: &'a [ClueFacts],
     pub(super) stack_heights: [u8; 5],
+    pub(super) dynamic_stack_heights: Vec<usize>,
     pub(super) clue_tokens: u8,
     pub(super) deck_size: usize,
     pub(super) early_game: bool,

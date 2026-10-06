@@ -1,4 +1,4 @@
-use hanabi_core::{Card, CardId, ObservedEvent, PlayerView, Rank};
+use hanabi_core::{Card, CardId, ObservedEvent, PlayerView};
 
 use super::{CardSet, ConventionFacts, HGroupCardInference};
 
@@ -180,27 +180,32 @@ pub(super) fn is_trash_at(stack_heights: [u8; 5], identity: Card) -> bool {
 }
 
 pub(super) fn card_is_trash(view: &PlayerView, identity: Card) -> bool {
-    usize::from(identity.rank.number()) <= view.play_stacks[identity.suit.index()].len()
+    !view
+        .variant
+        .standard_identity_id(identity)
+        .is_some_and(|id| connection_live(view, &connection_heights(view, None), id))
 }
 
 pub(super) fn is_eventually_useful(view: &PlayerView, identity: Card) -> bool {
-    let stack_height = view.play_stacks[identity.suit.index()].len();
-    if usize::from(identity.rank.number()) <= stack_height {
+    if card_is_trash(view, identity) {
         return false;
     }
-    Rank::ALL
-        .iter()
-        .copied()
-        .filter(|rank| {
-            usize::from(rank.number()) > stack_height && rank.number() < identity.rank.number()
-        })
-        .all(|rank| {
-            let lower = Card::new(identity.suit, rank);
+    connection_predecessors(view, &connection_heights(view, None), identity)
+        .into_iter()
+        .all(|lower| {
             view.discard_pile
                 .iter()
                 .filter(|(_, card)| *card == lower)
                 .count()
-                < usize::from(rank.copies())
+                < usize::from(
+                    view.variant
+                        .copies(
+                            view.variant
+                                .standard_identity_id(lower)
+                                .expect("active predecessor"),
+                        )
+                        .expect("active copies"),
+                )
         })
 }
 
@@ -226,7 +231,11 @@ pub(super) fn is_convention_trash(
                     && own_notes.iter().any(|note| {
                         note.card == card.id
                             && note.identities.len() == 1
-                            && note.identities.contains(identity)
+                            && note
+                                .identities
+                                .intersection(connection_domain(view, identity))
+                                .len()
+                                == 1
                     }))
         })
         .take(2)
@@ -243,16 +252,20 @@ pub(super) fn is_convention_trash(
 /// facts established elsewhere on the board.
 pub(super) fn is_card_identity_accounted_trash(
     view: &PlayerView,
+    historical: super::HistoricalView<'_>,
     card: CardId,
     identity: Card,
-    stack_heights: [u8; 5],
+    stack_heights: &[usize],
     gotten: &CardSet,
     convention_facts: &ConventionFacts,
 ) -> bool {
-    identity.rank.number() <= stack_heights[identity.suit.index()]
+    !view
+        .variant
+        .standard_identity_id(identity)
+        .is_some_and(|id| connection_live(view, stack_heights, id))
         || gotten.iter().copied().any(|other| {
             other != card
-                && (identity_of(view, other) == Some(identity)
+                && (historical.identity(other) == Some(identity)
                     || convention_facts.known_identity(other) == Some(identity))
         })
 }
