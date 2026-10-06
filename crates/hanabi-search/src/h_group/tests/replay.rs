@@ -2692,6 +2692,8 @@ fn fifth_replay_bluff_interrupts_an_ordinary_clued_play() {
         &replay.hands,
         &replay.cards.already_playing,
         &replay.pending_connections,
+        &replay.cards.facts,
+        d.view().turn,
         Card::new(Suit::Purple, Rank::Three),
         None,
     ));

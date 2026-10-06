@@ -653,6 +653,7 @@ impl ReplayReducer {
         let priority_load = if rule_enabled(profile, HGroupRuleId::Priority) {
             super::recognition::retract_loaded_priority(
                 entry,
+                view,
                 &self.hands,
                 &mut self.forced_playable,
                 &mut self.signals,
@@ -1092,14 +1093,16 @@ impl ReplayReducer {
                 // validation decides whether the overall clue is a
                 // useful duplication; rank-2 identity compilation must
                 // first preserve every convention-readable branch.
-                let delayed_claimed = IdentitySet::from_mask(
+                let delayed_claimed = IdentitySet::from_bits(
                     raw_focus_identities
                         .intersection(claimed_identities)
-                        .iter()
+                        .iter_in(view.variant.identities())
                         .filter(|identity| {
-                            identity.rank.number() > self.stack_heights[identity.suit.index()] + 1
+                            !connection_predecessors(view, &basic_heights, *identity).is_empty()
                         })
-                        .fold(0, |mask, identity| mask | (1 << identity.index())),
+                        .fold(0, |mask, identity| {
+                            mask | crate::h_group::identity::connection_bit(view, identity)
+                        }),
                 );
                 let delayed_claimed_plays = snapshot_play_identities(
                     profile,
@@ -1235,8 +1238,14 @@ impl ReplayReducer {
             if rule_enabled(profile, HGroupRuleId::IntermediateBluffs)
                 && *clue == Clue::Rank(Rank::Three)
                 && focus_identities
-                    .iter()
-                    .all(|identity| !is_playable_at(self.stack_heights, identity))
+                    .iter_in(view.variant.identities())
+                    .all(|identity| {
+                        !crate::h_group::identity::connection_playable(
+                            view,
+                            &basic_heights,
+                            identity,
+                        )
+                    })
             {
                 let actor = next_player(*giver, self.hands.len());
                 let bluff_card = finesse_position_id(&self.hands[actor.index()], &gotten, 0);
@@ -1244,19 +1253,28 @@ impl ReplayReducer {
                     historical
                         .identity(card)
                         .map_or(actor == view.observer, |identity| {
-                            is_playable_at(self.stack_heights, identity)
-                                && !bluff_play_connects(*clue, identity)
+                            crate::h_group::identity::connection_playable(
+                                view,
+                                &basic_heights,
+                                identity,
+                            ) && !bluff_play_connects(view, *clue, identity)
                         })
                 });
                 if bluff_target_order_is_legal(*clue, actor, *target) && bluff_is_credible {
-                    let three_bluff_targets = IdentitySet::from_mask(
+                    let three_bluff_targets = IdentitySet::from_bits(
                         focus_identities
-                            .iter()
+                            .iter_in(view.variant.identities())
                             .filter(|identity| {
-                                bluff_target_kind_at(self.stack_heights, *clue, *identity)
-                                    == Some(BluffTargetKind::Three)
+                                bluff_target_kind_at(
+                                    view,
+                                    &connection_heights(view, Some(entry.turn)),
+                                    *clue,
+                                    *identity,
+                                ) == Some(BluffTargetKind::Three)
                             })
-                            .fold(0, |mask, identity| mask | (1 << identity.index())),
+                            .fold(0, |mask, identity| {
+                                mask | crate::h_group::identity::connection_bit(view, identity)
+                            }),
                     );
                     intermediate_bluff = !three_bluff_targets.is_empty();
                     play_identities = play_identities.union(three_bluff_targets);
@@ -1398,8 +1416,8 @@ impl ReplayReducer {
                 historical
                     .identity(focus)
                     .and_then(|identity| {
-                        let height = self.stack_heights[identity.suit.index()];
-                        if identity.rank.number() <= height + 2 {
+                        let predecessors = connection_predecessors(view, &basic_heights, identity);
+                        if predecessors.len() <= 1 {
                             return None;
                         }
                         let context = ConnectionPlanningContext {
@@ -1411,9 +1429,7 @@ impl ReplayReducer {
                             &self.pending_connections,
                             &self.invisibly_clued,
                         );
-                        let complete = ((height + 1)..identity.rank.number()).all(|rank| {
-                            let expected =
-                                Card::new(identity.suit, Rank::ALL[usize::from(rank - 1)]);
+                        let complete = predecessors.into_iter().all(|expected| {
                             self.pending_connections.identity_is_queued(expected)
                                 || interpretation::snapshot_accounted(
                                     expected,
@@ -1433,7 +1449,11 @@ impl ReplayReducer {
                                 historical.identity(*card) == Some(step.expected)
                                     || (step.actor == view.observer
                                         && step.cards.iter().all(|candidate| {
-                                            self.facts[candidate.index()].allows(step.expected)
+                                            connection_allows(
+                                                view,
+                                                self.facts[candidate.index()],
+                                                step.expected,
+                                            )
                                         })
                                         && historical.has_unseen_copy(step.expected, &self.hands))
                             })
@@ -1580,10 +1600,10 @@ impl ReplayReducer {
                                 .filter(|hypothesis| hypothesis.loaded)
                                 .max_by_key(|hypothesis| {
                                     let identity = hypothesis.focus_identity;
-                                    let base = identity
-                                        .rank
-                                        .number()
-                                        .saturating_sub(self.stack_heights[identity.suit.index()]);
+                                    let base =
+                                        connection_predecessors(view, &basic_heights, identity)
+                                            .len()
+                                            + 1;
                                     let layers = hypothesis
                                         .connection_steps
                                         .iter()
@@ -1591,8 +1611,10 @@ impl ReplayReducer {
                                         .sum::<usize>();
                                     (
                                         hypothesis.required_fix.is_none(),
-                                        usize::from(base) + layers,
-                                        core::cmp::Reverse(identity.index()),
+                                        base + layers,
+                                        core::cmp::Reverse(
+                                            view.variant.standard_identity_id(identity),
+                                        ),
                                     )
                                 })
                                 .map(|hypothesis| hypothesis.focus_identity)
@@ -1906,7 +1928,7 @@ impl ReplayReducer {
                             Some(HGroupMoveKind::AmbiguousFinesse)
                         } else if connection.cards.len() > 1
                             && first_actual
-                                .is_some_and(|identity| bluff_play_connects(*clue, identity))
+                                .is_some_and(|identity| bluff_play_connects(view, *clue, identity))
                         {
                             Some(HGroupMoveKind::ClandestineFinesse)
                         } else if connection.cards.len() > 1 {

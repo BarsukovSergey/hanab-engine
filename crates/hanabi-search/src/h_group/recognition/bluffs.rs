@@ -1,9 +1,12 @@
 use super::{
-    Card, CardId, CardSet, Clue, ConnectionManager, ConnectionObligation,
-    ConnectionTransitionReason, ConventionJournal, HGroupClueKind, HGroupConnectionKind,
-    HGroupMoveKind, HGroupRuleEffects, HGroupTurnSnapshot, IdentitySet, ObservedEvent,
-    ObservedHistoryEntry, PlayerView, PromiseId, Rank, bluff_play_connects, bluff_target_kind_at,
-    finesse_position_id, identity_of, is_playable_at, next_player, push_signal, was_clued_before,
+    CardId, CardSet, Clue, ConnectionManager, ConnectionObligation, ConnectionTransitionReason,
+    ConventionJournal, HGroupClueKind, HGroupConnectionKind, HGroupMoveKind, HGroupRuleEffects,
+    HGroupTurnSnapshot, IdentitySet, ObservedEvent, ObservedHistoryEntry, PlayerView, PromiseId,
+    Rank, bluff_play_connects, bluff_target_kind_at, finesse_position_id, next_player, push_signal,
+    was_clued_before,
+};
+use crate::h_group::identity::{
+    connection_allows, connection_playable, connection_predecessors, connection_trash,
 };
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -11,7 +14,7 @@ pub(in crate::h_group) fn apply_bluff_effects(
     entry: &ObservedHistoryEntry,
     view: &PlayerView,
     hands: &[Vec<CardId>],
-    stack_heights: [u8; 5],
+    stack_heights: &[usize],
     explicitly_clued: &CardSet,
     already_playing: &CardSet,
     pending: &mut ConnectionManager,
@@ -34,17 +37,20 @@ pub(in crate::h_group) fn apply_bluff_effects(
     let Some(focus) = touched.last().copied() else {
         return;
     };
-    let Some(focus_identity) = identity_of(view, focus) else {
+    let Some(focus_identity) = super::super::HistoricalView::new(view, entry.turn).identity(focus)
+    else {
         return;
     };
-    let height = stack_heights[focus_identity.suit.index()];
+    let predecessors = connection_predecessors(view, stack_heights, focus_identity);
     let focus_is_one_away = super::super::bluff::bluff_through_clued_cards(
-        usize::from(height),
+        view,
+        stack_heights,
         focus_identity,
         |needed| {
             hands.iter().flatten().any(|card| {
                 explicitly_clued.contains(card)
-                    && identity_of(view, *card)
+                    && super::super::HistoricalView::new(view, entry.turn)
+                        .identity(*card)
                         .or_else(|| signals.facts().known_identity_before(*card, entry.turn))
                         == Some(needed)
             })
@@ -54,19 +60,29 @@ pub(in crate::h_group) fn apply_bluff_effects(
     let hard_three_self = actor == *target
         && *clue == Clue::Rank(Rank::Three)
         && focus_identity.rank == Rank::Three
-        && height == 0;
-    if is_playable_at(stack_heights, focus_identity) || !(focus_is_one_away || hard_three_self) {
+        && predecessors.len() == 2;
+    if connection_playable(view, stack_heights, focus_identity)
+        || !(focus_is_one_away || hard_three_self)
+    {
         return;
     }
-    let expected_connector = Card::new(focus_identity.suit, Rank::ALL[usize::from(height)]);
+    let expected_connector = match predecessors.first().copied() {
+        Some(card) => card,
+        None => return,
+    };
     if super::super::bluff::bluff_connector_is_promised(
         view,
         hands,
         already_playing,
         pending,
+        signals.facts(),
+        entry.turn,
         expected_connector,
         Some(focus),
     ) {
+        return;
+    }
+    if super::super::bluff::bluff_is_queued(pending, actor, Some(focus)) {
         return;
     }
     if actor == *target {
@@ -79,15 +95,18 @@ pub(in crate::h_group) fn apply_bluff_effects(
         };
         if hands.iter().enumerate().any(|(player, hand)| {
             player != actor.index()
-                && hand
-                    .iter()
-                    .any(|card| identity_of(view, *card) == Some(expected_connector))
+                && hand.iter().any(|card| {
+                    super::super::HistoricalView::new(view, entry.turn).identity(*card)
+                        == Some(expected_connector)
+                })
         }) {
             return;
         }
-        let bluff_identity = identity_of(view, bluff_card);
+        let bluff_identity =
+            super::super::HistoricalView::new(view, entry.turn).identity(bluff_card);
         if bluff_identity.is_some_and(|identity| {
-            !is_playable_at(stack_heights, identity) || bluff_play_connects(*clue, identity)
+            !connection_playable(view, stack_heights, identity)
+                || bluff_play_connects(view, *clue, identity)
         }) {
             return;
         }
@@ -112,26 +131,19 @@ pub(in crate::h_group) fn apply_bluff_effects(
         );
         return;
     }
-    if super::super::bluff::bluff_is_queued(pending, actor, Some(focus)) {
-        return;
-    }
     // Bluff Prompts are illegal, and an unrelated playable elsewhere in the
     // hand cannot stand in for the card the reactor would actually blind-play.
     // https://hanabi.github.io/level-11/#bluff-prompts--prompt-bluffs-illegal
     let Some(bluff_card) = finesse_position_id(&hands[actor.index()], explicitly_clued, 0) else {
         return;
     };
-    let Some(bluff_identity) =
-        identity_of(view, bluff_card).filter(|identity| is_playable_at(stack_heights, *identity))
+    let Some(bluff_identity) = super::super::HistoricalView::new(view, entry.turn)
+        .identity(bluff_card)
+        .filter(|identity| connection_playable(view, stack_heights, *identity))
     else {
         return;
     };
-    let stack_height = usize::from(height);
-    if stack_height == Rank::ALL.len() {
-        return;
-    }
-    let expected_connector = Card::new(focus_identity.suit, Rank::ALL[stack_height]);
-    if bluff_identity == expected_connector || bluff_play_connects(*clue, bluff_identity) {
+    if bluff_identity == expected_connector || bluff_play_connects(view, *clue, bluff_identity) {
         // Cathy's Connecting Principle applies to rank clues as well as suit
         // clues. Any 1 connects to a rank-2 clue, so an off-suit 1 proves a
         // (possibly Layered) Finesse rather than a Bluff. The old check only
@@ -172,7 +184,7 @@ pub(in crate::h_group) fn apply_resolved_bluff_effects(
 ) {
     let clues = effects.clues;
     let facts = &before.facts;
-    let stack_heights = before.stack_heights;
+    let stack_heights = &before.dynamic_stack_heights;
     let already_playing = &mut *effects.already_playing;
     let pending = &mut *effects.pending;
     let signals = &mut *effects.signals;
@@ -205,54 +217,54 @@ pub(in crate::h_group) fn apply_resolved_bluff_effects(
     }) else {
         return;
     };
-    let connects = bluff_play_connects(
-        crate::h_group::standard_h_group_clue(&view.variant, clue.clue),
-        identity,
-    );
-    let legal_bluff_target = IdentitySet::all().iter().any(|candidate| {
-        identity_of(view, clue.focus).is_none_or(|visible| visible == candidate)
-            && crate::h_group::physical_clue_matches(view, clue.clue, candidate)
-            && facts[clue.focus.index()].allows(candidate)
-            && (bluff_target_kind_at(
-                stack_heights,
-                crate::h_group::standard_h_group_clue(&view.variant, clue.clue),
-                candidate,
-            )
-            .is_some()
-                || super::super::bluff::bluff_through_clued_cards(
-                    usize::from(clue.stack_heights[candidate.suit.index()]),
-                    candidate,
-                    |needed| {
-                        before.hands.iter().flatten().any(|prior| {
-                            was_clued_before(view, clue.turn, *prior)
-                                && identity_of(view, *prior)
-                                    .or_else(|| {
-                                        signals.facts().known_identity_before(*prior, clue.turn)
-                                    })
-                                    .or_else(|| {
-                                        super::super::bluff::literal_identity_through(
-                                            view, *prior, clue.turn,
-                                        )
-                                    })
-                                    .or_else(|| {
-                                        // Public Good Touch exclusions can
-                                        // identify a clued connector in the
-                                        // observer's own hidden hand too.
-                                        let mut useful = IdentitySet::from_mask(
-                                            facts[prior.index()].identity_mask(),
-                                        )
-                                        .iter()
-                                        .filter(|id| {
-                                            !super::super::is_trash_at(stack_heights, *id)
-                                        });
-                                        let only = useful.next()?;
-                                        useful.next().is_none().then_some(only)
-                                    })
-                                    == Some(needed)
-                        })
-                    },
-                ))
-    });
+    let connects = bluff_play_connects(view, clue.clue, identity);
+    let legal_bluff_target = IdentitySet::all_in(view.variant.identities())
+        .iter_in(view.variant.identities())
+        .any(|candidate| {
+            super::super::HistoricalView::new(view, clue.turn)
+                .identity(clue.focus)
+                .is_none_or(|visible| visible == candidate)
+                && crate::h_group::physical_clue_matches(view, clue.clue, candidate)
+                && connection_allows(view, facts[clue.focus.index()], candidate)
+                && (bluff_target_kind_at(view, &before.dynamic_stack_heights, clue.clue, candidate)
+                    .is_some()
+                    || super::super::bluff::bluff_through_clued_cards(
+                        view,
+                        &super::super::identity::connection_heights(view, Some(clue.turn)),
+                        candidate,
+                        |needed| {
+                            before.hands.iter().flatten().any(|prior| {
+                                was_clued_before(view, clue.turn, *prior)
+                                    && super::super::HistoricalView::new(view, clue.turn)
+                                        .identity(*prior)
+                                        .or_else(|| {
+                                            signals.facts().known_identity_before(*prior, clue.turn)
+                                        })
+                                        .or_else(|| {
+                                            super::super::bluff::literal_identity_through(
+                                                view, *prior, clue.turn,
+                                            )
+                                        })
+                                        .or_else(|| {
+                                            // Public Good Touch exclusions can
+                                            // identify a clued connector in the
+                                            // observer's own hidden hand too.
+                                            let mut useful = IdentitySet::from_bits(
+                                                facts[prior.index()]
+                                                    .identity_mask_in(&view.variant),
+                                            )
+                                            .iter_in(view.variant.identities())
+                                            .filter(|id| {
+                                                !connection_trash(view, stack_heights, *id)
+                                            });
+                                            let only = useful.next()?;
+                                            useful.next().is_none().then_some(only)
+                                        })
+                                        == Some(needed)
+                            })
+                        },
+                    ))
+        });
     if connects || !legal_bluff_target {
         return;
     }

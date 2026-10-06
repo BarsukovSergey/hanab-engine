@@ -79,7 +79,7 @@ mod turn_context;
 use action_analysis::{CompiledHGroupAction, HGroupActionKind, HGroupActionSet};
 pub use action_preference::ActionPreference;
 use action_preference::TerminalPlanProgress;
-use action_schedule::{ActionSchedule, StackTimeline};
+use action_schedule::ActionSchedule;
 pub use action_schedule::{ActionWindow, TurnCommitment};
 use bluff::{
     BluffTargetKind, bluff_play_connects, bluff_target_kind_at, bluff_target_order_is_legal,
@@ -1190,7 +1190,7 @@ fn has_higher_basic_priority(
     forced_playable: &CardSet,
     explicitly_clued: &CardSet,
     convention_facts: &ConventionFacts,
-    stack_heights: [u8; 5],
+    stack_heights: &[usize],
     actor: PlayerId,
     hand: &[CardId],
     candidate: CardId,
@@ -1199,10 +1199,10 @@ fn has_higher_basic_priority(
     played_identity: Card,
 ) -> bool {
     let priority_features = |card: CardId, identity: Card| {
-        let exact = facts[card.index()].identity_mask() == 1 << identity.index();
+        let exact = IdentitySet::from_bits(facts[card.index()].identity_mask_in(&view.variant))
+            == identity::connection_domain(view, identity);
         let blind = forced_playable.contains(&card) && !exact;
-        let next = (identity.rank != Rank::Five)
-            .then(|| Card::new(identity.suit, Rank::ALL[identity.rank.index() + 1]));
+        let next = identity::connection_successor(view, identity);
         let leads_other = next.is_some_and(|next| {
             hands
                 .iter()
@@ -1214,26 +1214,38 @@ fn has_higher_basic_priority(
                         && (forced_playable.contains(other)
                             || (explicitly_clued.contains(other)
                                 && (convention_facts.known_identity(*other) == Some(next)
-                                    || IdentitySet::from_mask(
-                                        facts[other.index()].identity_mask(),
+                                    || IdentitySet::from_bits(
+                                        facts[other.index()].identity_mask_in(&view.variant),
                                     )
-                                    .iter()
-                                    .filter(|id| !is_trash_at(stack_heights, *id))
+                                    .iter_in(view.variant.identities())
+                                    .filter(|id| {
+                                        !identity::connection_trash(view, stack_heights, *id)
+                                    })
                                     .collect::<Vec<_>>()
                                         == [next])))
                 })
         });
-        let terminal_chain = (candidate_identity.rank == Rank::Five
-            || played_identity.rank == Rank::Five)
-            && play_order::completes_own_terminal_chain(identity, |successor| {
-                hand.iter()
-                    .any(|other| facts[other.index()].identity_mask() == 1 << successor.index())
-            });
+        let terminal_chain =
+            (candidate_identity.rank == Rank::Five || played_identity.rank == Rank::Five) && {
+                let mut next = identity::connection_successor(view, identity);
+                let mut complete =
+                    matches!(identity.rank, Rank::Three | Rank::Four) && next.is_some();
+                while let Some(successor) = next {
+                    complete &= hand.iter().any(|other| {
+                        IdentitySet::from_bits(facts[other.index()].identity_mask_in(&view.variant))
+                            == identity::connection_domain(view, successor)
+                    });
+                    next = identity::connection_successor(view, successor);
+                }
+                complete
+            };
         let leads_self = !terminal_chain
             && next.is_some_and(|next| {
                 hand.iter().copied().any(|other| {
                     other != card
-                        && (facts[other.index()].identity_mask() == 1 << next.index()
+                        && (IdentitySet::from_bits(
+                            facts[other.index()].identity_mask_in(&view.variant),
+                        ) == identity::connection_domain(view, next)
                             || convention_facts.known_identity(other) == Some(next))
                 })
             });

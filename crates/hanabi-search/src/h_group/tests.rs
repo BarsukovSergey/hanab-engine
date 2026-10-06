@@ -13,6 +13,7 @@ mod generic_focus_context;
 mod replay;
 mod replay_memo;
 mod snapshots;
+mod v4_advanced_connections;
 
 // Convention expectations come from reviewed replay positions. The support
 // module provides only algorithmic self-play completion checks, not invented

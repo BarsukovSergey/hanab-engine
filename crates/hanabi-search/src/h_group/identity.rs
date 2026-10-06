@@ -10,6 +10,28 @@ pub(super) fn connection_domain(view: &PlayerView, card: Card) -> crate::Identit
     )
 }
 
+pub(super) fn connection_bit(view: &PlayerView, card: Card) -> u64 {
+    view.variant
+        .standard_identity_id(card)
+        .map_or(0, |id| 1_u64 << id.index())
+}
+
+/// The retained convention-fact exclusion store uses Card positions. Translate
+/// at the consumer boundary; it must never be combined with active-ID masks.
+pub(super) fn connection_fact_domain(
+    view: &PlayerView,
+    legacy: crate::IdentitySet,
+) -> crate::IdentitySet {
+    crate::IdentitySet::from_bits(
+        view.variant
+            .identities()
+            .identities()
+            .iter()
+            .filter(|identity| legacy.contains(Card::new(identity.suit, identity.rank)))
+            .fold(0, |mask, identity| mask | (1_u64 << identity.id.index())),
+    )
+}
+
 pub(super) fn connection_allows(
     view: &PlayerView,
     facts: hanabi_core::ClueFacts,
@@ -33,6 +55,27 @@ pub(super) fn connection_playable(view: &PlayerView, heights: &[usize], card: Ca
     view.variant
         .standard_identity_id(card)
         .is_some_and(|id| view.variant.playable(heights, id))
+}
+
+pub(super) fn connection_trash(view: &PlayerView, heights: &[usize], card: Card) -> bool {
+    !view
+        .variant
+        .standard_identity_id(card)
+        .is_some_and(|id| connection_live(view, heights, id))
+}
+
+pub(super) fn connection_successor(view: &PlayerView, card: Card) -> Option<Card> {
+    view.variant
+        .standard_identity_id(card)
+        .and_then(|id| view.variant.successor(id))
+        .map(|id| connection_card(view, id))
+}
+
+pub(super) fn connection_predecessor(view: &PlayerView, card: Card) -> Option<Card> {
+    view.variant
+        .standard_identity_id(card)
+        .and_then(|id| view.variant.predecessor(id))
+        .map(|id| connection_card(view, id))
 }
 
 pub(super) fn connection_live(

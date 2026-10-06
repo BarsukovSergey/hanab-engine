@@ -5,6 +5,10 @@ use super::{
     finesse_position_id, focus, identity_of, is_critical_save_identity, is_playable_at,
     is_trash_at, next_player, protected_cards, push_signal, same_turn_signal, was_clued_before,
 };
+use crate::h_group::identity::{
+    connection_advance, connection_allows, connection_heights, connection_playable,
+    connection_predecessors, connection_successor, connection_trash,
+};
 
 #[allow(clippy::too_many_lines)]
 pub(in crate::h_group) fn apply_context_effects(
@@ -214,7 +218,7 @@ pub(in crate::h_group) fn apply_intermediate_bluff_effects(
     // https://hanabi.github.io/level-13/#the-good-touch-bluff
     let entry = context.entry;
     let hands = context.after.hands;
-    let stack_heights = context.after.stack_heights;
+    let stack_heights = &context.after.dynamic_stack_heights;
     let ObservedEvent::Clued {
         giver,
         target,
@@ -255,9 +259,13 @@ pub(in crate::h_group) fn apply_intermediate_bluff_effects(
         .any(|hypothesis| hypothesis.connection_steps.len() > 1);
     let special_three = !complete_double_finesse
         && !interpretation.focus_identities.is_empty()
-        && interpretation.focus_identities.iter().all(|identity| {
-            bluff_target_kind_at(stack_heights, *clue, identity) == Some(BluffTargetKind::Three)
-        });
+        && interpretation
+            .focus_identities
+            .iter_in(view.variant.identities())
+            .all(|identity| {
+                bluff_target_kind_at(view, &context.after.dynamic_stack_heights, *clue, identity)
+                    == Some(BluffTargetKind::Three)
+            });
     let impossible_new_connections = effects
         .pending
         .iter()
@@ -280,8 +288,11 @@ pub(in crate::h_group) fn apply_intermediate_bluff_effects(
         && !interpretation.focus_identities.is_empty()
         && interpretation
             .focus_identities
-            .iter()
-            .all(|identity| bluff_target_kind_at(stack_heights, *clue, identity).is_some());
+            .iter_in(view.variant.identities())
+            .all(|identity| {
+                bluff_target_kind_at(view, &context.after.dynamic_stack_heights, *clue, identity)
+                    .is_some()
+            });
     if effects.pending.iter().any(|connection| {
         connection.actor == actor
             && effects.pending.is_active(connection)
@@ -296,14 +307,15 @@ pub(in crate::h_group) fn apply_intermediate_bluff_effects(
     else {
         return;
     };
-    let bluff_identity = identity_of(view, bluff_card);
+    let bluff_identity = context.historical.identity(bluff_card);
     if bluff_identity.is_some_and(|identity| {
-        !is_playable_at(stack_heights, identity) || bluff_play_connects(*clue, identity)
+        !connection_playable(view, stack_heights, identity)
+            || bluff_play_connects(view, *clue, identity)
     }) {
         return;
     }
-    let focus_identity = identity_of(view, focus);
-    if focus_identity.is_some_and(|identity| is_playable_at(stack_heights, identity)) {
+    let focus_identity = context.historical.identity(focus);
+    if focus_identity.is_some_and(|identity| connection_playable(view, stack_heights, identity)) {
         // A clue on a currently playable focus is a direct Play interpretation
         // (or, when that identity is already promised elsewhere, a Trash Chop
         // Move). It cannot simultaneously manufacture a Critical Color Bluff.
@@ -314,21 +326,19 @@ pub(in crate::h_group) fn apply_intermediate_bluff_effects(
         && focus_identity.is_some_and(|identity| {
             identity.rank != Rank::Five && is_critical_save_identity(view, identity)
         });
-    let connecting_identity = bluff_identity.and_then(|identity| {
-        (identity.rank != Rank::Five)
-            .then(|| Card::new(identity.suit, Rank::ALL[identity.rank.index() + 1]))
-    });
+    let connecting_identity =
+        bluff_identity.and_then(|identity| connection_successor(view, identity));
     let hard = connecting_identity.is_some_and(|connecting| {
         connecting != focus_identity.unwrap_or(connecting)
-            && clue.matches(connecting)
-            && context.before.facts[focus.index()].allows(connecting)
+            && crate::h_group::physical_clue_matches(view, (*clue).into(), connecting)
+            && connection_allows(view, context.before.facts[focus.index()], connecting)
     });
     let good_touch = connecting_identity.is_some_and(|connecting| {
-        clue.matches(connecting)
+        crate::h_group::physical_clue_matches(view, (*clue).into(), connecting)
             && hands.iter().flatten().copied().any(|card| {
                 card != focus
                     && effects.explicitly_clued.contains(&card)
-                    && identity_of(view, card) == Some(connecting)
+                    && context.historical.identity(card) == Some(connecting)
             })
     });
     if !(special_three || critical_color || hard || good_touch || ruled_out_finesse_bluff) {
@@ -397,11 +407,14 @@ pub(in crate::h_group) fn apply_double_bluff_effects(
     else {
         return;
     };
-    let Some(identity) = touched.last().and_then(|card| identity_of(view, *card)) else {
+    let Some(identity) = touched
+        .last()
+        .and_then(|card| context.historical.identity(*card))
+    else {
         return;
     };
-    let distance = usize::from(identity.rank.number())
-        .saturating_sub(usize::from(context.after.stack_heights[identity.suit.index()]) + 1);
+    let distance =
+        connection_predecessors(view, &context.after.dynamic_stack_heights, identity).len();
     if distance < 2 {
         return;
     }
@@ -419,14 +432,15 @@ pub(in crate::h_group) fn apply_double_bluff_effects(
     // The first reactor must actually read a Play/Finesse, not a Save or a
     // 5 Color Ejection. A Double Bluff need not already be an ordinary Bluff:
     // its defining case is precisely a non-ordinary Bluff target.
-    if bluff_target_kind_at(context.after.stack_heights, *clue, identity).is_some()
+    if bluff_target_kind_at(view, &context.after.dynamic_stack_heights, *clue, identity).is_some()
         || super::super::bluff::bluff_through_clued_cards(
-            usize::from(context.after.stack_heights[identity.suit.index()]),
+            view,
+            &context.after.dynamic_stack_heights,
             identity,
             |needed| {
                 hands.iter().flatten().any(|card| {
                     effects.explicitly_clued.contains(card)
-                        && identity_of(view, *card).or_else(|| {
+                        && context.historical.identity(*card).or_else(|| {
                             effects
                                 .signals
                                 .facts()
@@ -444,23 +458,27 @@ pub(in crate::h_group) fn apply_double_bluff_effects(
     }
     let first_play = finesse_position_id(&hands[first.index()], effects.explicitly_clued, 0)
         .filter(|card| {
-            identity_of(view, *card)
-                .is_none_or(|identity| is_playable_at(context.after.stack_heights, identity))
+            context.historical.identity(*card).is_none_or(|identity| {
+                connection_playable(view, &context.after.dynamic_stack_heights, identity)
+            })
         });
     let second_play = finesse_position_id(&hands[second.index()], effects.explicitly_clued, 0)
         .filter(|card| {
-            let mut after_first = context.after.stack_heights;
-            if let Some(played) = first_play.and_then(|first| identity_of(view, first)) {
-                after_first[played.suit.index()] = played.rank.number();
+            let mut after_first = context.after.dynamic_stack_heights.clone();
+            if let Some(played) = first_play.and_then(|first| context.historical.identity(first)) {
+                connection_advance(view, &mut after_first, played);
             }
-            identity_of(view, *card).is_none_or(|identity| is_playable_at(after_first, identity))
+            context
+                .historical
+                .identity(*card)
+                .is_none_or(|identity| connection_playable(view, &after_first, identity))
         });
     if let (Some(first_play), Some(second_play)) = (first_play, second_play) {
         effects.forced_playable.insert(first_play);
         // The second player learns that their blind play is required only
         // when the first play demonstrates this clue on the following turn.
-        let first_identity = identity_of(view, first_play);
-        let second_identity = identity_of(view, second_play);
+        let first_identity = context.historical.identity(first_play);
+        let second_identity = context.historical.identity(second_play);
         let hard = first_identity
             .is_some_and(|first_identity| first_identity.suit == identity.suit)
             && second_identity.is_some_and(|second_identity| second_identity.suit == identity.suit);
@@ -522,7 +540,7 @@ fn apply_demonstrated_double_bluff(
     }) else {
         return;
     };
-    let standard_clue = crate::h_group::standard_h_group_clue(&view.variant, clue.clue);
+    let standard_clue = clue.clue;
     let first = next_player(clue.giver, view.hands.len());
     let second = next_player(first, view.hands.len());
     if next_player(second, view.hands.len()) != clue.target
@@ -538,25 +556,40 @@ fn apply_demonstrated_double_bluff(
     let offset = context.entry.turn - clue.turn;
     let cards = if offset == 1 {
         let facts = effects.signals.facts();
-        let Some(focus_identity) = identity_of(view, clue.focus) else {
+        let Some(focus_identity) = context.historical.identity(clue.focus) else {
             return;
         };
-        if is_trash_at(clue.stack_heights, focus_identity)
-            || is_playable_at(clue.stack_heights, focus_identity)
-            || bluff_target_kind_at(clue.stack_heights, standard_clue, focus_identity).is_some()
+        if connection_trash(
+            view,
+            &connection_heights(view, Some(clue.turn)),
+            focus_identity,
+        ) || connection_playable(
+            view,
+            &connection_heights(view, Some(clue.turn)),
+            focus_identity,
+        ) || bluff_target_kind_at(
+            view,
+            &super::super::identity::connection_heights(view, Some(clue.turn)),
+            standard_clue,
+            focus_identity,
+        )
+        .is_some()
             || super::super::bluff::bluff_through_clued_cards(
-                usize::from(clue.stack_heights[focus_identity.suit.index()]),
+                view,
+                &super::super::identity::connection_heights(view, Some(clue.turn)),
                 focus_identity,
                 |needed| {
                     context.before.hands.iter().flatten().any(|candidate| {
                         was_clued_before(view, clue.turn, *candidate)
-                            && identity_of(view, *candidate)
+                            && context
+                                .historical
+                                .identity(*candidate)
                                 .or_else(|| facts.known_identity_before(*candidate, clue.turn))
                                 == Some(needed)
                     })
                 },
             )
-            || bluff_play_connects(standard_clue, identity)
+            || bluff_play_connects(view, standard_clue, identity)
         {
             return;
         }

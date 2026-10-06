@@ -191,21 +191,27 @@ acceptance, validation, and pull-request sizing rules.
 
 ## Next slice
 
-M4-V4 - Advanced connections and bluffs.
-M4-V4 owns advanced connections and Bluff families, including advanced historical
-Finesse recognition adapters, Elimination, layered/hidden/clandestine/queued
-recognizers, Ejection/Discharge, Charm, Five-Tech, and ignition. Their shared basic
-planner now accepts active identities, but their family-specific evidence and
-knowledge paths are not claimed generic.
+M4-V5 - High-level refinements and remaining standard-only semantic paths.
 
-Legacy reducer stack/count arrays, advanced `Rank::ALL`/`Suit::ALL` loops,
+M4-V4 migrates Bluff and Double Bluff primitives, historical recognition and
+demonstration, the advanced Finesse graph (layered, hidden, clandestine, queued,
+ambiguous), Ejection/Discharge, and Priority/Load. These paths use active identity
+IDs, physical clue touching, variant predecessor/successor traversal, and dynamic
+historical stack heights. Connection lifecycle identities remain Card-valued and
+are mapped through the V2 identity helpers.
+
+M4-V5 retains Context, Duplication, Elimination, Five-Tech, Out-of-Order, Ignition,
+Phantom, Charm, Unnecessary Moves, and remaining Extras. Shared physical adapters
+do not claim migration of these families' convention meanings.
+
+Legacy reducer stack/count arrays, V5 `Rank::ALL`/`Suit::ALL` loops, remaining
 legacy identity claim masks, and `standard_h_group_clue` remain outside the
-migrated basic connection boundaries. Basic planning receives dynamic public
-snapshots, and V3 turn-context recognizers consume dynamic snapshots, while
-those advanced recognition interfaces remain standard-only. Special Finesse
-discard evidence also remains an advanced boundary.
+migrated boundaries. The reducer arrays are retained; migrated families consume
+dynamic snapshots or reconstruct dated public stacks. Special Finesse discard
+evidence remains a V5 boundary.
 The global No Variant policy gate stays until the remaining M4 slices are ready.
 Pink Promise, Black clue-choice rules, and other variant convention packs remain
 M4-V6 work, along with production enablement and resolution of the retained
 legacy action/clue-label boundary. No Brown/Omni/Null/Pink-specific convention
-meanings are introduced by V3.
+meanings are introduced by V4. M4-V6 still owns variant-specific convention packs
+and production enablement; the No Variant production gate is unchanged.
