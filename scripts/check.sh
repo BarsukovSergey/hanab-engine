@@ -44,10 +44,24 @@ if (( $# != 0 )); then
   echo 'Unexpected arguments; see --help.' >&2
   exit 2
 fi
+find_host_python() {
+  if command -v python3 >/dev/null 2>&1; then
+    command -v python3
+  elif command -v python >/dev/null 2>&1; then
+    command -v python
+  else
+    return 1
+  fi
+}
+
 if [[ "${HANABI_CHECK_TIMED:-0}" != 1 ]]; then
+  if ! host_python="$(find_host_python)"; then
+    echo 'Python is required to record check.sh validation.' >&2
+    exit 1
+  fi
   args=()
   if [[ "$mode" == fast ]]; then args+=(--fast); fi
-  exec env HANABI_CHECK_TIMED=1 python3 scripts/workflow.py run \
+  exec env HANABI_CHECK_TIMED=1 "$host_python" scripts/workflow.py run \
     --label "check-$mode" -- bash scripts/check.sh "${args[@]}"
 fi
 
