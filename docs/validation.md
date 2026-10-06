@@ -24,7 +24,8 @@ matrix, broad H-Group regressions, or `scripts/check.sh --fast` to a scoped
 change. Those are broader gates unless the change directly targets them or
 focused compilation exposes cross-cutting fallout.
 
-For a shared inference/replay/planner refactor, run focused checks first and use:
+For a shared inference/replay/planner refactor, run focused checks first and
+use:
 
 ```sh
 scripts/check.sh --fast
@@ -56,9 +57,9 @@ returns nonzero if any stage failed. Missing prerequisites still stop the run
 immediately.
 
 Do not rerun the whole suite for a formatting-only fix or a narrow assertion
-adjustment. Rerun the affected stage or focused tests unless later implementation
-changes invalidate the previous full-run coverage. Do not repeatedly rediscover
-unchanged pre-existing failures.
+adjustment. Rerun the affected stage or focused tests unless later
+implementation changes invalidate the previous full-run coverage. Do not
+repeatedly rediscover unchanged pre-existing failures.
 
 ## Platform behavior
 
@@ -66,19 +67,19 @@ The shell validation helpers support Linux/WSL, macOS, and Windows Git Bash.
 Shared environment setup lives in `scripts/shell-common.sh`.
 
 `check.sh` skips Unix ownership validation under Windows Git Bash, accepts both
-POSIX and Windows virtualenv layouts, and uses the portable validation lock. If a
-Rust check fails before meaningful compilation because the Windows host linker,
-runtime path, or equivalent toolchain setup is unavailable, make at most one
-obvious attempt to use the repository's existing configured toolchain. Do not
-install or repeatedly repair host tooling as part of a scoped code task; report
-the deferred check and rely on Linux CI for the broader gate.
+POSIX and Windows virtualenv layouts, and uses the portable validation lock. If
+a Rust check fails before meaningful compilation because the Windows host
+linker, runtime path, or equivalent toolchain setup is unavailable, make at most
+one obvious attempt to use the repository's existing configured toolchain. Do
+not install or repeatedly repair host tooling as part of a scoped code task;
+report the deferred check and rely on Linux CI for the broader gate.
 
 ## CI scope
 
 Pull-request CI is intentionally targeted. It runs formatting, shell-helper
-smoke checks, Rust build/Clippy/docs, Rust 1.85 MSRV, core/protocol tests, a small
-green hanabi-search contract suite, Python live-bridge checks, rustdoc tests, and
-dead-public-code checks.
+smoke checks, Rust build/Clippy/docs, Rust 1.85 MSRV, core/protocol tests, a
+small green hanabi-search contract suite, Python live-bridge checks, rustdoc
+tests, and dead-public-code checks.
 
 Pushes to `main` additionally run the exhaustive H-Group profile matrix. Neither
 PR CI nor push CI is the complete ordinary hanabi-search test suite.
@@ -90,9 +91,9 @@ pass. Report what actually ran, what was deferred, and any known failures.
 
 ## Workflow timing and failure records
 
-Workflow recording is opt-in. Use it for performance work, full-check comparison,
-or long replay investigations, not for ordinary scoped edits. Invoke it through
-the portable Python launcher:
+Workflow recording is opt-in. Use it for performance work, full-check
+comparison, or long replay investigations, not for ordinary scoped edits. Invoke
+it through the portable Python launcher:
 
 ```sh
 bash scripts/run-python.sh scripts/workflow.py start "Fix turn 27 play priority"
