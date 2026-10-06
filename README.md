@@ -44,13 +44,24 @@ Install formatting and Python development dependencies when needed:
 ```sh
 npm ci
 python3 -m venv .venv
-.venv/bin/python -m pip install --requirement scripts/requirements-dev.txt
 ```
 
-Use focused Rust tests while editing. `scripts/check.sh --fast` runs the broad
-non-test quality checks; `scripts/check.sh` is the full local checkpoint. The
-current shell validation script is intended for Linux/WSL; CI is the canonical
-Linux environment.
+On Windows, use `python -m venv .venv` if `python3` is not available.
+Then install `scripts/requirements-dev.txt` with the venv Python:
+`.venv/bin/python` on POSIX or `.venv/Scripts/python.exe` on Windows.
+
+For a small Rust change, use the scoped helper with the affected crate and,
+optionally, focused Cargo test arguments:
+
+```sh
+bash scripts/check-scoped.sh hanabi-search direct_play --lib
+```
+
+The helper reuses the primary worktree Cargo target cache. `scripts/check.sh
+--fast` remains the broad non-test checkpoint for shared inference/replay/planner
+changes, and `scripts/check.sh` is the full local checkpoint. The shell
+validation helpers support Linux/WSL, macOS, and Windows Git Bash; CI remains the
+canonical Linux gate.
 
 Agent instructions are in [`AGENTS.md`](AGENTS.md). Replay-specific review
 instructions live separately in

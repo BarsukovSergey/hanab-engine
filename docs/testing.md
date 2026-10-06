@@ -35,10 +35,13 @@ because an unrelated regression remains failing.
 
 ## Interactive workflow and timing
 
-For a scoped Rust fix or semantic slice, reproduce the focused behavior, run the
-changed/related tests, run `cargo fmt --all -- --check`, then run a normal
-`cargo check -p <affected-crate> --locked`. Do not routinely add strict Clippy,
-`--all-targets`, the CI search-contract matrix, broad H-Group regressions, or
+For a scoped Rust fix or semantic slice, use
+`bash scripts/check-scoped.sh <affected-crate> [focused cargo-test args...]`
+when one focused Cargo test invocation covers the changed behavior. The helper
+reuses the primary worktree Cargo target cache, runs the optional focused tests,
+then Rust formatting and a normal crate check. Run additional focused tests
+separately when needed. Do not routinely add strict Clippy, `--all-targets`,
+the CI search-contract matrix, broad H-Group regressions, or
 `scripts/check.sh --fast`; PR CI owns those broader gates unless the task
 specifically targets them or focused compilation exposes cross-cutting fallout.
 
@@ -50,11 +53,14 @@ Documentation-only changes need formatting, not engine tests. Fixture edits need
 legality and affected-position checks, not automatic scans of every replay. See
 the validation matrix in [AGENTS.md](../AGENTS.md).
 
-On Windows/Git Bash, if a required Rust check fails before meaningful
-compilation because the host linker/runtime environment is unavailable, make at
-most one obvious attempt to use the repository's existing configured toolchain.
-Do not spend a scoped task installing or repeatedly repairing local toolchain
-state; report the deferred check and let Linux CI run the broader gate.
+The shell validation helpers support Linux/WSL, macOS, and Windows Git Bash.
+`check.sh` skips Unix ownership validation on Git Bash, accepts either POSIX or
+Windows venv layouts, and uses a portable repository lock. If a required Rust
+check still fails before meaningful compilation because the host linker/runtime
+environment is unavailable, make at most one obvious attempt to use the
+repository's existing configured toolchain. Do not spend a scoped task
+installing or repeatedly repairing local toolchain state; report the deferred
+check and let Linux CI run the broader gate.
 
 The full local suite is still `scripts/check.sh` with no arguments. PR CI runs
 formatting/build/Clippy/docs, MSRV, core/protocol tests, a focused hanabi-search

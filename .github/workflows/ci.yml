@@ -67,6 +67,12 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Check repository formatting
         run: npm run format:check
+      - name: Check shell script syntax
+        run: bash -n scripts/*.sh
+      - name: Smoke-test validation helper CLIs
+        run: |
+          bash scripts/check.sh --help
+          bash scripts/check-scoped.sh --help
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
       - name: Build all Rust targets
