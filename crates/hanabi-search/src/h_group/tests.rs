@@ -6,6 +6,7 @@ use hanabi_protocol::HanabiLiveReplay;
 const MAX_TEST_CONTINUATION_TURNS: usize = 512;
 
 mod architecture;
+mod basic_semantics;
 mod clue_vocabulary;
 mod replay;
 mod replay_memo;

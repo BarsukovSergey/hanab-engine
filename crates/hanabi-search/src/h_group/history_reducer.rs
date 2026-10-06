@@ -637,6 +637,10 @@ impl ReplayReducer {
         else {
             unreachable!("event dispatcher selects its handler")
         };
+        // The connection reducer remains No Variant-only. Base semantics accept
+        // dynamic snapshots so they do not inherit that compatibility boundary.
+        let basic_heights = self.stack_heights.map(usize::from);
+        let basic_discarded = self.public_removed.map(usize::from);
         let public_clue = GenericClue::from(*clue);
         let clue = &standard_h_group_clue(&view.variant, public_clue);
 
@@ -1011,6 +1015,7 @@ impl ReplayReducer {
                 // Save possibilities: a newly touched 2 beside an
                 // existing saved Red 2 cannot itself be Red 2.
                 claimed_identities = claimed_identities_at_clue(
+                    &view.variant,
                     focus,
                     &self.hands,
                     &historical,
@@ -1345,7 +1350,7 @@ impl ReplayReducer {
                 variant: &view.variant,
                 play_identities,
                 save_identities,
-                stack_heights: self.stack_heights,
+                stack_heights: &basic_heights,
                 eight_clue_save,
                 suppressions: [
                     is_required_fix.then_some(primary::PrimarySuppression::Fix),
@@ -1598,8 +1603,8 @@ impl ReplayReducer {
                         view,
                         &self.hands,
                         &previously_promptable,
-                        self.stack_heights,
-                        self.public_removed,
+                        &basic_heights,
+                        &basic_discarded,
                     );
                     // Good Touch forbids an actual duplicate, but an
                     // ambiguous focus does not claim every identity in
@@ -1650,8 +1655,8 @@ impl ReplayReducer {
                             view,
                             &self.hands,
                             &previously_promptable,
-                            self.stack_heights,
-                            self.public_removed,
+                            &basic_heights,
+                            &basic_discarded,
                         );
                         direct.without(useful)
                     } else {

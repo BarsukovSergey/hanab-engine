@@ -74,14 +74,30 @@ The migration has therefore passed the physical/generic boundary and started
 using variant-aware convention kernels in production. It is not yet valid to
 enable full non-No-Variant H-Group policy.
 
+### M4-V1 - Basic clue semantics end-to-end
+
+Complete for the requested base semantic slice:
+
+- replay Good Touch filters active identity IDs using variant stack positions,
+  required lower-identity copy availability, and observer-visible live claims
+- clue-time exact claims map visible cards, literal clue facts, prior Play
+  domains, and pending expected cards into the active identity universe
+- production primary resolution accepts generic clues, identity sets, and
+  dynamic stack heights, preserving contextual suppressions, separate 8CS,
+  rank-2/rank-5 and non-playable Critical Save precedence, and PlayOrSave
+- replay keeps broader delayed Play domains; it does not replace connection
+  interpretation with immediate `direct_play`
+- the unused `direct_level_one` helper is removed; its composition coverage now
+  exercises the production resolver. `direct_save` remains shared by historical
+  and prospective Save classification with PR #38 scoring behavior preserved
+- focused tests cover No Variant parity, sixth-suit identities, Rainbow/Pink
+  touching, Black copy counts, exhausted predecessors, and observer safety
+
 ## Current M4 boundaries
 
 Important remaining boundaries:
 
 - H-Group production policy is still intentionally No Variant-only
-- `direct_level_one` is not yet the production authority for primary clue
-  interpretation
-- Good Touch still uses standard-card assumptions
 - Prompt/Finesse and broader connection semantics still depend heavily on
   standard `Card`, `Clue`, `Rank::ALL`, and fixed five-stack state
 - the H-Group replay reducer still contains standard-only storage such as
@@ -112,20 +128,16 @@ acceptance, validation, and pull-request sizing rules.
 
 ## Next slice
 
-M4-V1 - Basic clue semantics end-to-end.
+M4-V2 - Generic connection engine.
 
-The target is a production result, not another unwired kernel:
+Migrate Prompt/Finesse discovery and progression to generic identities and
+variant successor/predecessor semantics, preserving reviewed No Variant
+connections and their provenance.
 
-- migrate Good Touch/base Level 1 knowledge semantics to active
-  `VariantSpec` / `IdentityUniverse`
-- make base Play/Save/primary meaning share a production semantic authority
-  where behavior is genuinely common
-- remove duplicate base classification made obsolete by that authority
-- introduce only the minimum capability/rules boundary that this path
-  immediately uses
-- migrate fixed stack/count representation only where this path requires it
-- preserve No Variant reviewed behavior
-- add representative variant semantic regressions
-
-Do not include M5 2-player semantics, broad advanced Prompt/Finesse migration,
-clarity/risk policy, or unrelated infrastructure cleanup in M4-V1.
+Intentional V2+ boundaries remain: `snapshot_play_identities`, ConnectionManager,
+reducer connection/context storage, and advanced recognizers still use standard
+cards, fixed stack/count arrays, or `standard_h_group_clue`. The reducer adapts
+its No Variant snapshots to dynamic slices at the migrated base semantic calls.
+The global No Variant policy gate stays until the remaining M4 slices are ready.
+Pink Promise, Black clue-choice rules, and other variant convention packs remain
+outside this base semantic slice.
