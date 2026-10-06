@@ -44,51 +44,23 @@ if (( $# != 0 )); then
   echo 'Unexpected arguments; see --help.' >&2
   exit 2
 fi
-find_host_python() {
-  if (( windows_shell != 0 )) && command -v python >/dev/null 2>&1; then
-    command -v python
-  elif command -v python3 >/dev/null 2>&1; then
-    command -v python3
-  elif command -v python >/dev/null 2>&1; then
-    command -v python
-  else
-    return 1
-  fi
-}
-
-if [[ "${HANABI_CHECK_TIMED:-0}" != 1 ]]; then
-  if ! host_python="$(find_host_python)"; then
-    echo 'Python is required to record check.sh validation.' >&2
-    exit 1
-  fi
+if [[ "${HANABI_CHECK_LOCKED:-0}" != 1 ]]; then
   args=()
   if [[ "$mode" == fast ]]; then args+=(--fast); fi
-  exec env HANABI_CHECK_TIMED=1 "$host_python" scripts/workflow.py run \
+  exec bash scripts/run-python.sh scripts/check_lock.py target/check.lock -- \
+    env HANABI_CHECK_LOCKED=1 bash scripts/check.sh "${args[@]}"
+fi
+
+if [[ "${HANABI_CHECK_TIMED:-0}" != 1 ]]; then
+  args=()
+  if [[ "$mode" == fast ]]; then args+=(--fast); fi
+  exec env HANABI_CHECK_TIMED=1 bash scripts/run-python.sh scripts/workflow.py run \
     --label "check-$mode" -- bash scripts/check.sh "${args[@]}"
 fi
 
-# Full validations compete for the same CPU and build cache. Do not silently
-# queue or overlap another full run, which also invalidates timing comparisons.
-# Use an atomic directory lock rather than flock so Git Bash can run the script.
-check_lock_dir="target/check.lock.d"
-mkdir -p target
-if ! mkdir "$check_lock_dir" 2>/dev/null; then
-  cat >&2 <<EOF
-Another check.sh run is already active, or a stale lock remains at:
-  $check_lock_dir
-If no check is running, remove that directory and retry.
-EOF
-  exit 1
-fi
-
-release_check_lock() {
-  rm -rf -- "$check_lock_dir"
-}
-
-trap release_check_lock EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM HUP
-
+# Full validations compete for the same CPU and build cache. The outer
+# check_lock.py process holds a platform-native lock for this entire run, and
+# the OS releases it automatically if the process exits or is killed.
 check_file_ownership() {
   if (( windows_shell != 0 )); then
     echo 'Skipping Unix ownership validation under Windows Git Bash.'
@@ -178,12 +150,9 @@ fi
 
 if ! rustup run 1.97.1 cargo hawk --version >/dev/null 2>&1; then
   cat >&2 <<'EOF'
-cargo-hawk or its Rust toolchain is missing. Set them up with:
-
-  rustup toolchain install 1.97.1 --profile minimal
-  curl --proto '=https' --tlsv1.2 -LsSf \
-    https://github.com/astral-sh/hawk/releases/download/0.1.10/cargo-hawk-installer.sh \
-    | sh
+cargo-hawk 0.1.10 or its Rust 1.97.1 toolchain is missing. Install the pinned
+tool for the current platform before running the broad/full local checkpoint.
+Do not repair this tooling as part of a scoped code task; PR CI owns this gate.
 EOF
   exit 1
 fi
