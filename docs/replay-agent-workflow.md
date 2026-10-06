@@ -11,10 +11,10 @@ human review, use the following instructions.
 ### Scope and replay checkpoints
 
 Before analyzing a replay turn, run
-`bash scripts/run-python.sh scripts/replay_reviews.py SEED --turn N` and read the
-matching records in `docs/replay-reviews/`. Search that directory for related
-principles, cards, and hypothetical lines too: turn numbers alone are not stable
-across fixture edits. Follow the recording and staleness rules in
+`bash scripts/run-python.sh scripts/replay_reviews.py SEED --turn N` and read
+the matching records in `docs/replay-reviews/`. Search that directory for
+related principles, cards, and hypothetical lines too: turn numbers alone are
+not stable across fixture edits. Follow the recording and staleness rules in
 `docs/replay-reviews/README.md`.
 
 Record new user explanations there in the same change as their implementation or
