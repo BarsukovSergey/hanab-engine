@@ -138,12 +138,9 @@ find_venv_tool() {
 
 if ! venv_python="$(find_venv_tool python)" || ! venv_ty="$(find_venv_tool ty)"; then
   cat >&2 <<'EOF'
-Python development dependencies are missing. Set them up with:
-
-  python3 -m venv .venv
-
-Then install scripts/requirements-dev.txt with the venv Python. The executable
-is .venv/bin/python on POSIX and .venv/Scripts/python.exe on Windows.
+Python development dependencies are missing. Create .venv with Python 3, then
+install scripts/requirements-dev.txt with the venv Python. The executable is
+.venv/bin/python on POSIX and .venv/Scripts/python.exe on Windows.
 EOF
   exit 1
 fi
