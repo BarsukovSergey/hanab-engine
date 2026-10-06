@@ -66,9 +66,8 @@ pub(in crate::h_group) fn apply_bluff_effects(
     {
         return;
     }
-    let expected_connector = match predecessors.first().copied() {
-        Some(card) => card,
-        None => return,
+    let Some(expected_connector) = predecessors.first().copied() else {
+        return;
     };
     if super::super::bluff::bluff_connector_is_promised(
         view,
