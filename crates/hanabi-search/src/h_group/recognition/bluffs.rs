@@ -205,12 +205,20 @@ pub(in crate::h_group) fn apply_resolved_bluff_effects(
     }) else {
         return;
     };
-    let connects = bluff_play_connects(clue.clue, identity);
+    let connects = bluff_play_connects(
+        crate::h_group::standard_h_group_clue(&view.variant, clue.clue),
+        identity,
+    );
     let legal_bluff_target = IdentitySet::all().iter().any(|candidate| {
         identity_of(view, clue.focus).is_none_or(|visible| visible == candidate)
-            && clue.clue.matches(candidate)
+            && crate::h_group::physical_clue_matches(view, clue.clue, candidate)
             && facts[clue.focus.index()].allows(candidate)
-            && (bluff_target_kind_at(stack_heights, clue.clue, candidate).is_some()
+            && (bluff_target_kind_at(
+                stack_heights,
+                crate::h_group::standard_h_group_clue(&view.variant, clue.clue),
+                candidate,
+            )
+            .is_some()
                 || super::super::bluff::bluff_through_clued_cards(
                     usize::from(clue.stack_heights[candidate.suit.index()]),
                     candidate,

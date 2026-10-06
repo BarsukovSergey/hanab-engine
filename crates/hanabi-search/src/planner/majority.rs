@@ -229,7 +229,7 @@ pub(super) fn choose(
         .filter(|c| {
             c.target == source.observer
                 && c.kind == crate::HGroupClueKind::Play
-                && matches!(c.clue, hanabi_core::Clue::Rank(_))
+                && matches!(c.clue, hanabi_core::GenericClue::Rank(_))
                 && c.non_focus_trash_identities.is_empty()
                 && !c.previously_gotten.contains(&c.focus)
         })

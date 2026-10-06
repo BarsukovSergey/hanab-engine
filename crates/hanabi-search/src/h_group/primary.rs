@@ -1,4 +1,4 @@
-use hanabi_core::{Card, CardId, Clue, ClueFacts, Rank};
+use hanabi_core::{Card, CardId, Clue, ClueFacts, GenericClue, Rank, VariantSpec};
 
 use super::{HGroupClueInterpretation, HGroupClueKind, HGroupSaveKind, IdentitySet};
 
@@ -131,8 +131,9 @@ pub(super) enum PrimarySuppression {
 
 /// Inputs to the one primary clue-precedence resolver.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct PrimaryClueInputs {
-    pub(super) clue: Clue,
+pub(super) struct PrimaryClueInputs<'a> {
+    pub(super) clue: GenericClue,
+    pub(super) variant: &'a VariantSpec,
     pub(super) play_identities: IdentitySet,
     pub(super) save_identities: IdentitySet,
     pub(super) stack_heights: [u8; 5],
@@ -155,7 +156,8 @@ pub(super) struct ClueInterpretationPlan {
 }
 
 impl ClueInterpretationPlan {
-    pub(super) fn resolve(inputs: PrimaryClueInputs) -> Self {
+    pub(super) fn resolve(inputs: PrimaryClueInputs<'_>) -> Self {
+        let clue = super::standard_h_group_clue(inputs.variant, inputs.clue);
         // Rank 2/5 saves and non-playable critical saves take precedence over
         // a hypothetical play reading. This preserves explicit Play-or-Save
         // superpositions only where neither branch outranks the other.
@@ -166,7 +168,7 @@ impl ClueInterpretationPlan {
                 .filter(|identity| {
                     inputs.eight_clue_save
                         || matches!(
-                            (inputs.clue, identity.rank),
+                            (clue, identity.rank),
                             (Clue::Rank(Rank::Two), Rank::Two)
                                 | (Clue::Rank(Rank::Five), Rank::Five)
                         )
@@ -182,7 +184,7 @@ impl ClueInterpretationPlan {
         } else if inputs.eight_clue_save && !inputs.save_identities.is_empty() {
             HGroupClueKind::Save(HGroupSaveKind::EightClue)
         } else {
-            kind_from_masks(inputs.clue, play_identities, inputs.save_identities)
+            kind_from_masks(clue, play_identities, inputs.save_identities)
         };
         Self {
             kind,
@@ -255,7 +257,8 @@ mod tests {
     #[test]
     fn five_chop_move_suppresses_a_hypothetical_play_reading() {
         let plan = ClueInterpretationPlan::resolve(PrimaryClueInputs {
-            clue: Clue::Rank(Rank::Five),
+            clue: GenericClue::from(Clue::Rank(Rank::Five)),
+            variant: &VariantSpec::no_variant(),
             play_identities: identity(Suit::Red, Rank::Five),
             save_identities: IdentitySet::default(),
             stack_heights: [4; 5],
@@ -279,7 +282,8 @@ mod tests {
     fn playable_rank_two_on_chop_remains_a_save() {
         let red_two = identity(Suit::Red, Rank::Two);
         let plan = ClueInterpretationPlan::resolve(PrimaryClueInputs {
-            clue: Clue::Rank(Rank::Two),
+            clue: GenericClue::from(Clue::Rank(Rank::Two)),
+            variant: &VariantSpec::no_variant(),
             play_identities: red_two,
             save_identities: red_two,
             stack_heights: [1, 0, 0, 0, 0],

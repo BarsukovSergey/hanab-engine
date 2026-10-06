@@ -493,6 +493,7 @@ pub(in crate::h_group) fn apply_double_bluff_effects(
 /// identities. The second reactor can see the non-ordinary target after the
 /// first play even when the recipient cannot yet distinguish it from a Bluff.
 /// <https://hanabi.github.io/level-15/#the-double-bluff>
+#[allow(clippy::too_many_lines)] // Checked semantic adapter adds one line to this recognizer.
 fn apply_demonstrated_double_bluff(
     context: &HGroupTurnContext<'_>,
     view: &PlayerView,
@@ -521,6 +522,7 @@ fn apply_demonstrated_double_bluff(
     }) else {
         return;
     };
+    let standard_clue = crate::h_group::standard_h_group_clue(&view.variant, clue.clue);
     let first = next_player(clue.giver, view.hands.len());
     let second = next_player(first, view.hands.len());
     if next_player(second, view.hands.len()) != clue.target
@@ -541,7 +543,7 @@ fn apply_demonstrated_double_bluff(
         };
         if is_trash_at(clue.stack_heights, focus_identity)
             || is_playable_at(clue.stack_heights, focus_identity)
-            || bluff_target_kind_at(clue.stack_heights, clue.clue, focus_identity).is_some()
+            || bluff_target_kind_at(clue.stack_heights, standard_clue, focus_identity).is_some()
             || super::super::bluff::bluff_through_clued_cards(
                 usize::from(clue.stack_heights[focus_identity.suit.index()]),
                 focus_identity,
@@ -554,7 +556,7 @@ fn apply_demonstrated_double_bluff(
                     })
                 },
             )
-            || bluff_play_connects(clue.clue, identity)
+            || bluff_play_connects(standard_clue, identity)
         {
             return;
         }

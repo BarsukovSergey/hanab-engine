@@ -36,7 +36,7 @@ pub(in crate::h_group) fn apply_order_chop_move_effects(
     let actor_hand = &context.before.hands[player.index()];
     let Some(origin) = effects.clues.iter().rev().find(|clue| {
         clue.target == player
-            && clue.clue == Clue::Rank(Rank::One)
+            && clue.clue == hanabi_core::GenericClue::from(Clue::Rank(Rank::One))
             && (clue.focus == card || clue.new_non_focus.contains(&card))
             && actor_hand.contains(&clue.focus)
     }) else {

@@ -318,7 +318,7 @@ pub(in crate::h_group) fn lie_component_fix_connection(
                 return None;
             }
             let focus_identity = context.historical.identity(prior.focus)?;
-            if prior.clue != Clue::Rank(focus_identity.rank) {
+            if prior.clue != hanabi_core::GenericClue::from(Clue::Rank(focus_identity.rank)) {
                 return None;
             }
             let height = context.after.stack_heights[focus_identity.suit.index()];
