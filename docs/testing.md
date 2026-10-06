@@ -35,13 +35,26 @@ because an unrelated regression remains failing.
 
 ## Interactive workflow and timing
 
-For a localized Rust fix, reproduce and fix the focused regression, run related
-tests, then use `scripts/check.sh --fast`. Fast mode runs the same build, lint,
-documentation, Python, ownership, and dead-code stages as full mode, but skips
-the ordinary Rust suite. It does not replace focused Rust tests or claim full
-replay agreement. Documentation-only changes need formatting, not engine tests.
-Fixture edits need legality and affected-position checks, not automatic scans of
-every replay. See the validation matrix in [AGENTS.md](../AGENTS.md).
+For a scoped Rust fix or semantic slice, reproduce the focused behavior, run the
+changed/related tests, run `cargo fmt --all -- --check`, then run a normal
+`cargo check -p <affected-crate> --locked`. Do not routinely add strict Clippy,
+`--all-targets`, the CI search-contract matrix, broad H-Group regressions, or
+`scripts/check.sh --fast`; PR CI owns those broader gates unless the task
+specifically targets them or focused compilation exposes cross-cutting fallout.
+
+Use `scripts/check.sh --fast` after a shared inference/replay/planner refactor
+has settled. Fast mode runs the same build, lint, documentation, Python,
+ownership, and dead-code stages as full mode, but skips the ordinary Rust suite.
+It does not replace focused Rust tests or claim full replay agreement.
+Documentation-only changes need formatting, not engine tests. Fixture edits need
+legality and affected-position checks, not automatic scans of every replay. See
+the validation matrix in [AGENTS.md](../AGENTS.md).
+
+On Windows/Git Bash, if a required Rust check fails before meaningful
+compilation because the host linker/runtime environment is unavailable, make at
+most one obvious attempt to use the repository's existing configured toolchain.
+Do not spend a scoped task installing or repeatedly repairing local toolchain
+state; report the deferred check and let Linux CI run the broader gate.
 
 The full local suite is still `scripts/check.sh` with no arguments. PR CI runs
 formatting/build/Clippy/docs, MSRV, core/protocol tests, a focused hanabi-search
