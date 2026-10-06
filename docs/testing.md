@@ -19,99 +19,12 @@ assertions, not three independent repetitions of the expensive inference pass.
 The independent knowledge rebuild remains intentional and must not be cached
 away: it verifies the compiler result.
 
-Run full validations sequentially. `check.sh` rejects another simultaneous
-`check.sh` invocation using a repository-local lock. Avoid running standalone
-benchmarks or other Cargo test suites concurrently with it; the lock does not
-govern arbitrary Cargo invocations.
+General validation scope, cross-platform helper behavior, CI coverage, and
+workflow/failure recording are documented in
+[validation.md](validation.md). This document stays focused on test provenance,
+replay-specific diagnostics, and coverage boundaries.
 
-`check.sh` runs all ordinary tests without fail-fast and continues to the other
-validation stages after failures. It reports each stage's elapsed seconds and a
-total on success or failure, and exits nonzero if any stage failed. Missing
-prerequisites still stop the run immediately. Use focused tests while editing;
-full local validation is for broad changes, milestones, or explicit requests,
-not every prompt. PR CI intentionally runs targeted green gates rather than the
-complete ordinary hanabi-search suite. Do not repeat completed checks just
-because an unrelated regression remains failing.
-
-## Interactive workflow and timing
-
-For a scoped Rust fix or semantic slice, use
-`bash scripts/check-scoped.sh <affected-crate> [focused cargo-test args...]`
-when one focused Cargo test invocation covers the changed behavior. The helper
-reuses the primary worktree Cargo target cache, runs the optional focused tests,
-then Rust formatting and a normal crate check. Run additional focused tests
-separately when needed. Do not routinely add strict Clippy, `--all-targets`, the
-CI search-contract matrix, broad H-Group regressions, or
-`scripts/check.sh --fast`; PR CI owns those broader gates unless the task
-specifically targets them or focused compilation exposes cross-cutting fallout.
-
-Use `scripts/check.sh --fast` after a shared inference/replay/planner refactor
-has settled. Fast mode runs the same build, lint, documentation, Python,
-ownership, and dead-code stages as full mode, but skips the ordinary Rust suite.
-It does not replace focused Rust tests or claim full replay agreement.
-Documentation-only changes need formatting, not engine tests. Fixture edits need
-legality and affected-position checks, not automatic scans of every replay. See
-the validation matrix in [AGENTS.md](../AGENTS.md).
-
-The shell validation helpers support Linux/WSL, macOS, and Windows Git Bash.
-`check.sh` skips Unix ownership validation on Git Bash, accepts either POSIX or
-Windows venv layouts, and uses a portable repository lock. If a required Rust
-check still fails before meaningful compilation because the host linker/runtime
-environment is unavailable, make at most one obvious attempt to use the
-repository's existing configured toolchain. Do not spend a scoped task
-installing or repeatedly repairing local toolchain state; report the deferred
-check and let Linux CI run the broader gate.
-
-The full local suite is still `scripts/check.sh` with no arguments. PR CI runs
-formatting/build/Clippy/docs, MSRV, core/protocol tests, a focused hanabi-search
-contract suite, Python checks, and dead-public-code checks. Pushes to `main`
-additionally run the exhaustive H-Group profile matrix. Neither CI path is the
-complete ordinary hanabi-search suite. Full local runs remain nonzero on any
-failure; known failures are not ignored or deleted.
-
-Workflow timing is opt-in. Use it for performance work, full-check comparison,
-or long replay investigations, not ordinary scoped edits. When it is useful,
-invoke it through the portable Python launcher:
-
-```bash
-bash scripts/run-python.sh scripts/workflow.py start "Fix turn 27 play priority"
-bash scripts/run-python.sh scripts/workflow.py run --label focused -- \
-  cargo test -p hanabi-search fourth_replay_red_one_precedes --lib
-scripts/check.sh --fast
-bash scripts/run-python.sh scripts/workflow.py finish
-bash scripts/run-python.sh scripts/workflow.py report
-```
-
-Both check modes automatically record output, per-stage timings, exit status,
-commit and tracked-diff fingerprint in ignored `target/workflow/`. Extra
-commands only need the workflow wrapper when a recorded timing session is
-intentionally in use. The local records survive prompts but are removed by
-`cargo clean`; archive them elsewhere before cleaning if needed. They are not a
-reconstruction of historical prompt latency.
-
-Use `wait-start` and `wait-end` to record intervals actually spent waiting for
-tools. Do not mark time spent editing/investigating while a check runs as
-waiting. The report separates work-session elapsed time, union of command
-intervals, explicitly recorded waiting, and full-suite run count. These
-quantities overlap; do not add them together. Zero recorded wait does not prove
-there was no waiting. Task start/finish timestamps approximate the recorded
-session, not model thinking time, app queuing, or precise
-user-message-to-response latency.
-
-After inspecting a completed full-check log, explicitly capture a diagnostic
-failure baseline with its originating revision:
-
-```bash
-bash scripts/run-python.sh scripts/workflow.py baseline /tmp/reviewed-check.log --revision COMMIT
-```
-
-Subsequent completed full runs report new, still-failing, and no-longer-reported
-nextest failures. This is a local comparison, not CI acceptance of those
-failures. No-longer-reported tests may have been omitted or renamed; inspect the
-test count, stage exit codes, and log before calling them fixed. Non-test
-failures and incomplete runs remain visible in recorded stage results and
-process status. Do not refresh the baseline automatically after a regression.
-New failures remain failures regardless of the baseline.
+## Replay diagnostics and expensive checks
 
 For per-turn, nested stage timings of an expert action-parity test:
 
