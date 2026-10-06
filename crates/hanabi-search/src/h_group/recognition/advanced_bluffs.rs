@@ -384,6 +384,7 @@ pub(in crate::h_group) fn apply_intermediate_bluff_effects(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub(in crate::h_group) fn apply_double_bluff_effects(
     context: &HGroupTurnContext<'_>,
     view: &PlayerView,
