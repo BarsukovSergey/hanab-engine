@@ -2,7 +2,9 @@
 
 set -euo pipefail
 
-repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$(dirname -- "${BASH_SOURCE[0]}")/shell-common.sh"
+
+repository_root="$HANABI_REPOSITORY_ROOT"
 cd "$repository_root"
 
 configure_target_cache() {
