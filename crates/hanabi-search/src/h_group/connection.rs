@@ -133,6 +133,7 @@ impl ConnectionManager {
     /// A recipient Self-Finesse also resolves when the apparent blind player
     /// chooses an ordinary clued play. That evidence does not transfer a
     /// deferred Prompt, which follows its existing decline rule.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn resolve_deferred_connections(
         &mut self,
         variant: &VariantSpec,

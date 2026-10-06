@@ -3113,6 +3113,7 @@ pub(super) fn visible_finesse_connects_at(
     false
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn visible_finesse_connects_in(
     view: &PlayerView,
     hand: &[ObservedCard],

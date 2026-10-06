@@ -583,6 +583,7 @@ fn generic_connection_historical_speculation_and_commit_share_the_active_plan() 
     let facts = facts(&view);
     let empty = CardSet::default();
     let convention_facts = ConventionFacts::default();
+    let current_touches = [focus];
     let context = ConnectionPlanningContext {
         profile: HGroupProfile::Level(HGroupLevel::Level2),
         view: &view,
@@ -591,7 +592,7 @@ fn generic_connection_historical_speculation_and_commit_share_the_active_plan() 
         target: PlayerId::new(3),
         focus,
         clue: Clue::Rank(Rank::Five).into(),
-        touches: CurrentClueTouches(&[focus]),
+        touches: CurrentClueTouches(&current_touches),
         hands: &hands,
         facts: &facts,
         facts_before: &facts,
@@ -637,6 +638,7 @@ fn generic_connection_historical_speculation_and_commit_share_the_active_plan() 
 
 #[test]
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::default_trait_access)]
 fn generic_connection_owner_notes_and_turn_projection_use_active_identity_ids() {
     let variant = irregular_variant();
     let one = Card::new(Suit::new(5), Rank::One);
