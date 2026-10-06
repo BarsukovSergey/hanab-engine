@@ -8,9 +8,10 @@ editing tools can accidentally create files owned by `root:root`.
 
 ## Validation
 
-Optimize for short, evidence-backed interactive turns. Full validation is a
-checkpoint, not an automatic tax on every prompt. Preserve all tests and their
-assertions; change when they run, not their strength.
+Use the smallest validation scope that answers the risk in the current change.
+Preserve tests and their assertions; change when they run, not their strength.
+Detailed command behavior, platform notes, CI scope, timing, and
+failure-baseline mechanics live in [docs/validation.md](docs/validation.md).
 
 | Change                                        | Local validation before responding                                           |
 | --------------------------------------------- | ---------------------------------------------------------------------------- |
@@ -21,67 +22,15 @@ assertions; change when they run, not their strength.
 | Shared inference/replay/planner refactor      | Focused checks first; `scripts/check.sh --fast` after implementation settles |
 | Milestone or explicit full-validation request | Full `scripts/check.sh`                                                      |
 
-For a scoped Rust change, prefer `bash scripts/check-scoped.sh <crate>` with
-focused cargo-test arguments when applicable. The helper reuses the primary
-worktree's Cargo target cache, then runs formatting and a normal crate check. Do
-not add local strict Clippy, `--all-targets`, the CI search-contract matrix,
-broad H-Group regressions, or `check.sh --fast` by default. Those are
-CI/broader-refactor gates unless the change specifically targets them or focused
-compilation reveals API fallout that requires them. Task prompts should not
-widen this default without a concrete risk that the extra check addresses.
+Do not widen a scoped task into strict Clippy, `--all-targets`, broad replay
+regressions, or full validation without a concrete risk that the extra check
+addresses. Do not wait for CI unless the task requires it. Never describe a
+focused/local result or an unobserved CI run as a full pass.
 
-`--fast` retains build, lint, documentation, Python, and dead-code checks but
-omits the expensive ordinary Rust suite. It is for shared
-inference/replay/planner changes, not every small semantic slice. Run relevant
-Rust tests separately. A failing focused test is a reason to keep debugging, not
-to start broad validation.
-
-PR CI is a targeted gate: formatting/build/Clippy/docs, MSRV, core/protocol
-tests, a small green hanabi-search contract suite, Python live-bridge checks,
-and dead-public-code checks. Pushes to `main` additionally run the exhaustive
-H-Group profile matrix. Neither CI path is the complete ordinary hanabi-search
-suite. `scripts/check.sh` remains the full local validation checkpoint.
-
-Do not wait for CI unless requested or necessary for the task. Never describe
-focused/local success or an unobserved CI run as a full pass. Report what ran,
-what was deferred, and any known failures.
-
-If a local Windows/Git Bash Rust check fails before meaningful compilation
-because of a missing linker, runtime path, or equivalent host-toolchain setup,
-make at most one obvious attempt to use the repository's existing configured
-toolchain. Do not install, repair, or repeatedly reconfigure the host toolchain
-for a scoped code task. Record the deferred local check and rely on Linux CI for
-the broader gate.
-
-Do not overlap full validation runs or CPU-heavy benchmarks. For performance
-comparisons, use the same precompiled workload and configuration, run before and
-after sequentially, and distinguish reduced test setup from engine speed.
-`check.sh` completes all stages even when tests fail. Do not restart the entire
-suite for a formatting-only fix or test-only assertion adjustment: rerun the
-affected stage/tests. Rerun the full suite only if subsequent implementation
-changes invalidate its coverage. Do not run full validation repeatedly to
-rediscover unchanged pre-existing failures.
-
-### Timing and failure records
-
-Use `scripts/workflow.py` only when timing, performance comparison,
-full-validation failure comparison, or a long replay investigation materially
-matters. Do not start a task timer or wrap commands for an ordinary scoped edit.
-When workflow recording is intentionally enabled, invoke it portably as
-`bash scripts/run-python.sh scripts/workflow.py ...`, finish stale sessions
-before starting another, and close the session before the final response.
-
-`check.sh` records its own command output, stage times, exit codes, and
-Git/worktree identity under ignored `target/workflow/`. Use `wait-start` /
-`wait-end` only for intervals actually spent waiting. `report` shows task
-duration, command execution, explicitly recorded waiting, and full-run counts;
-do not add overlapping command durations to task duration.
-
-Use an explicit `baseline LOG --revision REVISION` from a completed full run to
-distinguish new, persistent, and no-longer-reported test failures. Never
-automatically accept new failures into the baseline. Baselines are diagnostic:
-all failures retain nonzero exit status, including in CI. Stage failures and
-incomplete runs must also be reported; missing results are not proof of fixes.
+Do not overlap full validation runs or CPU-heavy benchmarks. If a Windows/Git
+Bash Rust check fails before meaningful compilation because of host linker or
+runtime setup, make at most one obvious attempt to use the repository's existing
+configuration; do not turn a scoped task into host-toolchain repair.
 
 ## Test provenance
 

@@ -63,6 +63,7 @@ changes, and `scripts/check.sh` is the full local checkpoint. The shell
 validation helpers support Linux/WSL, macOS, and Windows Git Bash; CI remains the
 canonical Linux gate.
 
-Agent instructions are in [`AGENTS.md`](AGENTS.md). Replay-specific review
-instructions live separately in
+Agent instructions are in [`AGENTS.md`](AGENTS.md). Validation mechanics are
+documented in [`docs/validation.md`](docs/validation.md), and replay-specific
+review instructions live separately in
 [`docs/replay-agent-workflow.md`](docs/replay-agent-workflow.md).
