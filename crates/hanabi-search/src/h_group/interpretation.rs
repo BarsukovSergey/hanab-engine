@@ -7,6 +7,7 @@
 use super::admission::{GoodTouchContext, clue_accounts_for_every_copy, good_touch};
 use super::decision::{analysis_clue_candidates, build_h_group_analysis};
 use super::interpretation_resolution::named_interpretation_replaces_ordinary;
+use super::primary::{ClueInterpretationPlan, SaveClueInputs};
 use super::{
     Action, BluffTargetKind, Card, CardId, CardSet, Clue, ClueFacts, ClueProposal, CluePurpose,
     ClueRecognition, ClueSchedule, ClueValue, ConnectionClueMatch, ConnectionManager,
@@ -2367,15 +2368,49 @@ pub(super) fn save_clue_score(
         .iter()
         .map(|hand| chop(hand, gotten))
         .collect::<Vec<_>>();
-    let valid = match (clue, identity.rank) {
-        (Clue::Rank(Rank::Five), Rank::Five) => true,
-        (Clue::Rank(Rank::Two), Rank::Two) => {
-            !card_is_trash(view, identity) && two_save_allowed(view, focus, identity, &chops)
+    if matches!((clue, identity.rank), (Clue::Rank(Rank::Two), Rank::Two))
+        && card_is_trash(view, identity)
+    {
+        return None;
+    }
+    let variant = &view.variant;
+    let stack_heights = view.play_stacks.iter().map(Vec::len).collect::<Vec<_>>();
+    let identity_count = variant.stack_suits().len() * variant.card_ranks().len();
+    let mut discarded_counts = vec![0; identity_count];
+    for (_, discarded) in &view.discard_pile {
+        let id = variant
+            .identities()
+            .id_for(discarded.suit, discarded.rank)
+            .unwrap();
+        discarded_counts[id.index()] += 1;
+    }
+    let mut visible_other_counts = vec![0; identity_count];
+    let mut visible_other_chop_counts = vec![0; identity_count];
+    for card in view.hands.iter().flatten().filter(|card| card.id != focus) {
+        let Some(visible) = card.identity else {
+            continue;
+        };
+        let id = variant
+            .identities()
+            .id_for(visible.suit, visible.rank)
+            .unwrap();
+        visible_other_counts[id.index()] += 1;
+        if chops.contains(&Some(card.id)) {
+            visible_other_chop_counts[id.index()] += 1;
         }
-        (_, Rank::Five) => false,
-        _ => is_critical_save_identity(view, identity),
-    };
-    if !valid || !target_hand.iter().any(|card| card.id == focus) {
+    }
+    let plan = ClueInterpretationPlan::direct_save(SaveClueInputs {
+        clue: hanabi_core::GenericClue::from(clue),
+        variant,
+        focus_identities: IdentitySet::singleton(identity),
+        focus_was_chop: chops.contains(&Some(focus)),
+        stack_heights: &stack_heights,
+        discarded_counts: &discarded_counts,
+        two_save_visible_other_counts: &visible_other_counts,
+        two_save_visible_other_chop_counts: &visible_other_chop_counts,
+        critical_visible_other_counts: &visible_other_counts,
+    });
+    if plan.save_identities.is_empty() || !target_hand.iter().any(|card| card.id == focus) {
         return None;
     }
     // Save Principle: the next-player bonus belongs to an actual deadline,
