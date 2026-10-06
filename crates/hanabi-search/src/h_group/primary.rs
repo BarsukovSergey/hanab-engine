@@ -158,7 +158,6 @@ pub(super) struct ClueInterpretationPlan {
 /// Public snapshot inputs only; counts are indexed by `IdentityId::index()`.
 /// Domains, heights, and count slices must belong to the active variant.
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(super) struct SaveClueInputs<'a> {
     pub(super) clue: GenericClue,
     pub(super) variant: &'a VariantSpec,
@@ -204,7 +203,6 @@ impl ClueInterpretationPlan {
 
     /// Physical/base Level 1 Save possibilities, without contextual clue-choice
     /// or Loaded conventions. This kernel is deliberately unwired.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn direct_save(inputs: SaveClueInputs<'_>) -> Self {
         let mut plan = Self {
             kind: HGroupClueKind::Unrecognized,
@@ -264,6 +262,32 @@ impl ClueInterpretationPlan {
             }
         }
         plan
+    }
+
+    /// Base Level 1 primary meaning composed from the physical Play and Save
+    /// kernels. Contextual overrides and replay integration remain deferred.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn direct_level_one(inputs: SaveClueInputs<'_>) -> Self {
+        let play = Self::direct_play(
+            inputs.variant,
+            inputs.stack_heights,
+            inputs.clue,
+            inputs.focus_identities,
+        );
+        let save = Self::direct_save(inputs);
+        let play_identities = play.play_identities.without(save.save_identities);
+        let kind = match (play_identities.is_empty(), save.save_identities.is_empty()) {
+            (true, true) => HGroupClueKind::Unrecognized,
+            (false, true) => HGroupClueKind::Play,
+            (true, false) => save.kind,
+            (false, false) => HGroupClueKind::PlayOrSave,
+        };
+        Self {
+            kind,
+            play_identities,
+            save_identities: save.save_identities,
+            suppression: None,
+        }
     }
 
     pub(super) fn resolve(inputs: PrimaryClueInputs<'_>) -> Self {
@@ -335,6 +359,118 @@ mod tests {
                 .id_for(Suit::new(suit), Rank::new(rank))
                 .unwrap(),
         )
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn direct_level_one_composes_base_play_and_save_with_save_precedence() {
+        let standard = VariantSpec::no_variant();
+        let rainbow = VariantSpec::from_catalog(hanabi_core::VariantId::Rainbow6Suits);
+        let rank = |value| GenericClue::Rank(hanabi_core::ClueRank::new(value));
+        let red_two = physical_identity(&standard, 0, 2);
+        let red_five = physical_identity(&standard, 0, 5);
+        let red_three = physical_identity(&standard, 0, 3);
+        let blue_three = physical_identity(&standard, 3, 3);
+        let red_one = physical_identity(&rainbow, 0, 1);
+        let rainbow_three = physical_identity(&rainbow, 5, 3);
+        let empty = IdentitySet::default();
+        // name, variant, clue, focus, chop, heights, critical identities,
+        // expected kind, expected Play identities, expected Save identities.
+        let cases = [
+            (
+                "playable rank-2 Save",
+                &standard,
+                rank(2),
+                red_two,
+                true,
+                vec![1, 0, 0, 0, 0],
+                empty,
+                HGroupClueKind::Save(HGroupSaveKind::Two),
+                empty,
+                red_two,
+            ),
+            (
+                "playable rank-5 Save",
+                &standard,
+                rank(5),
+                red_five,
+                true,
+                vec![4, 0, 0, 0, 0],
+                empty,
+                HGroupClueKind::Save(HGroupSaveKind::Five),
+                empty,
+                red_five,
+            ),
+            (
+                "ambiguous rank-3 Play or Critical Save",
+                &standard,
+                rank(3),
+                red_three.union(blue_three),
+                true,
+                vec![2, 0, 0, 0, 0],
+                red_three.union(blue_three),
+                HGroupClueKind::PlayOrSave,
+                red_three,
+                blue_three,
+            ),
+            (
+                "off-chop immediate Play",
+                &standard,
+                rank(2),
+                red_two,
+                false,
+                vec![1, 0, 0, 0, 0],
+                empty,
+                HGroupClueKind::Play,
+                red_two,
+                empty,
+            ),
+            (
+                "Rainbow mixed physical color touch",
+                &rainbow,
+                GenericClue::Color(hanabi_core::ClueColorId::new(0)),
+                red_one.union(rainbow_three),
+                true,
+                vec![0; 6],
+                rainbow_three,
+                HGroupClueKind::PlayOrSave,
+                red_one,
+                rainbow_three,
+            ),
+            (
+                "touched but neither playable nor savable",
+                &standard,
+                rank(3),
+                red_three,
+                true,
+                vec![0; 5],
+                empty,
+                HGroupClueKind::Unrecognized,
+                empty,
+                empty,
+            ),
+        ];
+        for (name, variant, clue, focus, chop, heights, critical, kind, play, save) in cases {
+            let mut discards = vec![0; variant.stack_suits().len() * variant.card_ranks().len()];
+            let visible = vec![0; variant.stack_suits().len() * variant.card_ranks().len()];
+            for id in critical.iter_ids() {
+                discards[id.index()] = usize::from(variant.copies(id).unwrap()) - 1;
+            }
+            let plan = ClueInterpretationPlan::direct_level_one(SaveClueInputs {
+                clue,
+                variant,
+                focus_identities: focus,
+                focus_was_chop: chop,
+                stack_heights: &heights,
+                discarded_counts: &discards,
+                visible_other_counts: &visible,
+                visible_other_chop_counts: &visible,
+            });
+            assert_eq!(plan.kind, kind, "{name}");
+            assert_eq!(plan.play_identities, play, "{name}");
+            assert_eq!(plan.save_identities, save, "{name}");
+            assert_eq!(plan.suppression, None, "{name}");
+        }
     }
 
     #[test]
