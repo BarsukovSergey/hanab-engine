@@ -23,6 +23,12 @@ run_check() {
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository_root"
 
+host_uname="$(uname -s 2>/dev/null || printf 'unknown')"
+case "$host_uname" in
+  MINGW*|MSYS*|CYGWIN*) windows_shell=1 ;;
+  *) windows_shell=0 ;;
+esac
+
 mode=full
 case "${1:-}" in
   "") ;;
@@ -47,14 +53,43 @@ fi
 
 # Full validations compete for the same CPU and build cache. Do not silently
 # queue or overlap another full run, which also invalidates timing comparisons.
-mkdir -p target
-exec 9>target/check.lock
-if ! flock --nonblock 9; then
-  echo 'Another check.sh run is already active in this repository.' >&2
-  exit 1
-fi
+# Use an atomic directory lock rather than flock so Git Bash can run the script.
+check_lock_dir="target/check.lock.d"
+acquire_check_lock() {
+  local holder_pid=""
+  mkdir -p target
+  if ! mkdir "$check_lock_dir" 2>/dev/null; then
+    if [[ -f "$check_lock_dir/pid" ]]; then
+      holder_pid="$(cat "$check_lock_dir/pid" 2>/dev/null || true)"
+    fi
+    if [[ "$holder_pid" =~ ^[0-9]+$ ]] && kill -0 "$holder_pid" 2>/dev/null; then
+      echo 'Another check.sh run is already active in this repository.' >&2
+      return 1
+    fi
+    rm -rf -- "$check_lock_dir"
+    if ! mkdir "$check_lock_dir" 2>/dev/null; then
+      echo 'Could not acquire the check.sh repository lock.' >&2
+      return 1
+    fi
+  fi
+  printf '%s\n' "$" > "$check_lock_dir/pid"
+}
+
+release_check_lock() {
+  rm -rf -- "$check_lock_dir"
+}
+
+acquire_check_lock
+trap release_check_lock EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
 
 check_file_ownership() {
+  if (( windows_shell != 0 )); then
+    echo 'Skipping Unix ownership validation under Windows Git Bash.'
+    return
+  fi
+
   local expected_owner
   local expected_group
   local repository_parent
@@ -70,7 +105,9 @@ check_file_ownership() {
   fi
 
   local -a mismatched_paths=()
-  mapfile -d '' mismatched_paths < <(
+  while IFS= read -r -d '' path; do
+    mismatched_paths+=("$path")
+  done < <(
     find "$repository_root" -xdev \
       \( ! -user "$expected_owner" -o ! -group "$expected_group" \) \
       -print0
@@ -106,12 +143,30 @@ if [[ -d "$HOME/.cargo/bin" ]]; then
   export PATH="$HOME/.cargo/bin:$PATH"
 fi
 
-if [[ ! -x .venv/bin/python || ! -x .venv/bin/ty ]]; then
+find_venv_tool() {
+  local tool="$1"
+  local candidate
+  for candidate in \
+    ".venv/bin/$tool" \
+    ".venv/Scripts/$tool.exe" \
+    ".venv/Scripts/$tool"
+  do
+    if [[ -f "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
+  return 1
+}
+
+if ! venv_python="$(find_venv_tool python)" || ! venv_ty="$(find_venv_tool ty)"; then
   cat >&2 <<'EOF'
 Python development dependencies are missing. Set them up with:
 
   python3 -m venv .venv
-  .venv/bin/python -m pip install --requirement scripts/requirements-dev.txt
+
+Then install scripts/requirements-dev.txt with the venv Python. The executable
+is .venv/bin/python on POSIX and .venv/Scripts/python.exe on Windows.
 EOF
   exit 1
 fi
@@ -130,11 +185,8 @@ fi
 
 if [[ "$mode" == full ]] && ! cargo nextest --version >/dev/null 2>&1; then
   cat >&2 <<'EOF'
-cargo-nextest 0.9.143 is missing. Install its prebuilt WSL/Linux binary with:
-
-  curl --proto '=https' --tlsv1.2 -LsSf \
-    https://get.nexte.st/0.9.143/linux \
-    | tar zxf - -C "$HOME/.cargo/bin"
+cargo-nextest 0.9.143 is missing. Install that version for the current platform
+before running the full local checkpoint.
 EOF
   exit 1
 fi
@@ -169,17 +221,21 @@ run_check 'Rust documentation' env RUSTDOCFLAGS='-D warnings' \
   cargo doc --workspace --all-features --no-deps --locked
 
 echo 'Type-checking Python...'
-run_check 'Python types' .venv/bin/ty check
+run_check 'Python types' "$venv_ty" check
 
 echo 'Compiling Python sources...'
-run_check 'Python compilation' .venv/bin/python -m compileall -q scripts
+run_check 'Python compilation' "$venv_python" -m compileall -q scripts
 
 echo 'Running Python tests...'
-run_check 'Python tests' .venv/bin/python -W error::ResourceWarning -m unittest discover -s scripts/tests -v
+run_check 'Python tests' "$venv_python" -W error::ResourceWarning -m unittest discover -s scripts/tests -v
+
+check_cli_help() {
+  "$venv_python" "$1" --help >/dev/null
+}
 
 echo 'Checking the Hanabi Live CLIs...'
-run_check 'Bot CLI' bash -c '.venv/bin/python scripts/hanabi_live_bot.py --help >/dev/null'
-run_check 'Parity CLI' bash -c '.venv/bin/python scripts/hanabi_live_verify.py --help >/dev/null'
+run_check 'Bot CLI' check_cli_help scripts/hanabi_live_bot.py
+run_check 'Parity CLI' check_cli_help scripts/hanabi_live_verify.py
 
 echo 'Checking workspace-wide dead public code...'
 run_check 'Dead public code' cargo +1.97.1 hawk check \
