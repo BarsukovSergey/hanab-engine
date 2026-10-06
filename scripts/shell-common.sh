@@ -4,7 +4,7 @@
 #
 # This file is sourced by entrypoints; it does not enable shell options or
 # change the caller's working directory.
-HANABI_REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+HANABI_REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 hanabi_is_windows_shell() {
   local host_uname
@@ -24,7 +24,10 @@ hanabi_add_cargo_bin_to_path() {
 hanabi_find_venv_tool() {
   local tool="$1"
   local candidate
-  for candidate in     ".venv/bin/$tool"     ".venv/Scripts/$tool.exe"     ".venv/Scripts/$tool"
+  for candidate in \
+    ".venv/bin/$tool" \
+    ".venv/Scripts/$tool.exe" \
+    ".venv/Scripts/$tool"
   do
     if [[ -f "$HANABI_REPOSITORY_ROOT/$candidate" ]]; then
       printf '%s\n' "$HANABI_REPOSITORY_ROOT/$candidate"
