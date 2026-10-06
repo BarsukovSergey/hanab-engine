@@ -1,0 +1,85 @@
+name: One-time stale branch cleanup
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  delete-stale-branches:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete audited stale branch refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          branches=(
+          "chore/agent-ergonomics"
+          "chore/cheaper-scoped-validation"
+          "chore/consolidate-shell-env"
+          "chore/finish-agent-portability"
+          "chore/portable-agent-checks"
+          "chore/simplify-workflow-recorder"
+          "codex/h-group-generic-replay-clues"
+          "codex/variant-aware-baseline"
+          "docs/consolidate-validation-guidance"
+          "docs/m3-working-state"
+          "docs/trim-technical-validation-details"
+          "feat/generic-clue-logical-boundary"
+          "feat/live-variant-sessions"
+          "feat/m3-physical-actions"
+          "feat/m3-physical-catalog"
+          "feat/offline-variant-replays"
+          "feat/variant-direct-play"
+          "fix/legacy-view-variant-boundary"
+          "fix/main-ci-after-m4-boundary"
+          "m1/journal-parity"
+          "m1/persistent-config"
+          "m1/turn-trace-acceptance"
+          "m2-generic-identity-search"
+          "m2/dynamic-information-storage"
+          "m2/dynamic-stacks"
+          "m2/generic-card-ids"
+          "m2/generic-clues"
+          "m2/identity-universe"
+          "m2/player-count-and-hands"
+          "m2/six-player-foundation"
+          "m2/variant-spec"
+          "m2/variant-state-boundary"
+          "m4-4b-variant-save-kernel"
+          "chore/cleanup-repository-branches"
+          )
+          for branch in "${branches[@]}"; do
+            encoded_ref="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote("heads/" + sys.argv[1], safe=""))' "$branch")"
+            response_file="$(mktemp)"
+            status="$(
+              curl --silent --show-error \
+                --output "$response_file" \
+                --write-out '%{http_code}' \
+                --request DELETE \
+                --header "Accept: application/vnd.github+json" \
+                --header "Authorization: Bearer $GH_TOKEN" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/$GH_REPOSITORY/git/refs/$encoded_ref"
+            )"
+            case "$status" in
+              204)
+                echo "deleted $branch"
+                ;;
+              404)
+                echo "already absent $branch"
+                ;;
+              *)
+                echo "failed to delete $branch (HTTP $status)" >&2
+                cat "$response_file" >&2
+                exit 1
+                ;;
+            esac
+            rm -f "$response_file"
+          done
