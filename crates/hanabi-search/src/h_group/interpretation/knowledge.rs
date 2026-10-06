@@ -1895,9 +1895,7 @@ pub(in crate::h_group) fn snapshot_save_identities(
         return IdentitySet::from_mask(
             identities
                 .iter()
-                .filter(|identity| {
-                    identity.rank.number() > stack_heights[identity.suit.index()]
-                })
+                .filter(|identity| identity.rank.number() > stack_heights[identity.suit.index()])
                 .fold(0, |mask, identity| mask | (1 << identity.index())),
         );
     }

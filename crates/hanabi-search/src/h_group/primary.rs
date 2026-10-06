@@ -243,7 +243,8 @@ impl ClueInterpretationPlan {
                 HGroupSaveKind::Five
             } else if identity.rank.number() == 2
                 && matches!(inputs.clue, GenericClue::Rank(rank) if rank.value() == 2)
-                && (visible == 0 || visible == inputs.two_save_visible_other_chop_counts[id.index()])
+                && (visible == 0
+                    || visible == inputs.two_save_visible_other_chop_counts[id.index()])
             {
                 HGroupSaveKind::Two
             } else if identity.rank.number() != 5
