@@ -174,4 +174,3 @@ jobs:
             --manifest-path Cargo.toml \
             --only dead-public \
             -D warnings
-
