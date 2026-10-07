@@ -90,7 +90,12 @@ generic search boundary tests, fast deterministic H-Group tests whose names use
 the `contract_` prefix, Python live-bridge checks, rustdoc tests, and
 dead-public-code checks.
 
-Pushes to `main` additionally run the exhaustive H-Group profile matrix. Neither
+Routine pushes to `main` use the same targeted CI gates as pull requests; they
+do not run the exhaustive H-Group profile matrix. The exhaustive 1-25 + Max
+completion matrix lives in the manually dispatched
+`.github/workflows/exhaustive-h-group.yml` workflow and should be run at H-Group
+milestone/checkpoint boundaries, before releases that change H-Group behavior,
+or when a planner/profile change specifically warrants the full matrix. Neither
 PR CI nor push CI is the complete ordinary hanabi-search test suite.
 `scripts/check.sh` remains the full local checkpoint.
 
