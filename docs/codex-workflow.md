@@ -115,6 +115,13 @@ During execution:
 
 - read the named functions, not whole large files unless necessary
 - use exact-symbol search for callers rather than broad conceptual search
+- prefer a narrow line range around the symbol over printing the whole file
+- inspect `git diff --stat` first, then per-file diffs; do not repeatedly dump
+  the whole branch diff into context
+- redirect verbose compiler/test output to a log and inspect the first useful
+  error or a short targeted tail
+- avoid `--nocapture`, replay traces, and profiler output unless the requested
+  diagnostic needs them
 - do not read architecture audits, replay reviews, roadmap history, or upstream
   sources "just in case"
 - do not re-run repository inventories that the orchestrator already performed
@@ -138,6 +145,12 @@ For a normal Rust batch:
 4. run `git diff --check`
 5. commit and push
 
+`check-scoped.sh` supports `--test-only` and `--check-only`. Use
+`--test-only` when a production-config `cargo check` already passed at the
+same coherent API boundary and the remaining risk is the focused lib test. Use
+`--check-only` when no focused test is relevant. Keep the default combined
+mode when both production-config compilation and the focused test still matter.
+
 A plain `cargo check -p <crate> --locked` is useful between genuinely distinct
 API boundaries, but repeated identical checks after tiny edits are wasted time.
 
@@ -157,6 +170,11 @@ For one implementation batch, normally add zero to two focused tests. For a
 whole vertical slice, prefer a small set of semantic contracts rather than a new
 large synthetic harness.
 
+Fast deterministic H-Group migration contracts use a `contract_` test-name
+prefix. PR CI runs that prefix directly. New migration contracts should be
+deterministic, avoid planner wall-clock budgets, and assert semantic state rather
+than end-to-end move timing.
+
 A new test should justify its scaffolding cost. If the test setup is becoming
 larger than the production change or starts recreating a mini framework, stop
 and reuse existing helpers or ask for a smaller assertion surface.
@@ -165,8 +183,11 @@ Convention semantics still follow the provenance rules in `docs/testing.md`.
 Artificial inputs are good for physical/algorithmic invariants, but they do not
 become authority for an invented convention meaning.
 
-Run only the exact replay regressions named in the task. If one fails, capture
-the first useful failure and report it. Do not automatically:
+Run only the exact replay regressions named in the task. Deadline-sensitive
+planner/action-parity tests are diagnostics, not default migration gates; prefer
+a deterministic `contract_` assertion for the semantic fact being changed. If
+a named replay regression fails, capture the first useful failure and report it.
+Do not automatically:
 
 - run alternate replay suites
 - modify fixtures/assertions
@@ -192,7 +213,11 @@ occurs:
 - the session reaches its time/context budget without being close to a coherent
   commit
 
-A stop is a successful handoff when it prevents speculative work.
+A stop is a successful handoff when it prevents speculative work. Prefer a
+coherent compile-safe commit. If the budget expires mid-edit and no such boundary
+exists, do not burn another long session forcing one: leave only the agent's own
+in-scope edits visible, report the dirty files and blocker, and let a fresh
+session continue them. Never mix unrelated pre-existing work into such a handoff.
 
 ## Branch and commit discipline
 
@@ -203,8 +228,10 @@ Do not reset, clean, or discard unrelated local state. A fresh session should
 verify the expected branch/head and a clean worktree before editing.
 
 Open one pull request for the vertical capability, not one PR per Codex batch.
-A draft PR may be opened after the first stable batch when early CI/review is
-useful.
+By default, open the pull request only after all planned source-implementation
+batches and focused local validation are complete. This avoids restarting the
+whole PR CI matrix after every short-session push. Open an early draft only when
+Linux CI or human review is itself needed to unblock the next batch.
 
 ## Model choice
 
@@ -231,3 +258,17 @@ Keep the completion report compact:
 
 Do not spend context producing a retrospective essay. The orchestrator can
 inspect the actual diff, PR, and CI.
+
+## Rule ownership
+
+To prevent workflow drift:
+
+- `AGENTS.md` owns mandatory coding-agent behavior and stop conditions
+- `docs/validation.md` owns validation command semantics and CI coverage
+- `docs/testing.md` owns test provenance and expensive-test policy
+- this document owns orchestrator/session decomposition
+- milestone plans such as `M4_VERTICAL_EXECUTION_PLAN.md` own milestone scope
+  and acceptance, not duplicate command-level workflow rules
+
+When these documents overlap, update the owning document and link to it rather
+than copying a second detailed procedure.
