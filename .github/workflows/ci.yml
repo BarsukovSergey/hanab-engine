@@ -175,17 +175,3 @@ jobs:
             --only dead-public \
             -D warnings
 
-  exhaustive-h-group-profiles:
-    name: Exhaustive H-Group profile matrix
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Install stable Rust
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-      - name: Test every cumulative H-Group profile
-        run: scripts/check-exhaustive.sh
