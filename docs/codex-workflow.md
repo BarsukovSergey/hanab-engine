@@ -96,9 +96,9 @@ Implementation prompts should be short but concrete. Include:
 
 Prefer instructions such as:
 
-> In `foo::bar`, replace the legacy mask with
-> `identity_mask_in(&view.variant)`; iterate through active IDs with
-> `iter_in(...)`. Then update the two named callers.
+> In `foo::bar`, replace the legacy mask with `identity_mask_in(&view.variant)`;
+> iterate through active IDs with `iter_in(...)`. Then update the two named
+> callers.
 
 Avoid instructions such as:
 
