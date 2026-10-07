@@ -13,21 +13,21 @@ Preserve tests and their assertions; change when they run, not their strength.
 Detailed command behavior, platform notes, CI scope, timing, and
 failure-baseline mechanics live in [docs/validation.md](docs/validation.md).
 
-| Change                                        | Local validation before responding                                           |
-| --------------------------------------------- | ---------------------------------------------------------------------------- |
-| Discussion / diagnosis                        | Relevant read-only inspection; no full suite                                 |
-| Documentation                                 | Formatting and any affected examples/scripts                                 |
-| Fixture edit                                  | Parse and replay legality; inspect/test the affected position                |
-| Scoped Rust / localized convention change     | `bash scripts/check-scoped.sh <crate> [focused cargo-test args...]`          |
-| Shared inference/replay/planner refactor      | Focused checks + `check-scoped.sh`; broad gates stay in CI unless requested    |
-| Milestone or explicit full-validation request | Full `scripts/check.sh`                                                      |
+| Change                                        | Local validation before responding                                          |
+| --------------------------------------------- | --------------------------------------------------------------------------- |
+| Discussion / diagnosis                        | Relevant read-only inspection; no full suite                                |
+| Documentation                                 | Formatting and any affected examples/scripts                                |
+| Fixture edit                                  | Parse and replay legality; inspect/test the affected position               |
+| Scoped Rust / localized convention change     | `bash scripts/check-scoped.sh <crate> [focused cargo-test args...]`         |
+| Shared inference/replay/planner refactor      | Focused checks + `check-scoped.sh`; broad gates stay in CI unless requested |
+| Milestone or explicit full-validation request | Full `scripts/check.sh`                                                     |
 
 Do not widen a scoped task into strict Clippy, `--all-targets`, broad replay
 regressions, `scripts/check.sh --fast`, or full validation without a concrete
 risk that the extra check addresses. Pull-request CI owns the routine broad
 build/lint/docs/MSRV gates. Do not wait for CI inside an implementation session
-unless the task explicitly requires it. Never describe a focused/local result
-or an unobserved CI run as a full pass.
+unless the task explicitly requires it. Never describe a focused/local result or
+an unobserved CI run as a full pass.
 
 Do not overlap full validation runs or CPU-heavy benchmarks. If a Windows/Git
 Bash Rust check fails before meaningful compilation because of host linker or
@@ -66,19 +66,30 @@ not invent convention rules, one-off exceptions, or fixture changes to force
 parity. Respect an explicit request for read-only analysis or no edits. This
 standing authorization does not expand a localized task into unrelated fixes or
 a full replay scan, and documentation-only requests remain documentation-only.
+When an implementation task names an explicit file/function boundary, a clear
+bug outside that boundary is reported rather than fixed unless it directly
+blocks the assigned change or the task explicitly authorizes the expansion.
 
 ## Version control
 
-After every user prompt that changes this repository:
+After every completed user prompt that changes this repository:
 
 1. Run the relevant checks according to the validation matrix above.
-2. Commit all in-scope changes with a descriptive commit message.
+2. Commit all coherent in-scope changes with a descriptive commit message.
 3. Push the commit to the current branch's configured upstream.
+
+A budget/stop-condition handoff is not task completion. If a coherent checkpoint
+exists, commit and push it. If the current edit is knowingly incomplete or
+unbuildable, do not keep working merely to satisfy this rule and do not pretend
+it is complete. Preserve only the agent's own in-scope work, report the dirty
+files and exact blocker, and let the next session continue from that checkpoint.
 
 Do not create empty commits for prompts that make no repository changes. Do not
 include unrelated pre-existing worktree changes in the commit. If validation,
 the commit, or the push fails, report the failure instead of claiming the task
-is complete.
+is complete. Do not open a pull request merely to obtain routine CI while a
+multi-session implementation is still in progress; open it after source
+implementation is complete unless early CI/review is explicitly useful.
 
 ## Other Repositories
 
@@ -103,6 +114,14 @@ in case. In particular, do not read replay-review material for unrelated work.
 Expand context only when a compile error, failing focused test, or an unclear
 API boundary gives a concrete reason.
 
+Keep tool output proportional to the question. Prefer exact-symbol search and a
+small line range around the target over printing a whole large source file.
+Inspect `git diff --stat` before broad diffs and request per-file patches when
+possible. Redirect verbose compiler/test output to a log and inspect the first
+useful failure or a targeted tail instead of repeatedly dumping full logs. Do
+not use `--nocapture`, full replay traces, or profiler output unless the task
+needs those details.
+
 ## Coding-agent execution budget
 
 A branch or pull request is a delivery unit; an agent chat is not. One branch
@@ -118,9 +137,11 @@ that work or a concrete contradiction appears.
 Default implementation-session budget is about 20 minutes and at most roughly
 65% of the available context window when that usage is visible. If the task is
 not nearly complete by either threshold, stop expanding the investigation.
-Commit and push a coherent checkpoint when safe, or leave the worktree clean,
-then report the exact blocker for a fresh session. A task may explicitly grant a
-larger budget when the expected compile/test runtime justifies it.
+Commit and push a coherent checkpoint when safe. If no coherent checkpoint
+exists, leave only the agent's own in-scope edits uncommitted and report them
+rather than spending another long session manufacturing a checkpoint. A task may
+explicitly grant a larger budget when the expected compile/test runtime
+justifies it.
 
 Read the named functions first and expand only to direct compile/test
 dependencies. An unexpected caller may justify one targeted search. Needing a

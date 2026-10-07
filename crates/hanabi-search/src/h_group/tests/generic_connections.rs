@@ -77,7 +77,7 @@ fn plan(
 }
 
 #[test]
-fn generic_connection_no_variant_and_sixth_suit_prompt_finesse_parity() {
+fn contract_generic_connection_no_variant_and_sixth_suit_prompt_finesse_parity() {
     for (variant, suit) in [
         (VariantSpec::no_variant(), Suit::Red),
         (
@@ -172,7 +172,7 @@ fn generic_connection_no_variant_and_sixth_suit_prompt_finesse_parity() {
 }
 
 #[test]
-fn generic_connection_prompt_precedes_earlier_finesse_in_six_player_order() {
+fn contract_generic_connection_prompt_precedes_earlier_finesse_in_six_player_order() {
     let mut view = snapshot(VariantSpec::from_catalog(VariantId::Rainbow6Suits), 6);
     let one = Card::new(Suit::new(5), Rank::One);
     let two = Card::new(Suit::new(5), Rank::Two);
@@ -200,7 +200,7 @@ fn generic_connection_prompt_precedes_earlier_finesse_in_six_player_order() {
 }
 
 #[test]
-fn generic_connection_reverse_finesse_uses_non_legacy_identity() {
+fn contract_generic_connection_reverse_finesse_uses_non_legacy_identity() {
     let mut view = snapshot(VariantSpec::from_catalog(VariantId::Rainbow6Suits), 4);
     let focus = view.hands[1][0].id;
     view.hands[1].truncate(1);
@@ -246,7 +246,7 @@ fn generic_connection_reverse_finesse_uses_non_legacy_identity() {
 }
 
 #[test]
-fn generic_connection_self_finesse_requires_no_direct_alternative_and_ignores_hidden_truth() {
+fn contract_self_finesse_requires_no_direct_alternative_and_ignores_hidden_truth() {
     let mut view = snapshot(VariantSpec::from_catalog(VariantId::Rainbow6Suits), 3);
     let focus = view.hands[0][0].id;
     view.hands[1].clear();
@@ -337,7 +337,7 @@ fn irregular_variant() -> VariantSpec {
 }
 
 #[test]
-fn generic_connection_multi_step_rank_order_preserves_lifecycle_and_provenance() {
+fn contract_generic_connection_multi_step_rank_order_preserves_lifecycle_and_provenance() {
     let mut view = snapshot(irregular_variant(), 4);
     let one = Card::new(Suit::new(5), Rank::One);
     let three = Card::new(Suit::new(5), Rank::Three);
@@ -404,7 +404,7 @@ fn generic_connection_multi_step_rank_order_preserves_lifecycle_and_provenance()
 }
 
 #[test]
-fn generic_connection_clue_matching_uses_rainbow_and_pink_touches() {
+fn contract_generic_connection_clue_matching_uses_rainbow_and_pink_touches() {
     for variant_id in [VariantId::Rainbow6Suits, VariantId::Pink6Suits] {
         let mut view = snapshot(VariantSpec::from_catalog(variant_id), 3);
         let focus = view.hands[2][0].id;
@@ -438,7 +438,7 @@ fn generic_connection_clue_matching_uses_rainbow_and_pink_touches() {
 }
 
 #[test]
-fn generic_connection_loaded_sixth_suit_progresses_through_two_predecessors() {
+fn contract_generic_connection_loaded_sixth_suit_progresses_through_two_predecessors() {
     let mut view = snapshot(VariantSpec::from_catalog(VariantId::Rainbow6Suits), 4);
     let focus = view.hands[3][0].id;
     let one = Card::new(Suit::new(5), Rank::One);
@@ -487,7 +487,7 @@ fn generic_connection_loaded_sixth_suit_progresses_through_two_predecessors() {
 }
 
 #[test]
-fn generic_connection_deferred_prompt_and_fix_keep_promise_history() {
+fn contract_generic_connection_deferred_prompt_and_fix_keep_promise_history() {
     let mut view = snapshot(irregular_variant(), 3);
     let focus = view.hands[2][0].id;
     let expected = Card::new(Suit::new(5), Rank::Three);
@@ -547,7 +547,7 @@ fn generic_connection_deferred_prompt_and_fix_keep_promise_history() {
 }
 
 #[test]
-fn generic_connection_historical_dynamic_stacks_exclude_future_and_failed_plays() {
+fn contract_generic_connection_historical_dynamic_stacks_exclude_future_and_failed_plays() {
     let mut view = snapshot(irregular_variant(), 3);
     for (turn, rank, successful) in [
         (4, Rank::One, true),
@@ -571,7 +571,7 @@ fn generic_connection_historical_dynamic_stacks_exclude_future_and_failed_plays(
 }
 
 #[test]
-fn generic_connection_historical_speculation_and_commit_share_the_active_plan() {
+fn contract_generic_connection_historical_speculation_and_commit_share_the_active_plan() {
     let mut view = snapshot(irregular_variant(), 4);
     let one = Card::new(Suit::new(5), Rank::One);
     let three = Card::new(Suit::new(5), Rank::Three);

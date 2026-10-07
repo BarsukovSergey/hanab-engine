@@ -154,7 +154,7 @@ fn clue_entry(target: u8, clue: Clue, touched: Vec<CardId>) -> hanabi_core::Obse
 }
 
 #[test]
-fn v3_focus_context_tempo_precedes_accounted_trash_chop_move() {
+fn contract_v3_focus_context_tempo_precedes_accounted_trash_chop_move() {
     let mut view = snapshot(VariantSpec::no_variant(), 3);
     let focus = view.hands[1][2].id;
     let duplicate = view.hands[2][0].id;
@@ -211,7 +211,7 @@ fn v3_focus_context_tempo_precedes_accounted_trash_chop_move() {
 }
 
 #[test]
-fn v3_focus_context_five_stall_precedes_five_chop_move() {
+fn contract_v3_focus_context_five_stall_precedes_five_chop_move() {
     let view = snapshot(VariantSpec::no_variant(), 3);
     let focus = view.hands[1][1].id;
     let entry = clue_entry(1, Clue::Rank(Rank::Five), vec![focus]);
@@ -245,7 +245,7 @@ fn v3_focus_context_five_stall_precedes_five_chop_move() {
 }
 
 #[test]
-fn v3_focus_context_custom_trash_chop_is_protection_and_hidden_truth_independent() {
+fn contract_v3_focus_context_custom_trash_chop_is_protection_and_hidden_truth_independent() {
     for variant in [
         VariantSpec::from_catalog(VariantId::Black6Suits),
         irregular(),
@@ -288,7 +288,7 @@ fn v3_focus_context_custom_trash_chop_is_protection_and_hidden_truth_independent
 }
 
 #[test]
-fn v3_focus_context_sixth_suit_tempo_uses_physical_rainbow_facts() {
+fn contract_v3_focus_context_sixth_suit_tempo_uses_physical_rainbow_facts() {
     let mut view = snapshot(VariantSpec::from_catalog(VariantId::Rainbow6Suits), 3);
     let focus = view.hands[1][2].id;
     view.hands[1][2]
@@ -334,7 +334,7 @@ fn v3_focus_context_sixth_suit_tempo_uses_physical_rainbow_facts() {
 }
 
 #[test]
-fn v3_focus_context_sixth_suit_transfer_layer_progression_and_baton_guard() {
+fn contract_v3_focus_context_sixth_suit_transfer_layer_progression_and_baton_guard() {
     for (rank, layered, expected) in [
         (Rank::Three, false, Some(HGroupMoveKind::GentlemansDiscard)),
         (
@@ -410,7 +410,7 @@ fn v3_focus_context_sixth_suit_transfer_layer_progression_and_baton_guard() {
 }
 
 #[test]
-fn v3_focus_context_six_player_emergency_order_uses_actual_seats() {
+fn contract_v3_focus_context_six_player_emergency_order_uses_actual_seats() {
     let mut view = snapshot(VariantSpec::from_catalog(VariantId::Black6Suits), 6);
     view.observer = PlayerId::new(5);
     for suit in view.variant.stack_suits().to_vec() {
@@ -449,7 +449,7 @@ fn v3_focus_context_six_player_emergency_order_uses_actual_seats() {
 }
 
 #[test]
-fn v3_focus_context_active_prior_play_narrowing_and_fill_in_burn() {
+fn contract_v3_focus_context_active_prior_play_narrowing_and_fill_in_burn() {
     let mut view = snapshot(irregular(), 3);
     let card = view.hands[1][2].id;
     view.history.push(hanabi_core::ObservedHistoryEntry {
@@ -540,7 +540,7 @@ fn v3_focus_context_active_prior_play_narrowing_and_fill_in_burn() {
 }
 
 #[test]
-fn v3_focus_context_sarcastic_precedence_requires_actor_knowledge() {
+fn contract_v3_focus_context_sarcastic_precedence_requires_actor_knowledge() {
     let mut view = snapshot(irregular(), 3);
     let identity = Card::new(Suit::new(5), Rank::Three);
     advance(&mut view, identity.suit, &[Rank::One]);
@@ -611,7 +611,7 @@ fn v3_focus_context_sarcastic_precedence_requires_actor_knowledge() {
 }
 
 #[test]
-fn v3_focus_context_usefulness_and_endgame_coverage_follow_custom_universe() {
+fn contract_v3_focus_context_usefulness_and_endgame_coverage_follow_custom_universe() {
     let mut view = snapshot(irregular(), 3);
     let one = Card::new(Suit::new(5), Rank::One);
     let three = Card::new(Suit::new(5), Rank::Three);

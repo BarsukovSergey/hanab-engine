@@ -3101,7 +3101,7 @@ mod v3_focus_context_tests {
     };
 
     #[test]
-    fn v3_focus_context_prospective_gentleman_and_trash_use_active_notes() {
+    fn contract_v3_focus_context_prospective_gentleman_and_trash_use_active_notes() {
         let mut view = FullState::new_standard(6, standard_deck())
             .unwrap()
             .view_for(PlayerId::new(0))

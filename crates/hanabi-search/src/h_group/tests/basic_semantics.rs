@@ -33,7 +33,7 @@ fn layouts(view: &PlayerView) -> Vec<Vec<CardId>> {
 }
 
 #[test]
-fn basic_good_touch_no_variant_matches_legacy_usefulness_and_claims() {
+fn contract_basic_good_touch_no_variant_matches_legacy_usefulness_and_claims() {
     let mut view = snapshot(VariantSpec::no_variant());
     let focus = view.hands[0][0].id;
     let duplicate = view.hands[1][0].id;
@@ -87,7 +87,7 @@ fn basic_good_touch_no_variant_matches_legacy_usefulness_and_claims() {
 }
 
 #[test]
-fn basic_good_touch_rainbow_and_pink_physical_touches_keep_usefulness_rules() {
+fn contract_basic_good_touch_rainbow_and_pink_physical_touches_keep_usefulness_rules() {
     for variant_id in [VariantId::Rainbow6Suits, VariantId::Pink6Suits] {
         let mut view = snapshot(VariantSpec::from_catalog(variant_id));
         let focus = view.hands[0][0].id;
@@ -142,7 +142,7 @@ fn basic_good_touch_rainbow_and_pink_physical_touches_keep_usefulness_rules() {
 }
 
 #[test]
-fn basic_good_touch_black_uses_one_copy_and_requires_each_missing_lower_identity() {
+fn contract_basic_good_touch_black_uses_one_copy_and_requires_each_missing_lower_identity() {
     for variant_id in [VariantId::Black6Suits, VariantId::White6Suits] {
         let view = snapshot(VariantSpec::from_catalog(variant_id));
         let hands = layouts(&view);
@@ -180,7 +180,7 @@ fn basic_good_touch_black_uses_one_copy_and_requires_each_missing_lower_identity
 }
 
 #[test]
-fn basic_good_touch_cannot_depend_on_hidden_simulator_truth() {
+fn contract_basic_good_touch_cannot_depend_on_hidden_simulator_truth() {
     let variant = VariantSpec::from_catalog(VariantId::Black6Suits);
     let mut deck = variant
         .identities()
@@ -215,7 +215,7 @@ fn basic_good_touch_cannot_depend_on_hidden_simulator_truth() {
 }
 
 #[test]
-fn basic_claims_map_visible_and_literal_sixth_suit_without_hidden_truth() {
+fn contract_basic_claims_map_visible_and_literal_sixth_suit_without_hidden_truth() {
     let mut view = snapshot(VariantSpec::from_catalog(VariantId::Black6Suits));
     let focus = view.hands[2][0].id;
     let visible = view.hands[1][0].id;
