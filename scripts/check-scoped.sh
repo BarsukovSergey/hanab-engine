@@ -29,22 +29,33 @@ configure_target_cache() {
   fi
 }
 
+run_timed() {
+  local label="$1"
+  shift
+  local started=$SECONDS
+  local status=0
+  "$@" || status=$?
+  printf 'SCOPED TIMING: %s: %ds (exit %d)\n' "$label" "$((SECONDS - started))" "$status"
+  return "$status"
+}
+
 if [[ "${1:-}" == "--help" ]] || (( $# == 0 )); then
   cat <<'EOF'
-Usage: bash scripts/check-scoped.sh <crate> [--] [focused cargo test args...]
+Usage: bash scripts/check-scoped.sh <crate> [--test-only|--check-only] [--] [focused cargo test args...]
        bash scripts/check-scoped.sh --print-target-dir
 
 Examples:
   bash scripts/check-scoped.sh hanabi-search direct_play --lib
+  bash scripts/check-scoped.sh hanabi-search --test-only contract_ --lib
+  bash scripts/check-scoped.sh hanabi-search --check-only
   bash scripts/check-scoped.sh hanabi-search -- --test generic_information_set
   bash scripts/check-scoped.sh hanabi-core
 
-The optional test arguments are passed to:
-  cargo test -p <crate> --locked ...
-
-Then the script runs repository Rust formatting and a normal crate check.
-It intentionally does not run Clippy, --all-targets, broad contract suites, or
-scripts/check.sh --fast.
+Default mode optionally runs focused tests, then repository Rust formatting and
+a normal crate check. --test-only requires focused test args and skips the final
+crate check. --check-only accepts no test args and runs formatting plus the crate
+check. The helper intentionally does not run Clippy, --all-targets, broad replay
+suites, or scripts/check.sh --fast.
 EOF
   exit 0
 fi
@@ -58,17 +69,33 @@ fi
 
 crate="$1"
 shift
+mode=combined
+case "${1:-}" in
+  --test-only) mode=test-only; shift ;;
+  --check-only) mode=check-only; shift ;;
+esac
 if [[ "${1:-}" == "--" ]]; then
   shift
 fi
 
-if (( $# > 0 )); then
+if [[ "$mode" == test-only ]] && (( $# == 0 )); then
+  echo '--test-only requires focused cargo test arguments.' >&2
+  exit 2
+fi
+if [[ "$mode" == check-only ]] && (( $# != 0 )); then
+  echo '--check-only does not accept cargo test arguments.' >&2
+  exit 2
+fi
+
+if [[ "$mode" != check-only ]] && (( $# > 0 )); then
   echo "Running focused tests for $crate..."
-  cargo test -p "$crate" --locked "$@"
+  run_timed 'Focused tests' cargo test -p "$crate" --locked "$@"
 fi
 
 echo 'Checking Rust formatting...'
-cargo fmt --all -- --check
+run_timed 'Rust formatting' cargo fmt --all -- --check
 
-echo "Checking $crate..."
-cargo check -p "$crate" --locked
+if [[ "$mode" != test-only ]]; then
+  echo "Checking $crate..."
+  run_timed 'Crate check' cargo check -p "$crate" --locked
+fi
