@@ -118,8 +118,8 @@ Keep tool output proportional to the question. Prefer exact-symbol search and a
 small line range around the target over printing a whole large source file.
 Inspect `git diff --stat` before broad diffs and request per-file patches when
 possible. Redirect verbose compiler/test output to a log and inspect the first
-useful failure or a targeted tail instead of repeatedly dumping full logs.
-Do not use `--nocapture`, full replay traces, or profiler output unless the task
+useful failure or a targeted tail instead of repeatedly dumping full logs. Do
+not use `--nocapture`, full replay traces, or profiler output unless the task
 needs those details.
 
 ## Coding-agent execution budget
@@ -139,8 +139,8 @@ Default implementation-session budget is about 20 minutes and at most roughly
 not nearly complete by either threshold, stop expanding the investigation.
 Commit and push a coherent checkpoint when safe. If no coherent checkpoint
 exists, leave only the agent's own in-scope edits uncommitted and report them
-rather than spending another long session manufacturing a checkpoint. A task
-may explicitly grant a larger budget when the expected compile/test runtime
+rather than spending another long session manufacturing a checkpoint. A task may
+explicitly grant a larger budget when the expected compile/test runtime
 justifies it.
 
 Read the named functions first and expand only to direct compile/test
