@@ -13,21 +13,21 @@ Preserve tests and their assertions; change when they run, not their strength.
 Detailed command behavior, platform notes, CI scope, timing, and
 failure-baseline mechanics live in [docs/validation.md](docs/validation.md).
 
-| Change                                        | Local validation before responding                                           |
-| --------------------------------------------- | ---------------------------------------------------------------------------- |
-| Discussion / diagnosis                        | Relevant read-only inspection; no full suite                                 |
-| Documentation                                 | Formatting and any affected examples/scripts                                 |
-| Fixture edit                                  | Parse and replay legality; inspect/test the affected position                |
-| Scoped Rust / localized convention change     | `bash scripts/check-scoped.sh <crate> [focused cargo-test args...]`          |
-| Shared inference/replay/planner refactor      | Focused checks + `check-scoped.sh`; broad gates stay in CI unless requested  |
-| Milestone or explicit full-validation request | Full `scripts/check.sh`                                                      |
+| Change                                        | Local validation before responding                                          |
+| --------------------------------------------- | --------------------------------------------------------------------------- |
+| Discussion / diagnosis                        | Relevant read-only inspection; no full suite                                |
+| Documentation                                 | Formatting and any affected examples/scripts                                |
+| Fixture edit                                  | Parse and replay legality; inspect/test the affected position               |
+| Scoped Rust / localized convention change     | `bash scripts/check-scoped.sh <crate> [focused cargo-test args...]`         |
+| Shared inference/replay/planner refactor      | Focused checks + `check-scoped.sh`; broad gates stay in CI unless requested |
+| Milestone or explicit full-validation request | Full `scripts/check.sh`                                                     |
 
 Do not widen a scoped task into strict Clippy, `--all-targets`, broad replay
 regressions, `scripts/check.sh --fast`, or full validation without a concrete
 risk that the extra check addresses. Pull-request CI owns the routine broad
 build/lint/docs/MSRV gates. Do not wait for CI inside an implementation session
-unless the task explicitly requires it. Never describe a focused/local result
-or an unobserved CI run as a full pass.
+unless the task explicitly requires it. Never describe a focused/local result or
+an unobserved CI run as a full pass.
 
 Do not overlap full validation runs or CPU-heavy benchmarks. If a Windows/Git
 Bash Rust check fails before meaningful compilation because of host linker or
