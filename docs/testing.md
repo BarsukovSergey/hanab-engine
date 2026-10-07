@@ -24,6 +24,24 @@ workflow/failure recording are documented in [validation.md](validation.md).
 This document stays focused on test provenance, replay-specific diagnostics, and
 coverage boundaries.
 
+## Fast H-Group semantic contracts
+
+Deterministic migration contracts that are intended to run on every pull request
+use a `contract_` test-name prefix. PR CI runs that prefix from the
+`hanabi-search` lib test binary.
+
+These contracts should assert semantic state such as identity domains,
+connections, obligations, precedence, provenance, hidden-information
+independence, or variant traversal. They should be fast and deterministic and
+must not depend on planner wall-clock budgets or on an invented game becoming a
+convention authority. Existing provenance rules below still apply.
+
+Deadline-sensitive planner/action-parity tests remain valuable diagnostics, but
+they are not default migration gates. When a migration needs to prove one of
+their semantic facts, add or reuse a fast deterministic `contract_` assertion
+for that fact and run the long replay only when the task explicitly calls for
+end-to-end planner behavior.
+
 ## Replay diagnostics and expensive checks
 
 For per-turn, nested stage timings of an expert action-parity test:
