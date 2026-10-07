@@ -117,6 +117,8 @@ jobs:
             --test generic_information_set \
             --test information_set \
             --test baseline
+      - name: Run fast H-Group semantic contracts
+        run: cargo test -p hanabi-search --locked contract_ --lib
 
   rust-doctests:
     name: Rust documentation tests
