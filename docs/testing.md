@@ -44,6 +44,13 @@ end-to-end planner behavior.
 
 ## Replay diagnostics and expensive checks
 
+The full H-Group profile completion matrix (levels 1-25 plus Max) is an
+integration/hardening check, not a routine PR or push gate. Run it with
+`scripts/check-exhaustive.sh` locally or dispatch the
+`Exhaustive H-Group profiles` workflow at milestone/checkpoint boundaries,
+before H-Group releases, or when profile/planner changes specifically require the
+full cumulative matrix.
+
 For per-turn, nested stage timings of an expert action-parity test:
 
 ```bash
