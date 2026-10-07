@@ -31,8 +31,9 @@ Codex owns execution of the decided change:
 - commit and push the batch
 - report blockers instead of reopening design work
 
-Do not pay twice for the same research. If the task packet says a semantic choice
-is decided, Codex should implement it rather than independently rediscovering it.
+Do not pay twice for the same research. If the task packet says a semantic
+choice is decided, Codex should implement it rather than independently
+rediscovering it.
 
 ## Delivery unit versus session unit
 
@@ -155,9 +156,9 @@ A plain `cargo check -p <crate> --locked` is useful between genuinely distinct
 API boundaries, but repeated identical checks after tiny edits are wasted time.
 
 Do not run `scripts/check.sh --fast`, strict workspace Clippy, all-targets,
-MSRV, Python, Hawk, or broad replay suites by default. Pull-request CI owns those
-routine broad gates. Run a broader local command only for a named risk or an
-explicit request.
+MSRV, Python, Hawk, or broad replay suites by default. Pull-request CI owns
+those routine broad gates. Run a broader local command only for a named risk or
+an explicit request.
 
 If CI later exposes a mechanical lint/format issue, fix that separately. Do not
 reopen a large semantic Codex session merely to satisfy a trivial lint.
@@ -172,8 +173,8 @@ large synthetic harness.
 
 Fast deterministic H-Group migration contracts use a `contract_` test-name
 prefix. PR CI runs that prefix directly. New migration contracts should be
-deterministic, avoid planner wall-clock budgets, and assert semantic state rather
-than end-to-end move timing.
+deterministic, avoid planner wall-clock budgets, and assert semantic state
+rather than end-to-end move timing.
 
 A new test should justify its scaffolding cost. If the test setup is becoming
 larger than the production change or starts recreating a mini framework, stop
@@ -214,10 +215,11 @@ occurs:
   commit
 
 A stop is a successful handoff when it prevents speculative work. Prefer a
-coherent compile-safe commit. If the budget expires mid-edit and no such boundary
-exists, do not burn another long session forcing one: leave only the agent's own
-in-scope edits visible, report the dirty files and blocker, and let a fresh
-session continue them. Never mix unrelated pre-existing work into such a handoff.
+coherent compile-safe commit. If the budget expires mid-edit and no such
+boundary exists, do not burn another long session forcing one: leave only the
+agent's own in-scope edits visible, report the dirty files and blocker, and let
+a fresh session continue them. Never mix unrelated pre-existing work into such
+a handoff.
 
 ## Branch and commit discipline
 
