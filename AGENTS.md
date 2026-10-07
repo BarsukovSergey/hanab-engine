@@ -19,13 +19,15 @@ failure-baseline mechanics live in [docs/validation.md](docs/validation.md).
 | Documentation                                 | Formatting and any affected examples/scripts                                 |
 | Fixture edit                                  | Parse and replay legality; inspect/test the affected position                |
 | Scoped Rust / localized convention change     | `bash scripts/check-scoped.sh <crate> [focused cargo-test args...]`          |
-| Shared inference/replay/planner refactor      | Focused checks first; `scripts/check.sh --fast` after implementation settles |
+| Shared inference/replay/planner refactor      | Focused checks + `check-scoped.sh`; broad gates stay in CI unless requested    |
 | Milestone or explicit full-validation request | Full `scripts/check.sh`                                                      |
 
 Do not widen a scoped task into strict Clippy, `--all-targets`, broad replay
-regressions, or full validation without a concrete risk that the extra check
-addresses. Do not wait for CI unless the task requires it. Never describe a
-focused/local result or an unobserved CI run as a full pass.
+regressions, `scripts/check.sh --fast`, or full validation without a concrete
+risk that the extra check addresses. Pull-request CI owns the routine broad
+build/lint/docs/MSRV gates. Do not wait for CI inside an implementation session
+unless the task explicitly requires it. Never describe a focused/local result
+or an unobserved CI run as a full pass.
 
 Do not overlap full validation runs or CPU-heavy benchmarks. If a Windows/Git
 Bash Rust check fails before meaningful compilation because of host linker or
@@ -100,6 +102,41 @@ not inventory the repository or read broad audit/refactor/history documents just
 in case. In particular, do not read replay-review material for unrelated work.
 Expand context only when a compile error, failing focused test, or an unclear
 API boundary gives a concrete reason.
+
+## Coding-agent execution budget
+
+A branch or pull request is a delivery unit; an agent chat is not. One branch
+may intentionally be completed by several short agent sessions. Each session
+should implement one compile-safe batch, commit it, and push it before handing
+off.
+
+Treat semantic decisions, exact functions, helpers, tests, and exclusions named
+by the task as settled. Do not repeat repository inventory, architecture
+research, upstream comparison, or convention research unless the task delegates
+that work or a concrete contradiction appears.
+
+Default implementation-session budget is about 20 minutes and at most roughly
+65% of the available context window when that usage is visible. If the task is
+not nearly complete by either threshold, stop expanding the investigation.
+Commit and push a coherent checkpoint when safe, or leave the worktree clean,
+then report the exact blocker for a fresh session. A task may explicitly grant a
+larger budget when the expected compile/test runtime justifies it.
+
+Read the named functions first and expand only to direct compile/test
+dependencies. An unexpected caller may justify one targeted search. Needing a
+new semantic decision, a broad refactor, a forbidden file, or repeated
+cross-subsystem exploration is a stop condition rather than permission to widen
+scope.
+
+Do not investigate a failing historical regression on the base revision unless
+the task explicitly asks for baseline comparison. Report the exact failure and
+let the orchestrator decide whether baseline archaeology is worth a separate
+task. Routine CI-only formatting/Clippy fallout should be fixed as a separate
+small mechanical step rather than reopening an exhausted semantic session.
+
+Human/orchestrator guidance for decomposing Codex work lives in
+[docs/codex-workflow.md](docs/codex-workflow.md). Coding agents do not need to
+read that longer document unless the task explicitly asks them to.
 
 ## Replay positions and human review
 

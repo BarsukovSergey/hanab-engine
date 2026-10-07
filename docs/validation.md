@@ -24,17 +24,21 @@ matrix, broad H-Group regressions, or `scripts/check.sh --fast` to a scoped
 change. Those are broader gates unless the change directly targets them or
 focused compilation exposes cross-cutting fallout.
 
-For a shared inference/replay/planner refactor, run focused checks first and
-use:
+For an ordinary coding-agent batch inside a shared inference/replay/planner
+refactor, still stop at focused tests plus `check-scoped.sh` by default.
+Pull-request CI owns the routine broad build, strict Clippy, documentation,
+MSRV, Python, ownership, and dead-public-code gates.
+
+Use:
 
 ```sh
 scripts/check.sh --fast
 ```
 
-after the implementation has settled. Fast mode runs the broad build, lint,
-documentation, Python, ownership, and dead-public-code stages but skips the
-ordinary Rust test suite. It does not replace focused Rust tests and is not a
-full replay-validation claim.
+only when the task explicitly requests a local broad checkpoint or when a
+specific cross-cutting risk is not covered by the focused checks and CI. Fast
+mode skips the ordinary Rust test suite, does not replace focused Rust tests,
+and is not a full replay-validation claim.
 
 The full local checkpoint is:
 

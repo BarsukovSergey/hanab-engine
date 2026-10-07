@@ -243,7 +243,7 @@ For each vertical slice:
 
 1. Run focused semantic tests first.
 2. Run `bash scripts/check-scoped.sh hanabi-search ...` for the affected focused test target.
-3. For shared replay/inference/planner refactors, run `bash scripts/check.sh --fast` after implementation settles.
+3. Let pull-request CI own routine broad build/lint/docs/MSRV gates. Run `bash scripts/check.sh --fast` locally only when explicitly requested or when a concrete cross-cutting risk is not covered by the focused checks and CI.
 4. Use full `bash scripts/check.sh` at the M4 checkpoint rather than after every ordinary slice.
 
 Tests should assert the semantic state that matters: identity domains, Play/Save classification, hypotheses, connections, obligations, precedence, provenance, admitted/rejected actions, or other relevant facts. A matching final move alone is insufficient evidence for a convention migration.
