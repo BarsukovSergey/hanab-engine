@@ -191,7 +191,7 @@ fn obligation(
 }
 
 #[test]
-fn basic_bluff_active_predecessor_and_no_variant_precedence_parity() {
+fn contract_basic_bluff_active_predecessor_and_no_variant_precedence_parity() {
     for (variant, suit) in [
         (VariantSpec::no_variant(), Suit::Red),
         (
@@ -261,7 +261,7 @@ fn basic_bluff_active_predecessor_and_no_variant_precedence_parity() {
 }
 
 #[test]
-fn queued_self_bluff_is_also_illegal() {
+fn contract_queued_self_bluff_is_also_illegal() {
     let mut view = snapshot(VariantSpec::from_catalog(VariantId::Rainbow6Suits), 3);
     let focus = view.hands[1][0].id;
     let three = Card::new(Suit::new(5), Rank::Three);
@@ -302,7 +302,7 @@ fn queued_self_bluff_is_also_illegal() {
 }
 
 #[test]
-fn sixth_suit_double_bluff_progresses_without_a_third_obligation() {
+fn contract_sixth_suit_double_bluff_progresses_without_a_third_obligation() {
     let mut view = snapshot(VariantSpec::from_catalog(VariantId::Rainbow6Suits), 4);
     let focus = view.hands[3][0].id;
     let first = view.hands[1].last().unwrap().id;
@@ -374,7 +374,7 @@ fn sixth_suit_double_bluff_progresses_without_a_third_obligation() {
 }
 
 #[test]
-fn reordered_ids_layered_hidden_and_queued_domains_retain_lifecycle() {
+fn contract_reordered_ids_layered_hidden_and_queued_domains_retain_lifecycle() {
     let mut view = snapshot(reordered(), 3);
     view.observer = PlayerId::new(1);
     let focus = view.hands[2][0].id;
@@ -453,7 +453,7 @@ fn reordered_ids_layered_hidden_and_queued_domains_retain_lifecycle() {
 }
 
 #[test]
-fn physical_clandestine_connection_precedes_bluff_with_reordered_ranks() {
+fn contract_physical_clandestine_connection_precedes_bluff_with_reordered_ranks() {
     let mut view = snapshot(reordered(), 3);
     let one = Card::new(Suit::new(5), Rank::One);
     assert!(bluff_play_connects(&view, Clue::Suit(Suit::Red), one));
@@ -488,7 +488,7 @@ fn physical_clandestine_connection_precedes_bluff_with_reordered_ranks() {
 }
 
 #[test]
-fn sixth_suit_ejection_and_discharge_use_dynamic_stacks() {
+fn contract_sixth_suit_ejection_and_discharge_use_dynamic_stacks() {
     for discharge in [false, true] {
         let mut view = snapshot(VariantSpec::from_catalog(VariantId::Rainbow6Suits), 3);
         let focus = view.hands[2][0].id;
@@ -545,7 +545,7 @@ fn sixth_suit_ejection_and_discharge_use_dynamic_stacks() {
 }
 
 #[test]
-fn demonstrated_ejection_keeps_all_physically_touched_fives_in_owner_domain() {
+fn contract_demonstrated_ejection_keeps_all_physically_touched_fives_in_owner_domain() {
     let mut view = snapshot(VariantSpec::from_catalog(VariantId::Rainbow6Suits), 3);
     view.observer = PlayerId::new(2);
     let focus = view.hands[2][0].id;
@@ -581,7 +581,7 @@ fn demonstrated_ejection_keeps_all_physically_touched_fives_in_owner_domain() {
 }
 
 #[test]
-fn priority_load_maps_physical_claims_to_active_ids() {
+fn contract_priority_load_maps_physical_claims_to_active_ids() {
     let mut view = snapshot(reordered(), 3);
     view.observer = PlayerId::new(1);
     let played = view.hands[0][0].id;
@@ -666,7 +666,7 @@ fn priority_load_maps_physical_claims_to_active_ids() {
 }
 
 #[test]
-fn hidden_truth_does_not_change_owner_connection_domains() {
+fn contract_hidden_truth_does_not_change_owner_connection_domains() {
     let mut baseline = None;
     for hidden in [
         None,
@@ -710,7 +710,7 @@ fn hidden_truth_does_not_change_owner_connection_domains() {
 }
 
 #[test]
-fn hidden_truthful_connector_uses_dated_public_promise() {
+fn contract_hidden_truthful_connector_uses_dated_public_promise() {
     let mut view = snapshot(reordered(), 3);
     let own = view.hands[0].last().unwrap().id;
     let one = Card::new(Suit::new(5), Rank::One);
@@ -753,7 +753,7 @@ fn hidden_truthful_connector_uses_dated_public_promise() {
 }
 
 #[test]
-fn complete_double_finesse_precedes_apparent_three_bluff() {
+fn contract_complete_double_finesse_precedes_apparent_three_bluff() {
     for (variant, suit) in [
         (VariantSpec::no_variant(), Suit::Red),
         (
@@ -819,7 +819,7 @@ fn complete_double_finesse_precedes_apparent_three_bluff() {
 }
 
 #[test]
-fn hidden_finesse_after_prompt_uses_reordered_successor_domain() {
+fn contract_hidden_finesse_after_prompt_uses_reordered_successor_domain() {
     let mut view = snapshot(reordered(), 3);
     view.observer = PlayerId::new(1);
     let prompt = view.hands[1][0].id;
