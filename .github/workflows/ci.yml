@@ -66,10 +66,7 @@ jobs:
       - name: Install formatting dependencies
         run: npm ci --ignore-scripts
       - name: Check repository formatting
-        run: |
-          npx prettier --write AGENTS.md docs/codex-workflow.md
-          git diff -- AGENTS.md docs/codex-workflow.md
-          exit 1
+        run: npm run format:check
       - name: Check shell script syntax
         run: bash -n scripts/*.sh
       - name: Smoke-test validation helper CLIs
