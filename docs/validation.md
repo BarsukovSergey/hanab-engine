@@ -11,13 +11,17 @@ Prefer the smallest check that covers the changed behavior.
 For a scoped Rust change, use:
 
 ```sh
-bash scripts/check-scoped.sh <crate> [focused cargo-test args...]
+bash scripts/check-scoped.sh <crate> [--test-only|--check-only] [focused cargo-test args...]
 ```
 
-The helper reuses the primary worktree Cargo target cache, optionally runs one
-focused `cargo test -p <crate> --locked ...` invocation, then runs repository
-Rust formatting and a normal check of the affected crate. Run extra focused
-tests separately when one invocation is not enough.
+The helper reuses the primary worktree Cargo target cache and prints per-stage
+timings. Default mode optionally runs one focused
+`cargo test -p <crate> --locked ...` invocation, then repository Rust formatting
+and a normal check of the affected crate. `--test-only` runs the focused test
+and formatting but skips the final production-config check; use it only when an
+equivalent `cargo check` already passed at the current API boundary.
+`--check-only` runs formatting plus the crate check and accepts no test args.
+Run extra focused tests separately when one invocation is not enough.
 
 Do not routinely add strict Clippy, `--all-targets`, the CI search-contract
 matrix, broad H-Group regressions, or `scripts/check.sh --fast` to a scoped
@@ -81,9 +85,10 @@ report the deferred check and rely on Linux CI for the broader gate.
 ## CI scope
 
 Pull-request CI is intentionally targeted. It runs formatting, shell-helper
-smoke checks, Rust build/Clippy/docs, Rust 1.85 MSRV, core/protocol tests, a
-small green hanabi-search contract suite, Python live-bridge checks, rustdoc
-tests, and dead-public-code checks.
+smoke checks, Rust build/Clippy/docs, Rust 1.85 MSRV, core/protocol tests, the
+generic search boundary tests, fast deterministic H-Group tests whose names use
+the `contract_` prefix, Python live-bridge checks, rustdoc tests, and
+dead-public-code checks.
 
 Pushes to `main` additionally run the exhaustive H-Group profile matrix. Neither
 PR CI nor push CI is the complete ordinary hanabi-search test suite.
