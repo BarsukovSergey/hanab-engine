@@ -19,7 +19,7 @@ failure-baseline mechanics live in [docs/validation.md](docs/validation.md).
 | Documentation                                 | Formatting and any affected examples/scripts                                 |
 | Fixture edit                                  | Parse and replay legality; inspect/test the affected position                |
 | Scoped Rust / localized convention change     | `bash scripts/check-scoped.sh <crate> [focused cargo-test args...]`          |
-| Shared inference/replay/planner refactor      | Focused checks + `check-scoped.sh`; broad gates stay in CI unless requested    |
+| Shared inference/replay/planner refactor      | Focused checks + `check-scoped.sh`; broad gates stay in CI unless requested  |
 | Milestone or explicit full-validation request | Full `scripts/check.sh`                                                      |
 
 Do not widen a scoped task into strict Clippy, `--all-targets`, broad replay
@@ -66,9 +66,9 @@ not invent convention rules, one-off exceptions, or fixture changes to force
 parity. Respect an explicit request for read-only analysis or no edits. This
 standing authorization does not expand a localized task into unrelated fixes or
 a full replay scan, and documentation-only requests remain documentation-only.
-When an implementation task names an explicit file/function boundary, a clear bug
-outside that boundary is reported rather than fixed unless it directly blocks the
-assigned change or the task explicitly authorizes the expansion.
+When an implementation task names an explicit file/function boundary, a clear
+bug outside that boundary is reported rather than fixed unless it directly
+blocks the assigned change or the task explicitly authorizes the expansion.
 
 ## Version control
 
@@ -80,9 +80,9 @@ After every completed user prompt that changes this repository:
 
 A budget/stop-condition handoff is not task completion. If a coherent checkpoint
 exists, commit and push it. If the current edit is knowingly incomplete or
-unbuildable, do not keep working merely to satisfy this rule and do not pretend it
-is complete. Preserve only the agent's own in-scope work, report the dirty files
-and exact blocker, and let the next session continue from that checkpoint.
+unbuildable, do not keep working merely to satisfy this rule and do not pretend
+it is complete. Preserve only the agent's own in-scope work, report the dirty
+files and exact blocker, and let the next session continue from that checkpoint.
 
 Do not create empty commits for prompts that make no repository changes. Do not
 include unrelated pre-existing worktree changes in the commit. If validation,
@@ -139,9 +139,9 @@ Default implementation-session budget is about 20 minutes and at most roughly
 not nearly complete by either threshold, stop expanding the investigation.
 Commit and push a coherent checkpoint when safe. If no coherent checkpoint
 exists, leave only the agent's own in-scope edits uncommitted and report them
-rather than spending another long session manufacturing a checkpoint. A task may
-explicitly grant a larger budget when the expected compile/test runtime justifies
-it.
+rather than spending another long session manufacturing a checkpoint. A task
+may explicitly grant a larger budget when the expected compile/test runtime
+justifies it.
 
 Read the named functions first and expand only to direct compile/test
 dependencies. An unexpected caller may justify one targeted search. Needing a
