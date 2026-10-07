@@ -146,11 +146,11 @@ For a normal Rust batch:
 4. run `git diff --check`
 5. commit and push
 
-`check-scoped.sh` supports `--test-only` and `--check-only`. Use
-`--test-only` when a production-config `cargo check` already passed at the
-same coherent API boundary and the remaining risk is the focused lib test. Use
-`--check-only` when no focused test is relevant. Keep the default combined
-mode when both production-config compilation and the focused test still matter.
+`check-scoped.sh` supports `--test-only` and `--check-only`. Use `--test-only`
+when a production-config `cargo check` already passed at the same coherent API
+boundary and the remaining risk is the focused lib test. Use `--check-only` when
+no focused test is relevant. Keep the default combined mode when both
+production-config compilation and the focused test still matter.
 
 A plain `cargo check -p <crate> --locked` is useful between genuinely distinct
 API boundaries, but repeated identical checks after tiny edits are wasted time.
@@ -186,8 +186,8 @@ become authority for an invented convention meaning.
 
 Run only the exact replay regressions named in the task. Deadline-sensitive
 planner/action-parity tests are diagnostics, not default migration gates; prefer
-a deterministic `contract_` assertion for the semantic fact being changed. If
-a named replay regression fails, capture the first useful failure and report it.
+a deterministic `contract_` assertion for the semantic fact being changed. If a
+named replay regression fails, capture the first useful failure and report it.
 Do not automatically:
 
 - run alternate replay suites
@@ -218,8 +218,8 @@ A stop is a successful handoff when it prevents speculative work. Prefer a
 coherent compile-safe commit. If the budget expires mid-edit and no such
 boundary exists, do not burn another long session forcing one: leave only the
 agent's own in-scope edits visible, report the dirty files and blocker, and let
-a fresh session continue them. Never mix unrelated pre-existing work into such
-a handoff.
+a fresh session continue them. Never mix unrelated pre-existing work into such a
+handoff.
 
 ## Branch and commit discipline
 
