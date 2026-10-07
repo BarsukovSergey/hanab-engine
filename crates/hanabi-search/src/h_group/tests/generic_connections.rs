@@ -246,8 +246,7 @@ fn contract_generic_connection_reverse_finesse_uses_non_legacy_identity() {
 }
 
 #[test]
-fn contract_generic_connection_self_finesse_requires_no_direct_alternative_and_ignores_hidden_truth()
-{
+fn contract_self_finesse_requires_no_direct_alternative_and_ignores_hidden_truth() {
     let mut view = snapshot(VariantSpec::from_catalog(VariantId::Rainbow6Suits), 3);
     let focus = view.hands[0][0].id;
     view.hands[1].clear();
