@@ -2,7 +2,7 @@ use super::*;
 use hanabi_core::{ClueColorId, ClueRank, GenericClue, VariantId, VariantSpec};
 
 #[test]
-fn replay_clue_vocabulary_retains_public_labels_and_input_parity() {
+fn contract_replay_clue_vocabulary_retains_public_labels_and_input_parity() {
     // Existing replay provides real public labels; this test asserts only the
     // type/storage boundary and parity, not new convention interpretations.
     let state = expert_replay_p4v0s2().state_at_turn(8).unwrap();
@@ -38,7 +38,7 @@ fn replay_clue_vocabulary_retains_public_labels_and_input_parity() {
 }
 
 #[test]
-fn prior_clue_equality_uses_generic_labels_for_both_history_vocabularies() {
+fn contract_prior_clue_equality_uses_generic_labels_for_both_history_vocabularies() {
     let state = expert_replay_p4v0s2().state_at_turn(8).unwrap();
     let standard = state.view_for(PlayerId::new(0)).unwrap();
     let physical = state.physical_view_for(PlayerId::new(0)).unwrap();
@@ -100,7 +100,7 @@ fn standard_semantic_adapter_rejects_nonstandard_labels() {
 }
 
 #[test]
-fn physical_touch_and_literal_facts_preserve_every_standard_clue() {
+fn contract_physical_touch_and_literal_facts_preserve_every_standard_clue() {
     let state = expert_replay_p4v0s2().state_at_turn(8).unwrap();
     let view = state.view_for(PlayerId::new(0)).unwrap();
     for clue in Suit::ALL
