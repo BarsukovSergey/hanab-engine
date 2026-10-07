@@ -1,9 +1,11 @@
 //! Shared Bluff semantics used by candidate generation and history replay.
 
+use super::identity::{connection_card, connection_domain, connection_predecessors};
 use super::{
-    Card, CardId, CardSet, Clue, ConnectionManager, HGroupConnectionKind, PlayerId, PlayerView,
-    Rank, identity_of,
+    Card, CardId, CardSet, ConnectionManager, ConventionFacts, HGroupConnectionKind, PlayerId,
+    PlayerView, Rank,
 };
+use hanabi_core::{ClueRank, GenericClue};
 
 /// Literal identity established by the clue itself is safe evidence for an
 /// already-clued intermediate. Do not use later clues or the clue's own
@@ -25,38 +27,48 @@ pub(super) fn literal_identity_through(view: &PlayerView, card: CardId, turn: u3
             }
         }
     }
-    let identities = crate::IdentitySet::from_mask(facts.identity_mask());
+    let identities = crate::IdentitySet::from_bits(facts.identity_mask_in(&view.variant));
     (identities.len() == 1)
-        .then(|| identities.iter().next())
+        .then(|| {
+            identities
+                .iter_ids()
+                .next()
+                .map(|id| connection_card(view, id))
+        })
         .flatten()
 }
 
 /// A connector that is already due makes the clue a truthful continuation,
 /// not a reason for the next player to invent another blind connector.
 /// <https://hanabi.github.io/level-11/#bobs-truth-principle-part-1>
+#[allow(clippy::too_many_arguments)]
 pub(super) fn bluff_connector_is_promised(
     view: &PlayerView,
     hands: &[Vec<CardId>],
     already_playing: &CardSet,
     pending: &ConnectionManager,
+    convention_facts: &ConventionFacts,
+    turn: u32,
     connector: Card,
     current_focus: Option<CardId>,
 ) -> bool {
-    hands
-        .iter()
-        .flatten()
-        .any(|card| already_playing.contains(card) && identity_of(view, *card) == Some(connector))
-        || pending.iter().any(|connection| {
-            // A Prompt selected by this clue also supplies the truthful
-            // connector. Excluding every same-focus connection lets Bluff
-            // recognition append an unrelated blind play to a normal Prompt.
-            // Same-clue speculative Finesses remain excluded: those are the
-            // interpretations whose bluff alternative is being considered.
-            (Some(connection.focus) != current_focus
-                || connection.kind == HGroupConnectionKind::Prompt)
-                && connection.expected == connector
-                && pending.is_active(connection)
-        })
+    hands.iter().flatten().any(|card| {
+        already_playing.contains(card)
+            && super::HistoricalView::new(view, turn)
+                .identity(*card)
+                .or_else(|| convention_facts.known_identity_before(*card, turn))
+                .or_else(|| literal_identity_through(view, *card, turn))
+                == Some(connector)
+    }) || pending.iter().any(|connection| {
+        // A Prompt selected by this clue also supplies the truthful
+        // connector. Excluding every same-focus connection lets Bluff
+        // recognition append an unrelated blind play to a normal Prompt.
+        // Same-clue speculative Finesses remain excluded: those are the
+        // interpretations whose bluff alternative is being considered.
+        (Some(connection.focus) != current_focus || connection.kind == HGroupConnectionKind::Prompt)
+            && connection.expected == connector
+            && pending.is_active(connection)
+    })
 }
 
 /// A Bluff cannot wait behind an older Finesse, but an ordinary clued play
@@ -86,17 +98,17 @@ pub(super) enum BluffTargetKind {
 /// connectors. Availability must come from the caller's dated perspective.
 /// <https://hanabi.github.io/level-11/#bluffs-through-already-clued-cards>
 pub(super) fn bluff_through_clued_cards(
-    height: usize,
+    view: &PlayerView,
+    heights: &[usize],
     focus: Card,
     available: impl Fn(Card) -> bool,
 ) -> bool {
-    let rank = usize::from(focus.rank.number());
-    rank > height + 1
+    let predecessors = connection_predecessors(view, heights, focus);
+    !predecessors.is_empty()
         // The missing low connector must really be missing. An existing
         // clued connector makes this a truthful chain, not another Bluff.
-        && (rank == height + 2 || !available(Card::new(focus.suit, Rank::ALL[height])))
-        && ((height + 2)..rank)
-            .all(|needed| available(Card::new(focus.suit, Rank::ALL[needed - 1])))
+        && (predecessors.len() == 1 || !available(predecessors[0]))
+        && predecessors.iter().skip(1).all(|needed| available(*needed))
 }
 
 /// Classifies targets using only clue-time public stacks.
@@ -105,16 +117,17 @@ pub(super) fn bluff_through_clued_cards(
 /// a rank-3 clue target any still-useful future 3; this is the rule that makes
 /// a Hard 3 Bluff possible from empty stacks.
 pub(super) fn bluff_target_kind_at(
-    stack_heights: [u8; 5],
-    clue: Clue,
+    view: &PlayerView,
+    stack_heights: &[usize],
+    clue: impl Into<GenericClue>,
     focus: Card,
 ) -> Option<BluffTargetKind> {
-    let height = stack_heights[focus.suit.index()];
-    if focus.rank.number() == height.saturating_add(2) {
+    let distance = connection_predecessors(view, stack_heights, focus).len();
+    if distance == 1 {
         Some(BluffTargetKind::Ordinary)
-    } else if clue == Clue::Rank(Rank::Three)
+    } else if clue.into() == GenericClue::Rank(ClueRank::new(3))
         && focus.rank == Rank::Three
-        && focus.rank.number() > height.saturating_add(1)
+        && distance > 1
     {
         Some(BluffTargetKind::Three)
     } else {
@@ -124,34 +137,56 @@ pub(super) fn bluff_target_kind_at(
 
 /// A Self-Bluff is legal with a rank clue. Suit Self-Bluffs are a separate
 /// max-level family and must not be admitted by the ordinary Bluff rule.
-pub(super) fn bluff_target_order_is_legal(clue: Clue, actor: PlayerId, target: PlayerId) -> bool {
-    actor != target || matches!(clue, Clue::Rank(_))
+pub(super) fn bluff_target_order_is_legal(
+    clue: impl Into<GenericClue>,
+    actor: PlayerId,
+    target: PlayerId,
+) -> bool {
+    actor != target || matches!(clue.into(), GenericClue::Rank(_))
 }
 
 /// Whether the blind play connects to the clue instead of demonstrating a
 /// Bluff. Color clues connect by suit. Rank clues connect only consecutive
 /// ranks, so a 1 does not connect to a rank-3 clue even when both cards share
 /// a suit (the Hard 3 Bluff case).
-pub(super) fn bluff_play_connects(clue: Clue, played: Card) -> bool {
+pub(super) fn bluff_play_connects(
+    view: &PlayerView,
+    clue: impl Into<GenericClue>,
+    played: Card,
+) -> bool {
+    let clue = clue.into();
     match clue {
-        Clue::Suit(suit) => played.suit == suit,
-        Clue::Rank(rank) => played.rank.number().saturating_add(1) == rank.number(),
+        GenericClue::Color(_) => super::physical_clue_matches(view, clue, played),
+        GenericClue::Rank(_) => connection_domain(view, played)
+            .iter_ids()
+            .next()
+            .and_then(|id| view.variant.successor(id))
+            .is_some_and(|id| view.variant.touches(id, clue)),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use hanabi_core::Suit;
+    use hanabi_core::{Clue, Suit};
 
     use super::*;
+
+    fn view() -> PlayerView {
+        hanabi_core::FullState::new_standard(2, hanabi_core::standard_deck())
+            .unwrap()
+            .view_for(PlayerId::new(0))
+            .unwrap()
+    }
 
     #[test]
     fn rank_bluffs_only_connect_on_consecutive_ranks() {
         assert!(!bluff_play_connects(
+            &view(),
             Clue::Rank(Rank::Three),
             Card::new(Suit::Yellow, Rank::One),
         ));
         assert!(bluff_play_connects(
+            &view(),
             Clue::Rank(Rank::Three),
             Card::new(Suit::Red, Rank::Two),
         ));
@@ -161,7 +196,8 @@ mod tests {
     fn an_empty_stack_rank_three_is_the_special_future_target() {
         assert_eq!(
             bluff_target_kind_at(
-                [0; 5],
+                &view(),
+                &[0; 5],
                 Clue::Rank(Rank::Three),
                 Card::new(Suit::Yellow, Rank::Three),
             ),

@@ -1387,6 +1387,7 @@ pub(in crate::h_group) fn apply_unnecessary_move_effects(
 /// <https://hanabi.github.io/level-25/#the-load-clue>
 pub(in crate::h_group) fn retract_loaded_priority(
     entry: &ObservedHistoryEntry,
+    view: &PlayerView,
     hands: &[Vec<CardId>],
     forced_playable: &mut CardSet,
     signals: &mut ConventionJournal,
@@ -1412,7 +1413,7 @@ pub(in crate::h_group) fn retract_loaded_priority(
                             && convention_facts.active_priority().contains(card)
                     })
                     && claim.target == Some(*target)
-                    && clue.matches(claim.identity)
+                    && crate::h_group::physical_clue_matches(view, (*clue).into(), claim.identity)
                     && claim.cards.iter().all(|card| !touched.contains(card))
             })
             .collect::<Vec<_>>();
@@ -1422,11 +1423,9 @@ pub(in crate::h_group) fn retract_loaded_priority(
             .collect::<CardSet>();
         // Read live claims, not old journal entries for a card that may have
         // received a different Priority promise after an earlier retraction.
-        let identities = IdentitySet::from_mask(
-            claims
-                .iter()
-                .fold(0, |mask, claim| mask | (1 << claim.identity.index())),
-        );
+        let identities = IdentitySet::from_bits(claims.iter().fold(0, |mask, claim| {
+            mask | crate::h_group::identity::connection_bit(view, claim.identity)
+        }));
         for card in &canceled {
             forced_playable.remove(card);
         }
@@ -1464,7 +1463,7 @@ pub(in crate::h_group) fn apply_priority_effects(
     let entry = context.entry;
     let hands = &context.before.hands;
     let facts = &context.before.facts;
-    let stack_heights = context.before.stack_heights;
+    let stack_heights = &context.before.dynamic_stack_heights;
     let ObservedEvent::Played {
         player,
         card,
@@ -1479,16 +1478,20 @@ pub(in crate::h_group) fn apply_priority_effects(
     // Ordinary Priority is a deliberate choice between globally-known playable
     // cards. Trust Finesses from unknown cards need substantially stronger
     // evidence and must not be inferred merely from hidden simulator truth.
-    let played_possibilities = IdentitySet::from_mask(facts[card.index()].identity_mask());
+    let played_possibilities =
+        IdentitySet::from_bits(facts[card.index()].identity_mask_in(&view.variant));
     let convention_facts = signals.facts();
     let fixed_cards = convention_facts.fixed_cards();
     // A clued card's public Good Touch exclusions also establish identity;
     // literal rank+suit is not the only way a play can be globally known.
     let useful_possibilities = played_possibilities
-        .iter()
-        .filter(|possible| !is_trash_at(stack_heights, *possible))
+        .iter_in(view.variant.identities())
+        .filter(|possible| {
+            !crate::h_group::identity::connection_trash(view, stack_heights, *possible)
+        })
         .collect::<Vec<_>>();
-    let played_is_known = played_possibilities == IdentitySet::singleton(*identity)
+    let played_is_known = played_possibilities
+        == crate::h_group::identity::connection_domain(view, *identity)
         || (explicitly_clued.contains(card) && useful_possibilities == [*identity])
         || convention_facts.known_identity(*card) == Some(*identity);
     let advances_existing_connection = signals.iter().any(|signal| {
@@ -1527,14 +1530,22 @@ pub(in crate::h_group) fn apply_priority_effects(
         if *candidate == *card || fixed_cards.contains(candidate) {
             return false;
         }
-        let clue_possibilities = IdentitySet::from_mask(facts[candidate.index()].identity_mask());
+        let clue_possibilities =
+            IdentitySet::from_bits(facts[candidate.index()].identity_mask_in(&view.variant));
         let possibilities = convention_facts
             .demonstrated_layer(*candidate)
-            .map_or(clue_possibilities, IdentitySet::singleton);
+            .map_or(clue_possibilities, |identity| {
+                crate::h_group::identity::connection_domain(view, identity)
+            });
         !possibilities.is_empty()
-            && possibilities.iter().all(|candidate_identity| {
-                is_playable_at(stack_heights, candidate_identity)
-                    && has_higher_basic_priority(
+            && possibilities
+                .iter_in(view.variant.identities())
+                .all(|candidate_identity| {
+                    crate::h_group::identity::connection_playable(
+                        view,
+                        stack_heights,
+                        candidate_identity,
+                    ) && has_higher_basic_priority(
                         view,
                         hands,
                         facts,
@@ -1549,13 +1560,12 @@ pub(in crate::h_group) fn apply_priority_effects(
                         *card,
                         *identity,
                     )
-            })
+                })
     });
 
     if declined_priority.is_some() {
         let mut priority_connection = None;
-        if identity.rank != Rank::Five {
-            let connector = Card::new(identity.suit, Rank::ALL[identity.rank.index() + 1]);
+        if let Some(connector) = crate::h_group::identity::connection_successor(view, *identity) {
             let players = (1..hands.len())
                 .map(|offset| {
                     PlayerId::new(
@@ -1608,7 +1618,11 @@ pub(in crate::h_group) fn apply_priority_effects(
                         .find(|candidate| {
                             explicitly_clued.contains(candidate)
                                 && !fixed_cards.contains(candidate)
-                                && facts[candidate.index()].allows(connector)
+                                && crate::h_group::identity::connection_allows(
+                                    view,
+                                    facts[candidate.index()],
+                                    connector,
+                                )
                         })
                         .map(|candidate| (view.observer, candidate))
                 })
@@ -1632,7 +1646,8 @@ pub(in crate::h_group) fn apply_priority_effects(
             }
         }
         if let Some((target, connection)) = priority_connection {
-            let connector = Card::new(identity.suit, Rank::ALL[identity.rank.index() + 1]);
+            let connector = crate::h_group::identity::connection_successor(view, *identity)
+                .expect("Priority connector");
             push_signal(
                 signals,
                 entry,

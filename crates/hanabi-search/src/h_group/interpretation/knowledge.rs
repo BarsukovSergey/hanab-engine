@@ -7,9 +7,9 @@ use super::{
     ConventionKnowledge, HGroupCardInference, HGroupConnection, HGroupConnectionKind,
     HGroupMoveKind, HGroupPlayObligation, HGroupProfile, HGroupRuleId, HGroupState, HistoricalView,
     IdentityClaims, IdentitySet, LogicalDeductions, MaterializedCardFact, ObservedEvent, PlayerId,
-    PlayerView, Rank, StackTimeline, chop, elimination_finesse_connection, identity_of,
-    is_eventually_useful, loaded_connection_plan, pending_card_allows_identity,
-    replay_identity_is_queued, rule_enabled, was_clued_before,
+    PlayerView, Rank, chop, elimination_finesse_connection, identity_of, is_eventually_useful,
+    loaded_connection_plan, pending_card_allows_identity, replay_identity_is_queued, rule_enabled,
+    was_clued_before,
 };
 use crate::h_group::identity::{
     connection_advance, connection_allows, connection_card, connection_domain, connection_playable,
@@ -85,7 +85,9 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
 
     fn apply_replay_closure(&mut self) {
         for card in self.knowledge.cards.clone() {
-            let excluded = self.replay.cards.facts.excluded_identities(card.card);
+            let legacy = self.replay.cards.facts.excluded_identities(card.card);
+            let excluded =
+                crate::h_group::identity::connection_fact_domain(self.deductions.view(), legacy);
             self.knowledge.update(
                 card.card,
                 KnowledgeSource::ReplayClosure(self.closure_turn),
@@ -147,7 +149,7 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
                     )
             })
         {
-            let claimed = IdentitySet::singleton(claim.identity);
+            let claimed = connection_domain(view, claim.identity);
             for card in self.knowledge.cards.clone() {
                 if claim.cards.contains(&card.card)
                     || !was_clued_before(view, claim.turn, card.card)
@@ -343,6 +345,7 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
     /// observers can retain different superpositions after the demonstration.
     /// <https://hanabi.github.io/level-15/#the-double-bluff>
     fn apply_resolved_double_bluffs(&mut self) {
+        let view = self.deductions.view();
         for clue in &self.replay.clues {
             let demonstrated = self
                 .replay
@@ -365,17 +368,24 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
             let Some(logical) = self.deductions.possible_identities(clue.focus) else {
                 continue;
             };
-            let identities = IdentitySet::from_mask(
+            let identities = IdentitySet::from_bits(
                 logical
-                    .iter()
+                    .iter_in(view.variant.identities())
                     .filter(|identity| {
                         crate::h_group::physical_clue_matches(
                             self.deductions.view(),
                             clue.clue,
                             *identity,
-                        ) && identity.rank.number() > clue.stack_heights[identity.suit.index()] + 1
+                        ) && !connection_predecessors(
+                            view,
+                            &crate::h_group::identity::connection_heights(view, Some(clue.turn)),
+                            *identity,
+                        )
+                        .is_empty()
                     })
-                    .fold(0, |mask, identity| mask | (1 << identity.index())),
+                    .fold(0, |mask, identity| {
+                        mask | crate::h_group::identity::connection_bit(view, identity)
+                    }),
             );
             let view = self.deductions.view();
             let mut discarded = vec![0; view.variant.identities().identities().len()];
@@ -432,11 +442,13 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
             let Some(literal) = self.deductions.possible_identities(origin.focus) else {
                 continue;
             };
-            let trash = IdentitySet::from_mask(
+            let trash = IdentitySet::from_bits(
                 literal
-                    .iter()
+                    .iter_in(view.variant.identities())
                     .filter(|identity| !is_eventually_useful(view, *identity))
-                    .fold(0, |mask, identity| mask | (1 << identity.index())),
+                    .fold(0, |mask, identity| {
+                        mask | crate::h_group::identity::connection_bit(view, identity)
+                    }),
             );
             if trash.is_empty() {
                 continue;
@@ -456,8 +468,9 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
     }
 
     fn apply_resolved_ejections(&mut self) {
+        let view = self.deductions.view();
         for card in self.knowledge.cards.clone() {
-            let Some(identity) = self
+            let exact = self
                 .replay
                 .cards
                 .facts
@@ -467,21 +480,36 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
                 .find(|claim| {
                     claim.source == HGroupMoveKind::FiveColorEjection && claim.cards == [card.card]
                 })
-                .map(|claim| claim.identity)
-            else {
+                .map(|claim| connection_domain(view, claim.identity));
+            let demonstrated = self
+                .replay
+                .signals
+                .of_kind(HGroupMoveKind::FiveColorEjection)
+                .any(|signal| signal.cards == [card.card]);
+            if exact.is_none() && !demonstrated {
+                continue;
+            }
+            let Some(logical) = self.deductions.possible_identities(card.card) else {
                 continue;
             };
-            if self
-                .deductions
-                .possible_identities(card.card)
-                .is_none_or(|logical| !logical.contains(identity))
-            {
+            // A physical color may touch several stacks. The demonstrated
+            // Ejection establishes rank 5 without selecting hidden suit truth.
+            let domain = exact.unwrap_or_else(|| {
+                IdentitySet::from_bits(
+                    logical
+                        .iter_ids()
+                        .filter(|id| connection_card(view, *id).rank == Rank::Five)
+                        .fold(0, |mask, id| mask | (1_u64 << id.index())),
+                )
+            });
+            let narrowed = logical.intersection(domain);
+            if narrowed.is_empty() {
                 continue;
             }
             self.knowledge.update(
                 card.card,
                 KnowledgeSource::Reinterpretation(self.closure_turn),
-                |card| card.identities = IdentitySet::singleton(identity),
+                |card| card.identities = narrowed,
             );
         }
     }
@@ -669,16 +697,23 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
                     && signal.target == Some(view.observer)
                     && signal.cards.first() == Some(forced)
             });
-            let playable = IdentitySet::from_mask(
-                identities_at_distance(card.identities, view, 0)
-                    .iter()
-                    // A Bluff can spend another copy of a secured playable
-                    // card. Its blind card was not newly touched by a clue.
-                    // https://hanabi.github.io/level-13/#the-3-bluff
-                    .filter(|identity| {
-                        bluff_play || !claims.identity_claimed_elsewhere(card.card, *identity)
-                    })
-                    .fold(0, |mask, identity| mask | (1 << identity.index())),
+            let playable = IdentitySet::from_bits(
+                identities_at_distance_in(
+                    card.identities,
+                    view,
+                    &crate::h_group::identity::connection_heights(view, None),
+                    0,
+                )
+                .iter_in(view.variant.identities())
+                // A Bluff can spend another copy of a secured playable
+                // card. Its blind card was not newly touched by a clue.
+                // https://hanabi.github.io/level-13/#the-3-bluff
+                .filter(|identity| {
+                    bluff_play || !claims.identity_claimed_elsewhere(card.card, *identity)
+                })
+                .fold(0, |mask, identity| {
+                    mask | crate::h_group::identity::connection_bit(view, identity)
+                }),
             );
             let turn = self
                 .replay
@@ -728,10 +763,10 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
                 continue;
             }
             let card = first.cards[0];
-            let mut identities = IdentitySet::from_mask(0);
+            let mut identities = IdentitySet::default();
             let covered = clue
                 .focus_identities
-                .iter()
+                .iter_in(view.variant.identities())
                 .all(|identity| clue.hypotheses.iter().any(|h| h.focus_identity == identity));
             let complete = covered
                 && clue.hypotheses.iter().all(|hypothesis| {
@@ -746,7 +781,7 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
                     {
                         return false;
                     }
-                    identities = identities.union(IdentitySet::singleton(step.expected));
+                    identities = identities.union(connection_domain(view, step.expected));
                     true
                 });
             if complete {
@@ -862,31 +897,25 @@ pub(in crate::h_group) fn find_prompt(
     None
 }
 
-pub(in crate::h_group) fn identities_at_distance(
+fn identities_at_distance_in(
     identities: IdentitySet,
     view: &PlayerView,
-    distance: u8,
+    heights: &[usize],
+    distance: usize,
 ) -> IdentitySet {
-    let stack_heights = std::array::from_fn(|index| {
-        u8::try_from(view.play_stacks[index].len())
-            .expect("a standard stack has at most five cards")
-    });
-    identities_at_distance_at(identities, stack_heights, distance)
-}
-
-pub(in crate::h_group) fn identities_at_distance_at(
-    identities: IdentitySet,
-    stack_heights: [u8; 5],
-    distance: u8,
-) -> IdentitySet {
-    let mask = identities
-        .iter()
-        .filter(|identity| {
-            let height = stack_heights[identity.suit.index()];
-            identity.rank.number() == height + distance + 1
-        })
-        .fold(0, |mask, identity| mask | (1 << identity.index()));
-    IdentitySet::from_mask(mask)
+    IdentitySet::from_bits(
+        identities
+            .iter_ids()
+            .filter(|id| {
+                let card = connection_card(view, *id);
+                if distance == 0 {
+                    connection_playable(view, heights, card)
+                } else {
+                    connection_predecessors(view, heights, card).len() == distance
+                }
+            })
+            .fold(0, |mask, id| mask | (1_u64 << id.index())),
+    )
 }
 
 #[allow(clippy::too_many_lines)]
@@ -917,46 +946,57 @@ fn compile_convention_card_inferences(
             .fold(IdentitySet::default(), |identities, note| {
                 identities.union(note.identities)
             });
-        let clue_stack_heights = StackTimeline::at_clue(clue.turn, clue.stack_heights).heights();
+        let clue_stack_heights =
+            crate::h_group::identity::connection_heights(view, Some(clue.turn));
         let first_connector_was_played_before_target = |identity: Card| {
             let player_count = view.hands.len();
             let target_distance =
                 (clue.target.index() + player_count - clue.giver.index()) % player_count;
             let target_turn = clue.turn + u32::try_from(target_distance).unwrap_or(u32::MAX);
-            let first_missing = usize::from(clue.stack_heights[identity.suit.index()]);
-            Rank::ALL.get(first_missing).is_some_and(|rank| {
-                let connector = Card::new(identity.suit, *rank);
-                view.history.iter().any(|entry| {
-                    entry.turn > clue.turn
-                        && entry.turn < target_turn
-                        && matches!(
-                            entry.event,
-                            ObservedEvent::Played {
-                                identity,
-                                successful: true,
-                                ..
-                            } if identity == connector
-                        )
+            connection_predecessors(view, &clue_stack_heights, identity)
+                .first()
+                .is_some_and(|connector| {
+                    let connector = *connector;
+                    view.history.iter().any(|entry| {
+                        entry.turn > clue.turn
+                            && entry.turn < target_turn
+                            && matches!(
+                                entry.event,
+                                ObservedEvent::Played {
+                                    identity,
+                                    successful: true,
+                                    ..
+                                } if identity == connector
+                            )
+                    })
                 })
-            })
         };
         let has_existing_prompt_for_delayed_identity = clue.clue
             == hanabi_core::GenericClue::from(Clue::Rank(Rank::Two))
-            && clue.play_identities.iter().any(|identity| {
-                let height = usize::from(clue.stack_heights[identity.suit.index()]);
-                let rank = usize::from(identity.rank.number());
-                if rank <= height + 1 || height >= Rank::ALL.len() {
-                    return false;
-                }
-                let connector = Card::new(identity.suit, Rank::ALL[height]);
-                clue.previously_gotten.iter().any(|prior| {
-                    knowledge
-                        .cards
-                        .iter()
-                        .find(|card| card.card == *prior)
-                        .is_some_and(|card| card.identities.contains(connector))
-                })
-            });
+            && clue
+                .play_identities
+                .iter_in(view.variant.identities())
+                .any(|identity| {
+                    let Some(connector) =
+                        connection_predecessors(view, &clue_stack_heights, identity)
+                            .first()
+                            .copied()
+                    else {
+                        return false;
+                    };
+                    clue.previously_gotten.iter().any(|prior| {
+                        knowledge
+                            .cards
+                            .iter()
+                            .find(|card| card.card == *prior)
+                            .is_some_and(|card| {
+                                !card
+                                    .identities
+                                    .intersection(connection_domain(view, connector))
+                                    .is_empty()
+                            })
+                    })
+                });
         let resolved_bluff = replay.signals.of_kind(HGroupMoveKind::Bluff).any(|signal| {
             signal.cards.len() >= 2
                 && signal.turn >= clue.turn
@@ -975,18 +1015,20 @@ fn compile_convention_card_inferences(
             knowledge.update(clue.focus, source, |card| {
                 card.identity_status = HGroupIdentityStatus::Settled;
                 if resolved_bluff {
-                    let targets = IdentitySet::from_mask(
+                    let targets = IdentitySet::from_bits(
                         card.identities
-                            .iter()
+                            .iter_in(view.variant.identities())
                             .filter(|identity| {
                                 crate::h_group::bluff::bluff_target_kind_at(
-                                    clue.stack_heights,
-                                    crate::h_group::standard_h_group_clue(&view.variant, clue.clue),
+                                    view,
+                                    &crate::h_group::identity::connection_heights(view, Some(clue.turn)),
+                                    clue.clue,
                                     *identity,
                                 )
                                 .is_some()
                                     || crate::h_group::bluff::bluff_through_clued_cards(
-                                        usize::from(clue.stack_heights[identity.suit.index()]),
+                                        view,
+                                        &crate::h_group::identity::connection_heights(view, Some(clue.turn)),
                                         *identity,
                                         |needed| {
                                             clue.previously_gotten.iter().any(|prior| {
@@ -1000,7 +1042,7 @@ fn compile_convention_card_inferences(
                                         },
                                     )
                             })
-                            .fold(0, |mask, identity| mask | (1 << identity.index())),
+                            .fold(0, |mask, identity| mask | crate::h_group::identity::connection_bit(view, identity)),
                     );
                     if !targets.is_empty() {
                         card.identities = targets;
@@ -1013,10 +1055,10 @@ fn compile_convention_card_inferences(
                     // it does not silently migrate to the next still-live rank.
                     // Only an explicit Fix may reinterpret that promise.
                     let direct_at_clue =
-                        identities_at_distance_at(card.identities, clue_stack_heights, 0);
+                        identities_at_distance_in(card.identities, view, &clue_stack_heights, 0);
                     let delayed_plan = !clue.play_identities.is_empty()
-                        && clue.play_identities.iter().all(|identity| {
-                            identity.rank.number() > clue.stack_heights[identity.suit.index()] + 1
+                        && clue.play_identities.iter_in(view.variant.identities()).all(|identity| {
+                            !connection_predecessors(view, &clue_stack_heights, identity).is_empty()
                         });
                     let focus_has_active_connection = replay
                         .pending_connections
@@ -1038,8 +1080,7 @@ fn compile_convention_card_inferences(
                                 > (clue.target.index() + view.hands.len() - clue.giver.index())
                                     % view.hands.len()
                                 && step.kind == super::super::HGroupConnectionKind::Finesse
-                                && usize::from(step.expected.rank.number())
-                                    > view.play_stacks[step.expected.suit.index()].len()
+                                && !crate::h_group::identity::connection_trash(view, &crate::h_group::identity::connection_heights(view, None), step.expected)
                                 && step.cards.iter().any(|card| {
                                     !clue.touched.contains(card)
                                         && view.hands[step.actor.index()]
@@ -1049,17 +1090,16 @@ fn compile_convention_card_inferences(
                         })
                     });
                     let delayed_plan_was_demonstrated =
-                        clue.play_identities.iter().any(|identity| {
-                            if view.play_stacks[identity.suit.index()].len()
-                                > usize::from(clue.stack_heights[identity.suit.index()])
+                        clue.play_identities.iter_in(view.variant.identities()).any(|identity| {
+                            if connection_predecessors(view, &crate::h_group::identity::connection_heights(view, None), identity).len() < connection_predecessors(view, &clue_stack_heights, identity).len()
                             {
                                 return true;
                             }
-                            let Some(previous) = identity.rank.index().checked_sub(1) else {
+                            let Some(previous) = crate::h_group::identity::connection_predecessor(view, identity) else {
                                 return false;
                             };
                             replay.pending_connections.identity_was_demonstrated_after(
-                                Card::new(identity.suit, Rank::ALL[previous]),
+                                previous,
                                 clue.turn,
                             )
                         });
@@ -1096,7 +1136,7 @@ fn compile_convention_card_inferences(
                         .pending_connections
                         .demonstrated_focus_identity(clue.focus)
                     {
-                        let demonstrated = narrowed.intersection(IdentitySet::singleton(promised));
+                        let demonstrated = narrowed.intersection(connection_domain(view, promised));
                         if !demonstrated.is_empty() {
                             narrowed = demonstrated;
                         }
@@ -1119,30 +1159,25 @@ fn compile_convention_card_inferences(
                             .pending_connections
                             .iter()
                             .any(|connection| connection.focus == clue.focus);
-                        let demonstrated_queued_identity = IdentitySet::from_mask(
+                        let demonstrated_queued_identity = IdentitySet::from_bits(
                             narrowed
-                                .iter()
+                                .iter_in(view.variant.identities())
                                 .filter(|identity| {
-                                    let rank = usize::from(identity.rank.number());
-                                    if rank <= 1 {
-                                        return false;
-                                    }
+                                    let Some(previous) = crate::h_group::identity::connection_predecessor(view, *identity) else { return false; };
                                     replay.pending_connections.identity_was_demonstrated_after(
-                                        Card::new(identity.suit, Rank::ALL[rank - 2]),
+                                        previous,
                                         clue.turn,
                                     ) || first_connector_was_played_before_target(*identity)
                                 })
-                                .fold(0, |mask, identity| mask | (1 << identity.index())),
+                                .fold(0, |mask, identity| mask | crate::h_group::identity::connection_bit(view, identity)),
                         );
-                        let has_queued_delayed_identity = narrowed.iter().any(|identity| {
-                            let height = usize::from(clue.stack_heights[identity.suit.index()]);
-                            let rank = usize::from(identity.rank.number());
-                            rank > height + 1
-                                && ((height + 1)..rank).all(|needed_rank| {
+                        let has_queued_delayed_identity = narrowed.iter_in(view.variant.identities()).any(|identity| {
+                            let predecessors = connection_predecessors(view, &clue_stack_heights, identity);
+                            !predecessors.is_empty() && predecessors.into_iter().all(|needed| {
                                     replay_identity_is_queued(
                                         view,
                                         replay,
-                                        Card::new(identity.suit, Rank::ALL[needed_rank - 1]),
+                                        needed,
                                     )
                                 })
                         });
@@ -1165,7 +1200,7 @@ fn compile_convention_card_inferences(
                             // A direct Play promise is fixed at clue time. A
                             // lower card demonstrated later cannot migrate an
                             // already-settled direct focus to a delayed suit.
-                            let direct = identities_at_distance_at(narrowed, clue.stack_heights, 0);
+                            let direct = identities_at_distance_in(narrowed, view, &clue_stack_heights, 0);
                             if !direct.is_empty() {
                                 narrowed = direct;
                             }
@@ -1178,17 +1213,13 @@ fn compile_convention_card_inferences(
                         // focus identity. Treating the per-card clue note as an
                         // independent fact forgot that implication as soon as
                         // the connection obligation resolved.
-                        let live = IdentitySet::from_mask(
+                        let live = IdentitySet::from_bits(
                             narrowed
-                                .iter()
+                                .iter_in(view.variant.identities())
                                 .filter(|identity| {
-                                    identity.rank.number()
-                                        > u8::try_from(
-                                            view.play_stacks[identity.suit.index()].len(),
-                                        )
-                                        .expect("a standard stack has at most five cards")
+                                    !crate::h_group::identity::connection_trash(view, &crate::h_group::identity::connection_heights(view, None), *identity)
                                 })
-                                .fold(0, |mask, identity| mask | (1 << identity.index())),
+                                .fold(0, |mask, identity| mask | crate::h_group::identity::connection_bit(view, identity)),
                         );
                         if !live.is_empty() {
                             narrowed = live;
@@ -1230,9 +1261,9 @@ fn compile_convention_card_inferences(
                             .copied()
                             .filter(|card| !clue.touched.contains(card))
                             .collect::<CardSet>();
-                        let direct = IdentitySet::from_mask(
+                        let direct = IdentitySet::from_bits(
                             narrowed
-                                .iter()
+                                .iter_in(view.variant.identities())
                                 .filter(|identity| {
                                     convention_playable(
                                         view,
@@ -1241,7 +1272,7 @@ fn compile_convention_card_inferences(
                                         *identity,
                                     )
                                 })
-                                .fold(0, |mask, identity| mask | (1 << identity.index())),
+                                .fold(0, |mask, identity| mask | crate::h_group::identity::connection_bit(view, identity)),
                         );
                         if !direct.is_empty() && !external_finesse_remains_live {
                             // Clarity compares ways to establish a play; it
@@ -1314,7 +1345,7 @@ fn compile_convention_card_inferences(
             // A resolved Bluff replaces the provisional focus. Its former
             // singleton cannot continue excluding that identity from collateral.
             let good_touch = if resolved_bluff {
-                IdentitySet::all()
+                IdentitySet::all_in(view.variant.identities())
             } else {
                 *good_touch
             };
@@ -1332,11 +1363,13 @@ fn compile_convention_card_inferences(
                 // by the cards that demonstrated them. This is how an older
                 // touched Purple card becomes the Purple 5 automatically after
                 // the promised Purple 4 plays.
-                let still_useful = IdentitySet::from_mask(
+                let still_useful = IdentitySet::from_bits(
                     good_touch
-                        .iter()
+                        .iter_in(view.variant.identities())
                         .filter(|identity| is_eventually_useful(view, *identity))
-                        .fold(0, |mask, identity| mask | (1 << identity.index())),
+                        .fold(0, |mask, identity| {
+                            mask | crate::h_group::identity::connection_bit(view, identity)
+                        }),
                 );
                 let narrowed = card
                     .identities
@@ -1414,21 +1447,22 @@ pub(in crate::h_group) fn convention_playable(
     excluded: CardId,
     identity: Card,
 ) -> bool {
-    let stack_height = view.play_stacks[identity.suit.index()].len();
-    let rank = usize::from(identity.rank.number());
-    if rank <= stack_height {
+    let heights = crate::h_group::identity::connection_heights(view, None);
+    if crate::h_group::identity::connection_trash(view, &heights, identity) {
         return false;
     }
-    ((stack_height + 1)..rank).all(|needed_rank| {
-        let needed = Card::new(identity.suit, Rank::ALL[needed_rank - 1]);
-        view.hands.iter().flatten().any(|card| {
-            card.id != excluded
-                && gotten.contains(&card.id)
-                && card
-                    .identity
-                    .map_or_else(|| card.clues.allows(needed), |actual| actual == needed)
+    connection_predecessors(view, &heights, identity)
+        .into_iter()
+        .all(|needed| {
+            view.hands.iter().flatten().any(|card| {
+                card.id != excluded
+                    && gotten.contains(&card.id)
+                    && card.identity.map_or_else(
+                        || connection_allows(view, card.clues, needed),
+                        |actual| actual == needed,
+                    )
+            })
         })
-    })
 }
 
 #[allow(clippy::too_many_arguments)]

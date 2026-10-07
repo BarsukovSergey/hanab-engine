@@ -17,9 +17,9 @@ use super::{
     HGroupRuleId, HGroupState, HistoricalView, IdentityClaims, IdentitySet,
     KNOWN_TRASH_COLLATERAL_BONUS, LogicalDeductions, MAX_CLUE_TOKENS, MaterializedCardFact,
     ObservedCard, ObservedEvent, PlayerId, PlayerSet, PlayerView, Rank, RejectedConventionAction,
-    RequiredFix, StackTimeline, bluff_play_connects, bluff_target_order_is_legal, card_is_trash,
-    chop, convention_information_value, finesse_position, five_chop_moved_card, five_pulled_card,
-    focus, identity_of, identity_set, infer_h_group_from_replay, is_convention_trash,
+    RequiredFix, bluff_play_connects, bluff_target_order_is_legal, card_is_trash, chop,
+    convention_information_value, finesse_position, five_chop_moved_card, five_pulled_card, focus,
+    identity_of, identity_set, infer_h_group_from_replay, is_convention_trash,
     is_critical_save_identity, is_eventually_useful, is_playable_at, is_playable_now, next_player,
     ordered_playable_cards, pending_card_allows_identity, preferred_due_play_card,
     projected_h_group_replay, prospective_clue_has_unsafe_connection,
@@ -1405,16 +1405,14 @@ pub(super) fn advanced_clue_candidates(
             && clue_focus
                 .and_then(|focus| identity_of(view, focus).map(|identity| (focus, identity)))
                 .is_some_and(|(focus, identity)| {
-                    let height = view.play_stacks[identity.suit.index()].len();
-                    usize::from(identity.rank.number()) > height + 1
+                    let predecessors =
+                        connection_predecessors(view, &connection_heights(view, None), identity);
+                    !predecessors.is_empty()
                         && touched.iter().copied().any(|card| {
                             card != focus
                                 && !promptable.contains(&card)
-                                && identity_of(view, card).is_some_and(|connector| {
-                                    connector.suit == identity.suit
-                                        && usize::from(connector.rank.number()) > height
-                                        && connector.rank.number() < identity.rank.number()
-                                })
+                                && identity_of(view, card)
+                                    .is_some_and(|connector| predecessors.contains(&connector))
                         })
                 });
         if unresolved_same_clue_connector {
@@ -1642,13 +1640,16 @@ pub(super) fn advanced_clue_candidates(
                 if super::bluff::bluff_is_queued(&replay.pending_connections, actor, None) {
                     return None;
                 }
-                let height = view.play_stacks[focus.suit.index()].len();
-                let connector = Card::new(focus.suit, *Rank::ALL.get(height)?);
+                let connector =
+                    *connection_predecessors(view, &connection_heights(view, None), focus)
+                        .first()?;
                 if super::bluff::bluff_connector_is_promised(
                     view,
                     &replay.hands,
                     &replay.cards.already_playing,
                     &replay.pending_connections,
+                    &replay.cards.facts,
+                    view.turn,
                     connector,
                     None,
                 ) {
@@ -1670,7 +1671,7 @@ pub(super) fn advanced_clue_candidates(
                     .rev()
                     .find(|candidate| !gotten.contains(&candidate.id))?;
                 let actual = blind.identity?;
-                if !is_playable_now(view, actual) || bluff_play_connects(clue, actual) {
+                if !is_playable_now(view, actual) || bluff_play_connects(view, clue, actual) {
                     return None;
                 }
                 Some(kind)
@@ -1840,9 +1841,7 @@ pub(super) fn advanced_clue_candidates(
                     // https://hanabi.github.io/level-15/#the-double-bluff
                     let first = next_player(view.current_player, view.hands.len());
                     let second = next_player(first, view.hands.len());
-                    let mut heights = core::array::from_fn(|index| {
-                        u8::try_from(view.play_stacks[index].len()).expect("stack fits in u8")
-                    });
+                    let mut heights = connection_heights(view, None);
                     [first, second].into_iter().all(|player| {
                         let Some(identity) = finesse_position(
                             &view.hands[player.index()],
@@ -1852,10 +1851,10 @@ pub(super) fn advanced_clue_candidates(
                         .and_then(|card| card.identity) else {
                             return false;
                         };
-                        if !is_playable_at(heights, identity) {
+                        if !connection_playable(view, &heights, identity) {
                             return false;
                         }
-                        heights[identity.suit.index()] = identity.rank.number();
+                        connection_advance(view, &mut heights, identity);
                         true
                     }) && compiled
                         .signal_kinds(first)
@@ -2295,18 +2294,22 @@ pub(super) fn bluff_focus_is_one_away(
     gotten: &CardSet,
     convention_cards: &[HGroupCardInference],
 ) -> bool {
-    let height = view.play_stacks[focus.suit.index()].len();
-    super::bluff::bluff_through_clued_cards(height, focus, |needed| {
-        view.hands.iter().flatten().any(|card| {
-            gotten.contains(&card.id)
-                && (card.identity == Some(needed)
-                    || (card.identity.is_none()
-                        && convention_cards.iter().any(|note| {
-                            note.card == card.id
-                                && note.identities == IdentitySet::singleton(needed)
-                        })))
-        })
-    })
+    super::bluff::bluff_through_clued_cards(
+        view,
+        &connection_heights(view, None),
+        focus,
+        |needed| {
+            view.hands.iter().flatten().any(|card| {
+                gotten.contains(&card.id)
+                    && (card.identity == Some(needed)
+                        || (card.identity.is_none()
+                            && convention_cards.iter().any(|note| {
+                                note.card == card.id
+                                    && note.identities == connection_domain(view, needed)
+                            })))
+            })
+        },
+    )
 }
 
 pub(super) fn out_of_order_connections_accounted(
@@ -3093,43 +3096,6 @@ pub(super) fn visible_finesse_connects(
         special_finesses,
         &connection_heights(view, None),
     )
-}
-
-/// Historical-stack variant shared by convention precedence checks.
-pub(super) fn visible_finesse_connects_at(
-    hand: &[ObservedCard],
-    expected: Card,
-    focus: Option<CardId>,
-    gotten: &CardSet,
-    already_playing: &CardSet,
-    special_finesses: bool,
-    mut stack_heights: [u8; 5],
-) -> bool {
-    for (position, card) in hand
-        .iter()
-        .rev()
-        .filter(|card| {
-            Some(card.id) != focus
-                && !gotten.contains(&card.id)
-                && !already_playing.contains(&card.id)
-        })
-        .enumerate()
-    {
-        let Some(identity) = card.identity else {
-            return false;
-        };
-        if identity == expected {
-            return position == 0 || special_finesses;
-        }
-        if position > 0 && !special_finesses {
-            return false;
-        }
-        if !is_playable_at(stack_heights, identity) {
-            return false;
-        }
-        stack_heights[identity.suit.index()] = identity.rank.number();
-    }
-    false
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -6,7 +6,7 @@ use super::identity::{
 
 use super::{
     CardSet, HGroupConnection, HGroupMoveKind, HGroupState, IdentityClaims, IdentitySet, PromiseId,
-    identity_of, is_playable_at, next_player,
+    identity_of, next_player,
 };
 
 /// Scheduling read model of one actor-relative inference result, not another
@@ -133,16 +133,16 @@ impl ActionSchedule {
     pub(super) fn occupied_after_clue(&self, view: &PlayerView, player: PlayerId) -> bool {
         let mut after_giver = view.clone();
         after_giver.current_player = next_player(view.current_player, view.hands.len());
-        let heights = self.stack_heights_before(&after_giver, player);
+        let heights = self.stack_heights_before_in(&after_giver, player);
         self.plays_for(player).any(|obligation| {
             obligation
                 .promised_identity
-                .is_some_and(|identity| is_playable_at(heights, identity))
+                .is_some_and(|identity| connection_playable(view, &heights, identity))
                 || (!obligation.identities.is_empty()
                     && obligation
                         .identities
-                        .iter()
-                        .all(|identity| is_playable_at(heights, identity)))
+                        .iter_in(view.variant.identities())
+                        .all(|identity| connection_playable(view, &heights, identity)))
         })
     }
 
@@ -208,18 +208,7 @@ impl ActionSchedule {
         })
     }
 
-    /// Projects only forced, unambiguous plays before `observer` next acts.
-    pub(super) fn stack_heights_before(&self, view: &PlayerView, observer: PlayerId) -> [u8; 5] {
-        self.stack_heights_before_in(view, observer)
-            .into_iter()
-            .map(|height| u8::try_from(height).expect("legacy stack height"))
-            .collect::<Vec<_>>()
-            .try_into()
-            .expect("legacy schedule requires five stacks")
-    }
-
-    /// Dynamic projection shared by basic connection knowledge. The legacy
-    /// adapter above remains for advanced convention families.
+    /// Projects forced, unambiguous plays before `observer` next acts.
     pub(super) fn stack_heights_before_in(
         &self,
         view: &PlayerView,
@@ -443,29 +432,4 @@ fn owner_of(replay: &HGroupState, card: CardId) -> Option<PlayerId> {
         .map(|owner| {
             PlayerId::new(u8::try_from(owner).expect("standard Hanabi has at most five players"))
         })
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum StackHorizon {
-    AtClue(u32),
-}
-
-/// Stack heights paired with the time at which they are valid.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct StackTimeline {
-    heights: [u8; 5],
-    horizon: StackHorizon,
-}
-
-impl StackTimeline {
-    pub(super) const fn at_clue(turn: u32, heights: [u8; 5]) -> Self {
-        Self {
-            heights,
-            horizon: StackHorizon::AtClue(turn),
-        }
-    }
-
-    pub(super) const fn heights(self) -> [u8; 5] {
-        self.heights
-    }
 }

@@ -6,6 +6,9 @@ use super::{
     is_playable_at, is_trash_at, next_player, protected_cards, push_signal, same_turn_signal,
     was_clued_before,
 };
+use crate::h_group::identity::{
+    connection_heights, connection_playable, connection_predecessors, connection_trash,
+};
 use crate::h_group::{EffectSource, ProvenancedCardSet};
 
 fn retract_connections(
@@ -263,6 +266,27 @@ pub(in crate::h_group) fn apply_trash_connection_refinements(
     }
 }
 
+/// Physical identity proved by a demonstrated color Ejection. A color can
+/// touch several stacks, so only an observer-visible face or a unique literal
+/// terminal candidate establishes an exact Card-valued claim.
+fn ejection_focus_identity(
+    view: &PlayerView,
+    focus: CardId,
+    clue: hanabi_core::GenericClue,
+    facts: ClueFacts,
+) -> Option<Card> {
+    let visible = identity_of(view, focus);
+    let mut candidates = IdentitySet::from_bits(facts.identity_mask_in(&view.variant))
+        .iter_in(view.variant.identities())
+        .filter(|identity| {
+            identity.rank == Rank::Five
+                && crate::h_group::physical_clue_matches(view, clue, *identity)
+                && visible.is_none_or(|visible| visible.suit == identity.suit)
+        });
+    let only = candidates.next()?;
+    candidates.next().is_none().then_some(only)
+}
+
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(in crate::h_group) fn apply_ejection_discharge_effects(
     entry: &ObservedHistoryEntry,
@@ -272,7 +296,7 @@ pub(in crate::h_group) fn apply_ejection_discharge_effects(
     hands: &[Vec<CardId>],
     facts: &[ClueFacts],
     clues: &[HGroupClueInterpretation],
-    stack_heights: [u8; 5],
+    stack_heights: &[usize],
     explicitly_clued: &CardSet,
     invisibly_clued: &mut ProvenancedCardSet,
     chop_moved: &CardSet,
@@ -327,17 +351,40 @@ pub(in crate::h_group) fn apply_ejection_discharge_effects(
             // https://hanabi.github.io/level-16/#the-unknown-trash-discharge-1-for-1-form-utd
             if finesse_position_id(&hands_before[player.index()], &gotten, 2) == Some(*card) {
                 if let Some(origin) = prior_interpretation {
-                    let possibilities =
-                        IdentitySet::from_mask(facts[origin.focus.index()].identity_mask());
-                    if identity_of(view, origin.focus)
-                        .is_none_or(|known| is_trash_at(origin.stack_heights, known))
-                        && possibilities
-                            .iter()
-                            .any(|candidate| is_trash_at(origin.stack_heights, candidate))
-                        && possibilities.iter().any(|candidate| {
-                            !is_trash_at(origin.stack_heights, candidate)
-                                && !is_playable_at(origin.stack_heights, candidate)
+                    let possibilities = IdentitySet::from_bits(
+                        facts[origin.focus.index()].identity_mask_in(&view.variant),
+                    );
+                    if super::super::HistoricalView::new(view, entry.turn)
+                        .identity(origin.focus)
+                        .is_none_or(|known| {
+                            connection_trash(
+                                view,
+                                &connection_heights(view, Some(origin.turn)),
+                                known,
+                            )
                         })
+                        && possibilities
+                            .iter_in(view.variant.identities())
+                            .any(|candidate| {
+                                connection_trash(
+                                    view,
+                                    &connection_heights(view, Some(origin.turn)),
+                                    candidate,
+                                )
+                            })
+                        && possibilities
+                            .iter_in(view.variant.identities())
+                            .any(|candidate| {
+                                !connection_trash(
+                                    view,
+                                    &connection_heights(view, Some(origin.turn)),
+                                    candidate,
+                                ) && !connection_playable(
+                                    view,
+                                    &connection_heights(view, Some(origin.turn)),
+                                    candidate,
+                                )
+                            })
                     {
                         let connections = pending
                             .iter()
@@ -368,16 +415,24 @@ pub(in crate::h_group) fn apply_ejection_discharge_effects(
                     }
                 }
             }
-            let Clue::Suit(suit) = clue else {
+            let Clue::Suit(_) = clue else {
                 return;
             };
             let played_from_ejection_position =
                 finesse_position_id(&hands_before[player.index()], &gotten, 1) == Some(*card);
             if played_from_ejection_position
-                && identity.suit != suit
+                && !crate::h_group::physical_clue_matches(view, clue.into(), *identity)
                 && prior_interpretation.is_some_and(|interpretation| {
                     !was_clued_before(view, prior.turn, interpretation.focus)
-                        && stack_heights[suit.index()] <= 3
+                        && IdentitySet::from_bits(
+                            facts[interpretation.focus.index()].identity_mask_in(&view.variant),
+                        )
+                        .iter_in(view.variant.identities())
+                        .any(|candidate| {
+                            candidate.rank == Rank::Five
+                                && !connection_predecessors(view, stack_heights, candidate)
+                                    .is_empty()
+                        })
                 })
             {
                 let focus = prior_interpretation
@@ -397,7 +452,7 @@ pub(in crate::h_group) fn apply_ejection_discharge_effects(
                     Some(target),
                     HGroupMoveKind::FiveColorEjection,
                     vec![focus],
-                    Some(Card::new(suit, Rank::Five)),
+                    ejection_focus_identity(view, focus, clue.into(), facts[focus.index()]),
                 );
             }
         }
@@ -415,8 +470,9 @@ pub(in crate::h_group) fn apply_ejection_discharge_effects(
         return;
     };
     let interpretation = clues.iter().rev().find(|clue| clue.turn == entry.turn);
-    let focus_identity =
-        interpretation.and_then(|interpretation| identity_of(view, interpretation.focus));
+    let focus_identity = interpretation.and_then(|interpretation| {
+        super::super::HistoricalView::new(view, entry.turn).identity(interpretation.focus)
+    });
     let ejection_actor = next_player(*giver, hands.len());
     let blind_plays = interpretation
         .filter(|_| view.observer == ejection_actor)
@@ -432,7 +488,7 @@ pub(in crate::h_group) fn apply_ejection_discharge_effects(
             // hidden cards as connections visible to the reacting player.
             // Never replace the reactor's complete assigned line with this bound.
             focus_identity.map(|identity| {
-                super::unassigned_finesse_ranks(
+                super::unassigned_finesse_ranks_in(
                     view,
                     *giver,
                     ejection_actor,
@@ -450,7 +506,7 @@ pub(in crate::h_group) fn apply_ejection_discharge_effects(
         })
         && focus_identity.is_some_and(|identity| {
             identity.rank == Rank::Five
-                && 5_u8.saturating_sub(stack_heights[identity.suit.index()]) >= 2
+                && !connection_predecessors(view, stack_heights, identity).is_empty()
         })
         && blind_plays >= 2;
     // An Unknown Trash Discharge communicates that the focused card is trash.
@@ -462,21 +518,21 @@ pub(in crate::h_group) fn apply_ejection_discharge_effects(
         // to disambiguate. Preserve the ordinary Trash Push/Chop Move meaning.
         // https://hanabi.github.io/level-16/#the-unknown-trash-discharge-2-for-1-form-utd
         && !touched.iter().all(|card| {
-            let possibilities = IdentitySet::from_mask(facts[card.index()].identity_mask());
-            !possibilities.is_empty() && possibilities.iter().all(|identity| is_trash_at(stack_heights, identity))
+            let possibilities = IdentitySet::from_bits(facts[card.index()].identity_mask_in(&view.variant));
+            !possibilities.is_empty() && possibilities.iter_in(view.variant.identities()).all(|identity| connection_trash(view, stack_heights, identity))
         })
         && interpretation.is_none_or(|interpretation| interpretation.save_identities.is_empty())
         && interpretation.is_some_and(|interpretation| {
             let possibilities =
-                IdentitySet::from_mask(facts[interpretation.focus.index()].identity_mask());
+                IdentitySet::from_bits(facts[interpretation.focus.index()].identity_mask_in(&view.variant));
             // The reactor sees the actual trash; the recipient still allows
             // an unplayable useful card. Requiring the literal domain to be
             // entirely trash inverted the meaning of *unknown* trash.
-            identity_of(view, interpretation.focus)
-                .is_some_and(|identity| is_trash_at(stack_heights, identity))
-                && possibilities.iter().any(|identity| {
-                    !is_trash_at(stack_heights, identity)
-                        && !is_playable_at(stack_heights, identity)
+            super::super::HistoricalView::new(view, entry.turn).identity(interpretation.focus)
+                .is_some_and(|identity| connection_trash(view, stack_heights, identity))
+                && possibilities.iter_in(view.variant.identities()).any(|identity| {
+                    !connection_trash(view, stack_heights, identity)
+                        && !connection_playable(view, stack_heights, identity)
                 })
         });
     let unknown_dupe_discharge = touched.len() >= 2
@@ -486,20 +542,25 @@ pub(in crate::h_group) fn apply_ejection_discharge_effects(
                 && matches!(signal.kind, HGroupMoveKind::FixClue | HGroupMoveKind::Stall)
         })
         && interpretation.is_some_and(|interpretation| {
-            let possibilities =
-                IdentitySet::from_mask(facts[interpretation.focus.index()].identity_mask());
+            let possibilities = IdentitySet::from_bits(
+                facts[interpretation.focus.index()].identity_mask_in(&view.variant),
+            );
             !possibilities.is_empty()
                 && !possibilities
-                    .iter()
-                    .any(|identity| is_trash_at(stack_heights, identity))
+                    .iter_in(view.variant.identities())
+                    .any(|identity| connection_trash(view, stack_heights, identity))
                 && possibilities
-                    .iter()
-                    .all(|identity| !is_playable_at(stack_heights, identity))
+                    .iter_in(view.variant.identities())
+                    .all(|identity| !connection_playable(view, stack_heights, identity))
                 && touched.iter().any(|first| {
                     touched.iter().any(|second| {
                         first != second
-                            && identity_of(view, *first).is_some()
-                            && identity_of(view, *first) == identity_of(view, *second)
+                            && super::super::HistoricalView::new(view, entry.turn)
+                                .identity(*first)
+                                .is_some()
+                            && super::super::HistoricalView::new(view, entry.turn).identity(*first)
+                                == super::super::HistoricalView::new(view, entry.turn)
+                                    .identity(*second)
                     })
                 })
         });
@@ -627,7 +688,7 @@ pub(in crate::h_group) fn apply_ejection_discharge_effects(
             }
         }
         if kind == HGroupMoveKind::FiveColorEjection && focus_identity.is_some() {
-            if let (Some(focus), Clue::Suit(suit)) = (
+            if let (Some(focus), Clue::Suit(_)) = (
                 interpretation.map(|interpretation| interpretation.focus),
                 clue,
             ) {
@@ -642,7 +703,7 @@ pub(in crate::h_group) fn apply_ejection_discharge_effects(
                     Some(*target),
                     HGroupMoveKind::FiveColorEjection,
                     vec![focus],
-                    Some(Card::new(*suit, Rank::Five)),
+                    focus_identity.filter(|identity| identity.rank == Rank::Five),
                 );
             }
         }

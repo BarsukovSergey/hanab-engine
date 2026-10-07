@@ -73,6 +73,26 @@ pub(super) fn unassigned_finesse_ranks(
     explicitly_clued: &CardSet,
     turn: u32,
 ) -> usize {
+    unassigned_finesse_ranks_in(
+        view,
+        giver,
+        actor,
+        focus_identity,
+        &stack_heights.map(usize::from),
+        explicitly_clued,
+        turn,
+    )
+}
+
+pub(super) fn unassigned_finesse_ranks_in(
+    view: &PlayerView,
+    giver: PlayerId,
+    actor: PlayerId,
+    focus_identity: Card,
+    stack_heights: &[usize],
+    explicitly_clued: &CardSet,
+    turn: u32,
+) -> usize {
     // Interpret the clue using the hands and literal facts that existed then.
     // Later connector plays/draws must not turn an ordinary delayed clue into
     // a 5 Color Ejection and retract an established connector identity.
@@ -83,16 +103,16 @@ pub(super) fn unassigned_finesse_ranks(
     } else {
         view
     };
-    let height = stack_heights[focus_identity.suit.index()];
-    ((height + 1)..focus_identity.rank.number())
-        .filter(|rank| {
-            let needed = Card::new(focus_identity.suit, Rank::ALL[usize::from(*rank - 1)]);
+    super::identity::connection_predecessors(view, stack_heights, focus_identity)
+        .into_iter()
+        .filter(|needed| {
+            let needed = *needed;
             !view.hands[actor.index()].iter().any(|card| {
                 explicitly_clued.contains(&card.id)
                     && was_clued_before(view, turn, card.id)
                     && (card.identity == Some(needed)
-                        || IdentitySet::from_mask(card.clues.identity_mask())
-                            == IdentitySet::singleton(needed))
+                        || IdentitySet::from_bits(card.clues.identity_mask_in(&view.variant))
+                            == super::identity::connection_domain(view, needed))
             }) && !view.hands.iter().enumerate().any(|(player, hand)| {
                 // The giver cannot build the clue's connection through
                 // identities hidden in their own hand. Another observer's
@@ -106,9 +126,10 @@ pub(super) fn unassigned_finesse_ranks(
                     explicitly_clued.contains(&card.id)
                         && was_clued_before(view, turn, card.id)
                         && (card.identity == Some(needed)
-                            || IdentitySet::from_mask(card.clues.identity_mask())
-                                == IdentitySet::singleton(needed))
-                }) || super::interpretation::visible_finesse_connects_at(
+                            || IdentitySet::from_bits(card.clues.identity_mask_in(&view.variant))
+                                == super::identity::connection_domain(view, needed))
+                }) || super::interpretation::visible_finesse_connects_in(
+                    view,
                     hand,
                     needed,
                     None,

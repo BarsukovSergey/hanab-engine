@@ -243,13 +243,14 @@ pub(super) fn compile_named_line_metrics(
                         .and_then(|clue| identity_of(source, clue.focus))
                         .is_some_and(|focus| {
                             is_eventually_useful(source, focus)
-                                && (1..focus.rank.number()).all(|rank| {
-                                    usize::from(rank)
-                                        <= source.play_stacks[focus.suit.index()].len()
-                                        || commitments.iter().any(|(_, promised)| {
-                                            promised.suit == focus.suit
-                                                && promised.rank.number() == rank
-                                        })
+                                && super::identity::connection_predecessors(
+                                    source,
+                                    &super::identity::connection_heights(source, None),
+                                    focus,
+                                )
+                                .into_iter()
+                                .all(|needed| {
+                                    commitments.iter().any(|(_, promised)| *promised == needed)
                                 })
                         });
                     ejection = Some((1 + usize::from(focus_is_secured), 1));
@@ -307,6 +308,10 @@ pub(super) fn compile_named_line_metrics(
 }
 
 fn view_distance_from_playable(source: &PlayerView, identity: Card) -> usize {
-    usize::from(identity.rank.number())
-        .saturating_sub(source.play_stacks[identity.suit.index()].len() + 1)
+    super::identity::connection_predecessors(
+        source,
+        &super::identity::connection_heights(source, None),
+        identity,
+    )
+    .len()
 }
