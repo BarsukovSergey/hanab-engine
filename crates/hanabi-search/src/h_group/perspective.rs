@@ -207,8 +207,9 @@ impl<'a> PerspectiveProjector<'a> {
             // continuation into the complete sampled world required here.
             return None;
         }
-        let identities: [Option<Card>; 50] =
-            core::array::from_fn(|index| identity_of(&view, CardId::new(index)));
+        let identities = (0..view.variant.identities().deck_size())
+            .map(|index| identity_of(&view, CardId::new(index)))
+            .collect::<Vec<_>>();
         view.observer = observer;
         for (player, hand) in view.hands.iter_mut().enumerate() {
             for card in hand {
@@ -723,6 +724,72 @@ mod tests {
         assert_eq!(after.clue_tokens, MAX_CLUE_TOKENS);
         assert_eq!(after.deck_size, source.deck_size - 1);
         assert_eq!(after.hands[0].last().unwrap().identity, None);
+    }
+
+    #[test]
+    fn contract_resolved_projection_preserves_late_variant_cards_and_redaction() {
+        use hanabi_core::{PhysicalAction, VariantId, VariantSpec};
+        // Ordinary physical projection invariant. The legal discard/clue
+        // history supplies no convention meanings or strategic expectations.
+        for variant_id in [VariantId::NoVariant, VariantId::White6Suits] {
+            let variant = VariantSpec::from_catalog(variant_id);
+            let deck_size = variant.identities().deck_size();
+            let deck = variant
+                .identities()
+                .identities()
+                .iter()
+                .flat_map(|id| {
+                    std::iter::repeat_n(Card::new(id.suit, id.rank), usize::from(id.copies))
+                })
+                .collect();
+            let mut state = FullState::new_variant(3, variant, deck).unwrap();
+            while state.deck_size() > 0 {
+                let legal = state.legal_physical_actions();
+                let action = legal
+                    .iter()
+                    .find(|action| matches!(action, PhysicalAction::Discard(_)))
+                    .or_else(|| {
+                        legal
+                            .iter()
+                            .find(|action| matches!(action, PhysicalAction::Clue { .. }))
+                    })
+                    .copied()
+                    .unwrap();
+                state.apply_physical(action).unwrap();
+            }
+            assert!(
+                state
+                    .hands()
+                    .iter()
+                    .flatten()
+                    .any(|id| id.index() == deck_size - 1)
+            );
+            let mut world = state
+                .physical_view_for(state.current_player())
+                .unwrap()
+                .try_standard()
+                .unwrap();
+            // Resolve simulator truth solely to exercise this explicitly
+            // resolved-world API. Each output must hide its owner's faces.
+            for card in world.hands.iter_mut().flatten() {
+                card.identity = state.card(card.id);
+            }
+            for index in 0..state.num_players() {
+                let observer = PlayerId::new(index);
+                let (deductions, _) = PerspectiveProjector::project_resolved_owned(
+                    world.clone(),
+                    HGroupProfile::Level(HGroupLevel::Level4),
+                    observer,
+                )
+                .unwrap();
+                let actual = state
+                    .physical_view_for(observer)
+                    .unwrap()
+                    .try_standard()
+                    .unwrap();
+                assert_eq!(deductions.view(), &actual);
+            }
+        }
     }
 
     #[test]

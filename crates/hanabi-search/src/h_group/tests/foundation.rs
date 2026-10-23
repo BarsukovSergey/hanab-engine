@@ -154,6 +154,140 @@ fn contract_foundation_white_finesse_response_reaches_executor_and_recipient() {
 }
 
 #[test]
+fn contract_foundation_completed_obligations_never_yield_an_unrelated_deadline_action() {
+    use crate::{InformationSet, PlannerConfig, SupportedConvention};
+    // Independent hard-constraint invariant: once a due response is established,
+    // neither an expired search nor an unrelated preferred action may replace
+    // it. White authority: the source-backed Red3 Finesse above. No Variant:
+    // p4v0s415 live16 rank4 -> live17 discard0 -> Bob's blind Green2 live18,
+    // user-explained t16-finesse-plays-both-greens-before-handoff (matching key).
+    // Max is a compatibility witness, not certification of that history at L4.
+    for (fixture, turn, profile, forced) in [
+        (
+            white_seed_one(),
+            45,
+            HGroupProfile::Level(HGroupLevel::Level4),
+            CardId::new(39),
+        ),
+        (
+            HanabiLiveReplay::from_json(include_str!(
+                "../../../../hanabi-protocol/tests/fixtures/game-p4v0s415.json"
+            ))
+            .unwrap(),
+            17,
+            HGroupProfile::Max,
+            CardId::new(22),
+        ),
+    ] {
+        let state = fixture.state_at_turn(turn).unwrap();
+        let view = state
+            .physical_view_for(state.current_player())
+            .unwrap()
+            .try_standard()
+            .unwrap();
+        let information = InformationSet::new(&view).unwrap();
+        let convention = SupportedConvention::HGroup(profile);
+        let mut analysis = convention.analyze(information.deductions());
+        let required = Action::Play(forced);
+        assert_eq!(analysis.forced_action, Some(required));
+        assert!(
+            analysis
+                .actions
+                .iter()
+                .any(|candidate| candidate.action == required)
+        );
+        let unrelated = view
+            .legal_actions()
+            .into_iter()
+            .find(|action| *action != required)
+            .unwrap();
+        analysis.preferred_action = Some(unrelated);
+        for (worlds, nodes) in [(0, 0), (1, 1), (16, 256)] {
+            let config = PlannerConfig {
+                exact_world_limit: worlds,
+                exact_node_limit: nodes,
+                move_time_limit: std::time::Duration::ZERO,
+                ..PlannerConfig::default()
+            };
+            match crate::planner::plan_move_with_analysis(
+                &information,
+                convention,
+                &analysis,
+                config,
+            ) {
+                Ok(result) => {
+                    assert_eq!(result.best_action, required);
+                    assert!(result.budget_exhausted);
+                    assert_eq!(result.root_actions.len(), 1);
+                    assert_eq!(result.root_actions[0].action, required);
+                }
+                Err(error) => assert_eq!(
+                    error,
+                    crate::PlannerError::Stopped(crate::AnalysisStopped::Deadline)
+                ),
+            }
+            // The public API must stop if even inference has no budget. It
+            // must not emit an unrelated action from a partially built state.
+            assert!(matches!(
+                crate::plan_move(&information, convention, config),
+                Err(crate::PlannerError::Stopped(
+                    crate::AnalysisStopped::Deadline
+                ))
+            ));
+        }
+    }
+}
+
+#[test]
+fn contract_foundation_recorded_clue_transition_preserves_each_observers_view() {
+    // Codec/transition invariant, not an oracle for strategic clue quality.
+    // Both clues and touched IDs are recorded, not substituted alternatives.
+    for (fixture, turn, target, clue, touched) in [
+        (
+            white_seed_one(),
+            44,
+            PlayerId::new(1),
+            Clue::Suit(Suit::Red),
+            CardId::new(32),
+        ),
+        (
+            HanabiLiveReplay::from_json(include_str!(
+                "../../../../hanabi-protocol/tests/fixtures/game-p4v0s415.json"
+            ))
+            .unwrap(),
+            15,
+            PlayerId::new(0),
+            Clue::Rank(Rank::Four),
+            CardId::new(3),
+        ),
+    ] {
+        let before = fixture.state_at_turn(turn).unwrap();
+        let after = fixture.state_at_turn(turn + 1).unwrap();
+        for index in 0..before.num_players() {
+            let observer = PlayerId::new(index);
+            let source = before
+                .physical_view_for(observer)
+                .unwrap()
+                .try_standard()
+                .unwrap();
+            let actual = after
+                .physical_view_for(observer)
+                .unwrap()
+                .try_standard()
+                .unwrap();
+            let projected = super::super::perspective::ProspectiveTransition::clue_by(
+                &source,
+                before.current_player(),
+                target,
+                clue,
+                &[touched],
+            );
+            assert_eq!(projected, actual, "turn={turn}, observer={observer:?}");
+        }
+    }
+}
+
+#[test]
 #[ignore = "manual admission-stage evidence; not a convention expectation"]
 fn foundation_white_recorded_clue_admission_trace() {
     let fixture = white_seed_one();
@@ -186,6 +320,31 @@ fn foundation_white_recorded_clue_admission_trace() {
     let _ = crate::capture_decisions(|| {
         let compiled = super::super::candidate_pipeline::compile(&deductions, profile, &replay);
         let meaning = crate::diagnostics::meaning(deductions.view(), action);
+        let touched = [CardId::new(32)];
+        let clue = super::super::prospective::compiled_prospective_clue(
+            deductions.view(),
+            profile,
+            PlayerId::new(1),
+            Clue::Suit(Suit::Red),
+            &touched,
+        )
+        .unwrap();
+        for observer in [PlayerId::new(0), PlayerId::new(1)] {
+            let projected = clue.projection(observer).unwrap();
+            let latest = projected
+                .replay
+                .clues
+                .iter()
+                .find(|clue| clue.turn == 44)
+                .unwrap();
+            eprintln!(
+                "P0 projected {observer:?}: kind={:?}, domain={:?}, hypotheses={:?}, Alice39={:?}",
+                latest.kind,
+                latest.play_identities,
+                latest.hypotheses,
+                identity_of(projected.deductions.view(), CardId::new(39))
+            );
+        }
         for candidate in compiled
             .admitted
             .iter()
@@ -217,6 +376,11 @@ fn foundation_white_recorded_clue_admission_trace() {
             .unwrap();
         let deductions = LogicalDeductions::new(view).unwrap();
         let inferred = infer_h_group(&deductions, profile);
+        let latest = inferred.clues.iter().find(|clue| clue.turn == 44).unwrap();
+        eprintln!(
+            "P0 actual {observer:?}: kind={:?}, domain={:?}, hypotheses={:?}",
+            latest.kind, latest.play_identities, latest.hypotheses
+        );
         eprintln!(
             "P0 after clue, observer {observer:?}: connection={:?}, due={:?}",
             inferred.connection,

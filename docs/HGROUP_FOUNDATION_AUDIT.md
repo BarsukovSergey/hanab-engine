@@ -450,6 +450,124 @@ with a No Variant reviewed-position equivalent. The 48 whole-section statuses
 remain unchanged; tool correctness is supporting evidence, not row
 certification.
 
+## Checkpoint 1 continuation: projection size and mandatory-action boundaries
+
+### C5: resolved-world observer projection indexed a 50-card array
+
+`PerspectiveProjector::project_resolved_owned` snapshots card identities before
+redacting the modeled observer's hand and draw history. Its fixed 50-element
+array was indexed by physical `CardId`, although White has 60 cards. This path
+is used by prospective Save validation over giver-hand worlds
+(`prospective.rs::prospective_clue_marks_focus_saved`). The defect is a physical
+indexing invariant, independent of convention strategy or planner scores.
+
+The new
+`perspective::tests::contract_resolved_projection_preserves_late_variant_cards_and_redaction`
+builds legal No Variant and White discard/clue histories through the last draw.
+These artificial histories assert no convention meaning. They resolve the source
+hand only as the explicit resolved-world API requires, and compare all three
+observer outputs with independent core `FullState::physical_view_for` results.
+Full view equality includes each owner's hidden faces and draw history. The No
+Variant control reaches card49; White reaches card59.
+
+Before repair,
+`cargo test -p hanabi-search --locked contract_resolved_projection_preserves_late_variant_cards --lib`
+passed the No Variant loop then panicked in White at `perspective.rs:216`:
+`len is 50 but the index is 51`. Red recorder
+`7b64134380a34c238ad79299711348bd`, ignored log
+`target/foundation-audit/late-projection-red.log`. The repair snapshots exactly
+`view.variant.identities().deck_size()` entries. The existing early rejection of
+symbolic blank hands remains intact. This is not a global variant migration or
+proof of every convention on White.
+
+### Hard obligations, expired budgets and clue-transition evidence
+
+New contracts distinguish producing a wrong action from returning an explicit
+deadline error with no action. The White Level4 obligation is Alice Play39 at
+live46. The independent No Variant compatibility witness is Bob Play22 (g2) at
+p4v0s415 live18, after recorded live16 rank4 and live17 discard0. The
+user-explained review `t16-finesse-plays-both-greens-before-handoff` matches
+position key `307b4db26fd808f70266f672577e783e1118b32a4b0780485b60a2eaa0bb797f`;
+its ruling requires the Finesse to play both greens. This prefix lies within the
+conservative reviewed boundary. It is tested at Max as compatibility evidence,
+not certification of all Max history at Level4.
+
+`foundation::contract_foundation_completed_obligations_never_yield_an_unrelated_deadline_action`
+first asserts that ordinary inference establishes and admits each required
+action, then supplies an unrelated preferred action. An expired request may
+return only that forced action or `Stopped(Deadline)`. The public zero-budget
+API must return the explicit stop. The tested world/node settings are 0/0, 1/1
+and16/256, but an expired budget does not exercise world enumeration.
+
+`planner::tests::contract_forced_fallback_rejects_stale_preference_and_unestablished_belief`
+therefore separately exercises deterministic fallback with a directly supplied
+hard constraint: stale higher-score preference, completed/unfinished
+projections, and known/unknown world count. Without an established world count,
+fallback must stop; a returned result must contain and select only the required
+candidate. This is an algorithm invariant, not an invented convention history.
+
+During test development, recorder `4728a9a8e28e4530aad869e026c9d7d4` exposed an
+invalid new-test assumption that zero budget must return success. Independent
+review corrected that oracle before acceptance. It also rejected p4v0s9
+live8/Card12 as a hard-obligation authority: that existing regression only
+establishes ordinary clued-play selection and has no turn-specific review. No
+production behavior or pre-existing assertion was changed to make these mistaken
+assumptions pass. The corrected deadline contract passed (recorder
+`7f6628170b034e1690f24420fb722222`). A later focused compile exposed one new
+test's `PlayerId` argument type mismatch (recorder
+`95cd146df6f640e2bdc6521fc7b8cd05`); corrected to the actual `u8` API.
+
+`foundation::contract_foundation_recorded_clue_transition_preserves_each_observers_view`
+uses the explicit recorded giver and compares the clue transition against core
+physical replay for all three White and four No Variant observers. No draw or
+action is substituted. This checks identical observer information states; it
+does not require a giver's partial model of another observer to equal that
+observer's actual information.
+
+The expanded manual admission diagnostic
+`foundation_white_recorded_clue_admission_trace` reports Alice as Play in both
+prospective and actual replay, with Red4 connected through Alice39/Red3.
+Projected Bob is Unrecognized while actual Bob is Play with that same
+connection. The giver Cathy does not see her own cards, whereas actual Bob does;
+those are different information states. Thus generatorProof admission without
+recipient recognition remains an unresolved proof gap, not a demonstrated unsafe
+admission solely because the labels differ. The diagnostic is explicitly
+ignored/manual; no failing semantic assertion was disabled. Evidence: ignored
+`target/foundation-audit/admission-projection.log`.
+
+Observed CI for `88b14a4` failed only on two `default_trait_access` warnings in
+the new CLI unit test:
+[run40021077015](https://github.com/BarsukovSergey/hanab-engine/actions/runs/40021077015).
+Separate mechanical commit `dbd2a7b` names the two concrete default types;
+`bash scripts/check-scoped.sh hanabi-cli --bin hanabi-engine` passed four tests,
+formatting and production check. No assertion or semantic code changed.
+
+CI for mechanical commit `dbd2a7b` is observed successful:
+[run40022156632](https://github.com/BarsukovSergey/hanab-engine/actions/runs/40022156632).
+
+Final focused results for the C5 repair and boundary contracts:
+
+| Command                                                                                                     | Actual result                                                                                                                         | Recorder                           |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `bash scripts/check-scoped.sh hanabi-search perspective::tests --lib`                                       | 9 passed, including late White/No Variant full-view parity and symbolic-blank rejection; Rust formatting and production check passed. | `db4d86603883456499ee221b0ccab61b` |
+| `cargo test -p hanabi-search --locked foundation::contract_ --lib`                                          | 5 passed, including recorded clue parity for seven observers and both source-backed due responses.                                    | `a86384474137455497e66b162e77b5c8` |
+| `cargo test -p hanabi-search --locked contract_forced_fallback --lib`                                       | 1 passed; known/unknown count and completed/unfinished projection controls.                                                           | `6875725d6b744bf88f3105c683c9b847` |
+| `cargo test -p hanabi-search --locked incomplete_world_traversal_cannot_prove_contextual_save_safety --lib` | 1 existing Save safety regression passed; incomplete traversal remains insufficient proof.                                            | `8d6a0c807f3041f48eb53744aeda253e` |
+
+Independent read-only review checked the final Vec repair, red reproduction,
+test provenance, exact reviewed No Variant prefix, observer equivalence,
+deadline/fallback oracle and the stated limits. No blocking finding remained;
+two wording issues were corrected. This is batch review, not checkpoint4
+certification. No full repository validation or new pilot was run in this batch;
+its eventual PR CI must be observed separately.
+
+The 48 whole-section dispositions remain unchanged. Next narrow step: finish
+L1-12/L1-13 Prompt/Finesse admission and historical observer contracts using
+official examples/reviewed No Variant positions, including impossible
+connectors, already-due plays and recipient consequences. Quantify the P0
+recipient proof gap over valid giver-hand worlds before calling admission safe
+or declaring a defect; differing-information labels alone are insufficient.
+
 ## Review, delivery and remaining gates
 
 Checkpoint 0 changes documentation only. Independent read-only review by a
