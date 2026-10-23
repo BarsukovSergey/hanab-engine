@@ -509,7 +509,9 @@ pub(crate) fn identity_json(card: Card) -> Value {
 mod tests {
     use super::*;
     use hanabi_core::{CardId, PlayerId, Rank, Suit, VariantId, VariantSpec};
-    use hanabi_search::{PlanStep, ProjectedAction, ProjectionEvidence};
+    use hanabi_search::{
+        PlanStep, ProjectedAction, ProjectedConsequences, ProjectionEvidence, SymbolicLineOutcome,
+    };
 
     #[test]
     fn active_identity_serializers_preserve_sixth_suit_and_nested_steps() {
@@ -533,7 +535,7 @@ mod tests {
                     action: hanabi_core::Action::Play(CardId::new(40)),
                 },
                 depends_on: None,
-                consequences: Default::default(),
+                consequences: ProjectedConsequences::default(),
             }],
             ..ProjectionEvidence::default()
         };
@@ -541,7 +543,7 @@ mod tests {
             clue_branches: vec![hanabi_search::ClueTouchBranch {
                 turn: 44,
                 touched: vec![CardId::new(32)],
-                outcome: Default::default(),
+                outcome: SymbolicLineOutcome::default(),
                 continuation: evidence,
             }],
             ..ProjectionEvidence::default()
