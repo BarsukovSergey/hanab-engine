@@ -134,6 +134,7 @@ fn contract_physical_touch_and_literal_facts_preserve_every_standard_clue() {
 }
 // Physical/inference infrastructure contract, not a convention/optimal-move ruling.
 #[test]
+#[allow(clippy::too_many_lines)] // Keep one legal trace and its observer checks together.
 fn contract_v5_r2_legal_rainbow_clue_discard() {
     let variant = VariantSpec::from_catalog(VariantId::Rainbow6Suits);
     let deck: Vec<_> = variant
