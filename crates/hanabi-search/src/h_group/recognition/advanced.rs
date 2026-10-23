@@ -3,8 +3,8 @@ use super::{
     ConnectionTransitionReason, ConventionJournal, HGroupClueInterpretation, HGroupClueKind,
     HGroupConnectionKind, HGroupMoveKind, HGroupRuleEffects, HGroupTurnContext, IdentitySet,
     ObservedEvent, ObservedHistoryEntry, PlayerView, PromiseId, Rank, RequiredFix, chop,
-    finesse_position_id, five_pulled_card, identity_of, is_playable_at, next_player,
-    protected_cards, push_signal, same_turn_signal, unassigned_finesse_ranks, was_clued_before,
+    finesse_position_id, five_pulled_card, next_player, protected_cards, push_signal,
+    same_turn_signal, unassigned_finesse_ranks_in, was_clued_before,
 };
 use crate::h_group::identity::{connection_allows, connection_playable, connection_trash};
 use crate::h_group::model::FixObligations;
@@ -542,7 +542,7 @@ pub(in crate::h_group) fn apply_out_of_order_effects(
     view: &PlayerView,
     hands: &[Vec<CardId>],
     clues: &[HGroupClueInterpretation],
-    stack_heights: [u8; 5],
+    stack_heights: &[usize],
     explicitly_clued: &CardSet,
     invisibly_clued: &CardSet,
     chop_moved: &CardSet,
@@ -557,6 +557,7 @@ pub(in crate::h_group) fn apply_out_of_order_effects(
     // https://hanabi.github.io/level-20/#the-suboptimal-prompt--the-suboptimal-finesse--the-suboptimal-bluff
     // https://hanabi.github.io/level-20/#the-no-information-finesse
     // https://hanabi.github.io/level-20/#the-no-information-double-bluff-nidb
+    let historical = crate::h_group::HistoricalView::new(view, entry.turn);
     let ObservedEvent::Clued {
         giver,
         target,
@@ -591,10 +592,17 @@ pub(in crate::h_group) fn apply_out_of_order_effects(
         {
             return false;
         }
-        let Some(focus_identity) = identity_of(view, meaning.focus) else {
+        let Some(focus_identity) = historical.identity(meaning.focus) else {
             return false;
         };
-        if focus_identity.rank != Rank::Four || stack_heights[focus_identity.suit.index()] != 0 {
+        if focus_identity.rank != Rank::Four
+            || !view
+                .variant
+                .stack_suits()
+                .iter()
+                .position(|suit| *suit == focus_identity.suit)
+                .is_some_and(|suit| stack_heights[suit] == 0)
+        {
             return false;
         }
         if same_turn_signal(signals, entry.turn, HGroupMoveKind::CriticalColorBluff)
@@ -603,7 +611,7 @@ pub(in crate::h_group) fn apply_out_of_order_effects(
             return false;
         }
         let actor = next_player(*giver, hands.len());
-        if unassigned_finesse_ranks(
+        if unassigned_finesse_ranks_in(
             view,
             *giver,
             actor,
@@ -617,15 +625,17 @@ pub(in crate::h_group) fn apply_out_of_order_effects(
         }
         let gotten = protected_cards(explicitly_clued, invisibly_clued, chop_moved);
         let charmed = finesse_position_id(&hands[actor.index()], &gotten, 3).is_some_and(|card| {
-            identity_of(view, card).map_or(actor == view.observer, |identity| {
-                is_playable_at(stack_heights, identity)
-            })
+            historical
+                .identity(card)
+                .map_or(actor == view.observer, |identity| {
+                    connection_playable(view, stack_heights, identity)
+                })
         });
         let double_bluff_actor = next_player(actor, hands.len());
         let double_bluff_available =
             finesse_position_id(&hands[double_bluff_actor.index()], &gotten, 0)
-                .and_then(|card| identity_of(view, card))
-                .is_some_and(|identity| is_playable_at(stack_heights, identity));
+                .and_then(|card| historical.identity(card))
+                .is_some_and(|identity| connection_playable(view, stack_heights, identity));
         charmed && !double_bluff_available
     });
     if four_charm {
@@ -635,22 +645,22 @@ pub(in crate::h_group) fn apply_out_of_order_effects(
         return;
     }
     if let Some(card) = interpretation.map(|clue| clue.focus).filter(|card| {
-        identity_of(view, *card).is_some_and(|identity| {
-            identity.rank.number() > stack_heights[identity.suit.index()] + 1
+        historical.identity(*card).is_some_and(|identity| {
+            let predecessors =
+                crate::h_group::identity::connection_predecessors(view, stack_heights, identity);
+            !predecessors.is_empty()
                 && touched.iter().any(|candidate| {
                     candidate != card
                         && interpretation
                             .is_some_and(|clue| !clue.previously_gotten.contains(candidate))
-                        && identity_of(view, *candidate).is_some_and(|lower| {
-                            lower.suit == identity.suit
-                                && lower.rank.number() < identity.rank.number()
-                                && lower.rank.number() > stack_heights[identity.suit.index()]
-                        })
+                        && historical
+                            .identity(*candidate)
+                            .is_some_and(|lower| predecessors.contains(&lower))
                 })
         })
     }) {
         let focus = card;
-        let focus_identity = identity_of(view, focus);
+        let focus_identity = historical.identity(focus);
         if let Some(identity) = focus_identity {
             required_fixes.insert_unconditional(RequiredFix {
                 actor: next_player(*giver, view.hands.len()),

@@ -1420,3 +1420,82 @@ fn contract_v5_five_tech_active_connector_save_stall_and_visibility() {
         }
     }
 }
+
+#[test]
+fn contract_v5_out_of_order_active_lower_card_keeps_connector_and_fix_owner() {
+    for (variant, suit) in [
+        (VariantSpec::no_variant(), Suit::Red),
+        (reordered(), Suit::new(5)),
+    ] {
+        for guard in 0..3 {
+            let mut view = snapshot(variant.clone(), 3);
+            let focus = view.hands[2][0].id;
+            let lower = view.hands[2][1].id;
+            let connector = view.hands[1].last().unwrap().id;
+            let five = Card::new(suit, Rank::Five);
+            view.hands[2][0].identity = Some(five);
+            view.hands[2][1].identity = Some(Card::new(suit, Rank::Three));
+            if guard == 2 {
+                view.observer = PlayerId::new(2);
+            }
+            let mut entry = clue_entry(2, Clue::Suit(Suit::Red), focus);
+            if let ObservedEvent::Clued { touched, .. } = &mut entry.event {
+                *touched = vec![lower, focus];
+            }
+            let hands = layout(&view);
+            let mut heights = vec![0; view.variant.stack_suits().len()];
+            if guard == 1 {
+                connection_advance(&view, &mut heights, Card::new(suit, Rank::Three));
+            }
+            let meaning = interpretation(&view, focus, five, 2, Clue::Suit(Suit::Red));
+            let mut effects = Effects::default();
+            effects.pending.start(
+                2,
+                obligation(
+                    1,
+                    vec![connector],
+                    Card::new(suit, Rank::One),
+                    focus,
+                    five,
+                    HGroupConnectionKind::Finesse,
+                ),
+            );
+            crate::h_group::recognition::apply_out_of_order_effects(
+                &entry,
+                &view,
+                &hands,
+                &[meaning],
+                &heights,
+                &effects.explicit,
+                &effects.invisible,
+                &effects.moved,
+                &mut effects.pending,
+                &mut effects.forced,
+                &mut effects.fixes,
+                &mut effects.signals,
+            );
+            assert_eq!(
+                effects
+                    .signals
+                    .has_at_turn(4, HGroupMoveKind::OutOfOrderFinesse),
+                guard == 0
+            );
+            assert_eq!(effects.fixes.iter().count(), usize::from(guard == 0));
+            if guard == 0 {
+                let fix = effects.fixes.iter().next().unwrap().required;
+                assert_eq!(fix.actor, PlayerId::new(1));
+                assert_eq!(fix.target, PlayerId::new(2));
+                assert_eq!(fix.focus, focus);
+                assert_eq!(fix.identity, five);
+            }
+            // Physical migration must preserve the existing connector chain.
+            assert_eq!(effects.pending.iter().count(), 1);
+            assert!(
+                effects
+                    .pending
+                    .active()
+                    .any(|c| c.cards == [connector] && c.expected == Card::new(suit, Rank::One))
+            );
+        }
+    }
+}

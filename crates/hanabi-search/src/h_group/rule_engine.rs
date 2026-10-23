@@ -342,7 +342,7 @@ fn apply_rule(
             view,
             context.after.hands,
             effects.clues,
-            context.after.stack_heights,
+            &context.after.dynamic_stack_heights,
             effects.explicitly_clued,
             effects.invisibly_clued,
             effects.chop_moved,
