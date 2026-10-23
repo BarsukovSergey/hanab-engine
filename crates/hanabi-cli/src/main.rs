@@ -70,8 +70,10 @@ fn run_analyze(arguments: &AnalyzeArguments) -> Result<(), CliError> {
 
     let actor = state.current_player();
     let view = state
-        .view_for(actor)
-        .ok_or(CliError::InvalidCurrentPlayer)?;
+        .physical_view_for(actor)
+        .ok_or(CliError::InvalidCurrentPlayer)?
+        .try_standard()
+        .map_err(CliError::ClueVocabulary)?;
     if arguments.explain {
         return explain::run(arguments, &replay, &view);
     }
@@ -577,6 +579,7 @@ enum CliError {
     Replay(ReplayError),
     TerminalPosition(u32),
     InvalidCurrentPlayer,
+    ClueVocabulary(hanabi_core::StandardClueError),
     ReadLiveSnapshot(io::Error),
     WriteLiveSession(io::Error),
     LiveSnapshot(hanabi_protocol::LiveSnapshotError),
@@ -599,6 +602,9 @@ impl fmt::Display for CliError {
                 )
             }
             Self::InvalidCurrentPlayer => formatter.write_str("current player is invalid"),
+            Self::ClueVocabulary(error) => {
+                write!(formatter, "unsupported replay clue vocabulary: {error}")
+            }
             Self::ReadLiveSnapshot(error) => {
                 write!(
                     formatter,
@@ -622,6 +628,7 @@ impl std::error::Error for CliError {
         match self {
             Self::ReadReplay { source, .. } => Some(source),
             Self::Replay(error) => Some(error),
+            Self::ClueVocabulary(error) => Some(error),
             Self::ReadLiveSnapshot(error) | Self::WriteLiveSession(error) => Some(error),
             Self::LiveSnapshot(error) => Some(error),
             Self::AnalyzePosition(error) => Some(error),

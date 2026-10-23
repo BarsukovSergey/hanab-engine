@@ -1,6 +1,6 @@
 use std::io::{self, BufRead, Read, Write};
 
-use hanabi_core::{Card, PlayerView};
+use hanabi_core::{Card, IdentityUniverse, PlayerView};
 use hanabi_protocol::{HanabiLiveActionCommand, HanabiLiveSessionState, HanabiLiveSnapshot};
 use hanabi_search::{
     ConventionInferences, HGroupInferences, IdentitySet, LogicalDeductions, PlannerConfig,
@@ -94,12 +94,20 @@ fn decide(
             Value::Null
         },
         convention_inferences: if arguments.include_planning_details {
-            convention_inferences_json(analysis.convention_analysis.inferences.clone())
+            convention_inferences_json(
+                analysis.convention_analysis.inferences.clone(),
+                view.variant.identities(),
+            )
         } else {
             Value::Null
         },
         planning: if arguments.include_planning_details {
-            planning_json(table_id, &analysis, arguments.objective)
+            planning_json(
+                table_id,
+                &analysis,
+                arguments.objective,
+                view.variant.identities(),
+            )
         } else {
             Value::Null
         },
@@ -124,22 +132,25 @@ fn logical_deductions_json(deductions: &LogicalDeductions) -> Value {
                 "card": card.index(),
                 "possibleIdentities": deductions
                     .possible_identities(*card)
-                    .map_or_else(Vec::new, identity_set_json),
+                    .map_or_else(Vec::new, |identities| identity_set_json(identities, deductions.view().variant.identities())),
             })
         })
         .collect::<Vec<_>>();
     json!({"ownCards": own_cards})
 }
 
-pub(crate) fn convention_inferences_json(inferences: ConventionInferences) -> Value {
+pub(crate) fn convention_inferences_json(
+    inferences: ConventionInferences,
+    universe: &IdentityUniverse,
+) -> Value {
     match inferences {
         ConventionInferences::None => json!({"framework": "none"}),
-        ConventionInferences::HGroup(inferences) => h_group_inferences_json(&inferences),
+        ConventionInferences::HGroup(inferences) => h_group_inferences_json(&inferences, universe),
         _ => json!({"framework": "unknown"}),
     }
 }
 
-fn h_group_inferences_json(inferences: &HGroupInferences) -> Value {
+fn h_group_inferences_json(inferences: &HGroupInferences, universe: &IdentityUniverse) -> Value {
     let saved = inferences.saved_cards().collect::<Vec<_>>();
     let connection = inferences.connection.map(|connection| {
         json!({
@@ -155,7 +166,7 @@ fn h_group_inferences_json(inferences: &HGroupInferences) -> Value {
         .map(|card| {
             json!({
                 "card": card.card.index(),
-                "possibleIdentities": identity_set_json(card.identities),
+                "possibleIdentities": identity_set_json(card.identities, universe),
                 "focused": card.focused,
                 "saved": card.saved,
                 "finessed": card.play_obligation.is_some(),
@@ -198,9 +209,9 @@ fn h_group_inferences_json(inferences: &HGroupInferences) -> Value {
                 "focus": clue.focus.index(),
                 "focusWasChop": clue.focus_was_chop,
                 "kind": format!("{:?}", clue.kind),
-                "focusIdentities": identity_set_json(clue.focus_identities),
-                "playIdentities": identity_set_json(clue.play_identities),
-                "saveIdentities": identity_set_json(clue.save_identities),
+                "focusIdentities": identity_set_json(clue.focus_identities, universe),
+                "playIdentities": identity_set_json(clue.play_identities, universe),
+                "saveIdentities": identity_set_json(clue.save_identities, universe),
             })
         })
         .collect::<Vec<_>>();
@@ -235,6 +246,7 @@ fn planning_json(
     table_id: u64,
     analysis: &PositionAnalysis,
     objective: hanabi_search::PlanningObjective,
+    universe: &IdentityUniverse,
 ) -> Value {
     let mut planning = json!({
         "convention": analysis.convention.id(),
@@ -246,10 +258,15 @@ fn planning_json(
         .as_object_mut()
         .expect("planning metadata is an object")
         .extend(
-            planner_details_json(table_id, analysis.planner.best_action, &analysis.planner)
-                .as_object()
-                .expect("planning details are an object")
-                .clone(),
+            planner_details_json(
+                table_id,
+                analysis.planner.best_action,
+                &analysis.planner,
+                universe,
+            )
+            .as_object()
+            .expect("planning details are an object")
+            .clone(),
         );
     planning
 }
@@ -258,6 +275,7 @@ pub(crate) fn planner_details_json(
     table_id: u64,
     best_action: hanabi_core::Action,
     result: &hanabi_search::PlannerResult,
+    universe: &IdentityUniverse,
 ) -> Value {
     json!({
         "phase": match result.phase {
@@ -288,7 +306,7 @@ pub(crate) fn planner_details_json(
                 "withinCategory": evaluation.preference.within_category(),
             },
             "projectionEvaluated": evaluation.projection_evaluated,
-            "projection": projection_evidence_json(table_id, &evaluation.projection),
+            "projection": projection_evidence_json(table_id, &evaluation.projection, universe),
             "certainlyPlayable": evaluation.certainly_playable,
             "certainlyUseless": evaluation.certainly_useless,
             "newlyTouched": evaluation.newly_touched,
@@ -374,9 +392,13 @@ pub(crate) fn position_value_json(value: hanabi_search::ProjectedPositionValue) 
     })
 }
 
-fn projected_step_json(table_id: u64, step: &hanabi_search::PlanStep) -> Value {
+fn projected_step_json(
+    table_id: u64,
+    step: &hanabi_search::PlanStep,
+    universe: &IdentityUniverse,
+) -> Value {
     json!({
-        "interpretedIdentities": step.interpreted_identities.map(|identities| identities.iter().map(identity_json).collect::<Vec<_>>()),
+        "interpretedIdentities": step.interpreted_identities.map(|identities| identity_set_json(identities, universe)),
         "turn": step.turn + 1, "actor": step.projected.actor.index(),
         "action": HanabiLiveActionCommand::from_engine_action(table_id, step.projected.action),
         "dependsOn": step.depends_on,
@@ -398,6 +420,7 @@ fn condition_json(condition: hanabi_search::HiddenCardCondition) -> Value {
 pub(crate) fn projection_evidence_json(
     table_id: u64,
     evidence: &hanabi_search::ProjectionEvidence,
+    universe: &IdentityUniverse,
 ) -> Value {
     json!({
         "checkpoints": evidence.checkpoints.iter().map(|checkpoint| json!({
@@ -413,19 +436,19 @@ pub(crate) fn projection_evidence_json(
         })),
         "clueBranches": evidence.clue_branches.iter().map(|branch| json!({
             "turn": branch.turn + 1, "touched": branch.touched.iter().map(|card| card.index()).collect::<Vec<_>>(),
-            "projection": projection_evidence_json(table_id, &branch.continuation),
+            "projection": projection_evidence_json(table_id, &branch.continuation, universe),
         })).collect::<Vec<_>>(),
         "discardBranches": evidence.discard_branches.iter().map(|branch| json!({
             "turn": branch.turn + 1, "card": branch.card.index(),
             "identity": identity_json(branch.identity),
-            "projection": projection_evidence_json(table_id, &branch.continuation),
+            "projection": projection_evidence_json(table_id, &branch.continuation, universe),
         })).collect::<Vec<_>>(),
         "privateBranches": evidence.private_branches.iter().map(|branch| json!({
             "turn": branch.turn + 1, "actor": branch.actor.index(),
             "assignments": branch.assignments.iter().map(|(card, identity)| json!({
                 "card": card.index(), "identity": identity_json(*identity),
             })).collect::<Vec<_>>(),
-            "projection": projection_evidence_json(table_id, &branch.continuation),
+            "projection": projection_evidence_json(table_id, &branch.continuation, universe),
         })).collect::<Vec<_>>(),
         "assumptions": evidence.assumptions.iter().map(|assumption| json!({
             "turn": assumption.turn + 1,
@@ -437,10 +460,10 @@ pub(crate) fn projection_evidence_json(
                 "responseActor":d.response_actor.index(),"decisionTurn":d.decision_turn+1,
             })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
-        "steps": evidence.steps.iter().map(|step| projected_step_json(table_id, step)).collect::<Vec<_>>(),
+        "steps": evidence.steps.iter().map(|step| projected_step_json(table_id, step, universe)).collect::<Vec<_>>(),
         "alternatives": evidence.alternatives.iter().map(|alternative| json!({
             "afterStep": alternative.after_step, "if": condition_json(alternative.condition),
-            "followUp": projected_step_json(table_id, &alternative.follow_up),
+            "followUp": projected_step_json(table_id, &alternative.follow_up, universe),
             "latestTurn": alternative.latest_turn + 1,
             "resources": {"initialTokens": alternative.resources.initial_tokens,
                 "tokens": alternative.resources.tokens,
@@ -474,12 +497,61 @@ pub(crate) fn projection_evidence_json(
     })
 }
 
-fn identity_set_json(identities: IdentitySet) -> Vec<Value> {
-    identities.iter().map(identity_json).collect()
+fn identity_set_json(identities: IdentitySet, universe: &IdentityUniverse) -> Vec<Value> {
+    identities.iter_in(universe).map(identity_json).collect()
 }
 
 pub(crate) fn identity_json(card: Card) -> Value {
     json!({"suit": card.suit.to_string(), "rank": card.rank.number()})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hanabi_core::{CardId, PlayerId, Rank, Suit, VariantId, VariantSpec};
+    use hanabi_search::{PlanStep, ProjectedAction, ProjectionEvidence};
+
+    #[test]
+    fn active_identity_serializers_preserve_sixth_suit_and_nested_steps() {
+        // Serialization invariant, not a hypothetical convention history.
+        let variant = VariantSpec::from_catalog(VariantId::White6Suits);
+        let universe = variant.identities();
+        let card = Card::new(Suit::new(5), Rank::Two);
+        let domain = IdentitySet::singleton_id(universe.id_for(card.suit, card.rank).unwrap());
+        let expected = vec![identity_json(card)];
+        assert_eq!(identity_set_json(domain, universe), expected);
+        assert_eq!(
+            identity_set_json(IdentitySet::all_in(universe), universe).len(),
+            30
+        );
+        let evidence = ProjectionEvidence {
+            steps: vec![PlanStep {
+                interpreted_identities: Some(domain),
+                turn: 45,
+                projected: ProjectedAction {
+                    actor: PlayerId::new(1),
+                    action: hanabi_core::Action::Play(CardId::new(40)),
+                },
+                depends_on: None,
+                consequences: Default::default(),
+            }],
+            ..ProjectionEvidence::default()
+        };
+        let parent = ProjectionEvidence {
+            clue_branches: vec![hanabi_search::ClueTouchBranch {
+                turn: 44,
+                touched: vec![CardId::new(32)],
+                outcome: Default::default(),
+                continuation: evidence,
+            }],
+            ..ProjectionEvidence::default()
+        };
+        let report = projection_evidence_json(0, &parent, universe);
+        assert_eq!(
+            report["clueBranches"][0]["projection"]["steps"][0]["interpretedIdentities"],
+            json!(expected)
+        );
+    }
 }
 
 #[derive(Serialize)]

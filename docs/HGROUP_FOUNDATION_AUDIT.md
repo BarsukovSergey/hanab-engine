@@ -351,16 +351,17 @@ due card39; Bob has no currently due connection before Alice's response. Missing
 `required_response` plus generic Pass/GeneratorProof still does not certify
 every intermediate response or general admission soundness.
 
-Follow-up tool defects discovered at this boundary:
+Tool defects discovered at this boundary (subsequently repaired below):
 
 - Built-in CLI analysis of this White fixture at live45 fails with
   `current player is invalid`: `main.rs::run_analyze` uses No-Variant-only
   `FullState::view_for`. The diagnostic uses the existing physical view and
-  checked standard-label adapter instead.
+  checked standard-label adapter instead. C3 below repairs the CLI boundary.
 - `replay_link.rs` hard-codes variant0, and its round-trip validator checks that
   constant rather than the fixture variant. It cannot generate a trustworthy
   White link yet. Do not publish a No Variant URL for this fixture; repair and
-  independently test the codec boundary in a separate small batch.
+  independently test the codec boundary in a separate small batch. C2 below
+  supplies that repair and a verified White link.
 
 Independent read-only review found no blocking problem in the guard or fixture,
 independently checking all cards/actions against the original/hash. It limited
@@ -376,6 +377,78 @@ equivalent emphasis around “recorded prefix”, with no changed requirement. T
 first overly strict non-whitespace comparison rejected the emphasis-marker
 change; the corrected comparison passed. Certification/full validation remain
 pending.
+
+## Checkpoint 1: trustworthy variant metadata in audit tools
+
+**C2: replay-link variant loss, repaired.** `replay_link.rs` encoded every
+replay with wire variant0, and its validator checked that same constant. The
+official `hanabi-live` source at `b0792ded044937776b36fc797dc25f060499e4f5`
+(`misc/variants.txt`, `packages/client/src/lobby/hypoCompress.ts`) requires the
+actual decimal variant ID in the third field. Wire IDs for all nine existing
+supported catalog entries are now encoded and independently checked; unsupported
+names retain the existing parser gate. No new physical variant or convention was
+enabled. No Variant's original URL bytes and seed wrapping are unchanged.
+
+**C3: CLI observation boundary, repaired.** `run_analyze` used the deliberately
+No-Variant-only `FullState::view_for`, rejecting a legal White actor with
+`current player is invalid`. It now takes the physical redacted view and uses
+the existing checked clue-label adapter. An unsupported clue vocabulary gets a
+specific error, not a false invalid-player diagnosis.
+
+**C4: report domain truncation, repaired.** The newly accessible physical report
+path exposed serializers using legacy `IdentitySet::iter`, silently dropping the
+sixth suit. The active `IdentityUniverse` now reaches logical and convention
+knowledge, candidate meanings, root and nested projection steps, branch
+continuations, alternatives, and text rendering. Board identities are rendered
+directly from visible physical cards; nonstandard suit5 is explicitly `s5`, and
+own faces remain hidden. This is reporting plumbing; inference, planner policy
+and production variant enablement did not change.
+
+| Run                   | Command / condition                                                                                                      | Actual evidence                                                                                                                                                                                                                                                                                          |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| C2-red                | `cargo test -p hanabi-protocol --locked catalog_replay_links_preserve_official_variant_ids --lib`                        | Failed before repair: Black wire0 instead of official2. Recorder `0a15181908564d9b8ee11165aa258d92`. Test covers all9 source-backed IDs and rejects substituted variant fields with unchanged deck/actions.                                                                                              |
+| C3-red                | `cargo test -p hanabi-cli --locked --test foundation_reporting`                                                          | Failed before the CLI adapter: `current player is invalid`, recorder `e777de0c82c741dc9a4ec3d16c164a3f`.                                                                                                                                                                                                 |
+| C4-red                | `cargo test -p hanabi-cli --locked --bin hanabi-engine active_identity_serializers_preserve_sixth_suit_and_nested_steps` | Replayed the original legacy serializer body inside the new parameterized API: `[]` instead of White2. This is a controlled legacy-body reproduction, not a claim of running the entire old revision. Recorder `4408c5c0d8e04eb2bd539874f78a6a51`. Restored the active iterator before green validation. |
+| C3-green              | `cargo test -p hanabi-cli --locked --test foundation_reporting`                                                          | Passed; six stacks, visible White2, redacted own cards and a White variant13 URL. Recorder `de8df9768dae4fe299c6015ec42ef4d2`.                                                                                                                                                                           |
+| C2-scoped             | `bash scripts/check-scoped.sh hanabi-protocol replay_link --lib`                                                         | Three codec tests passed; formatting and production check passed.                                                                                                                                                                                                                                        |
+| C3/C4-scoped          | `bash scripts/check-scoped.sh hanabi-cli --bin hanabi-engine`                                                            | Four unit tests passed, including sixth-suit and nested-step serialization; formatting and production check passed.                                                                                                                                                                                      |
+| Reporting regressions | `cargo test -p hanabi-cli --locked --test foundation_reporting --test replay_link --test explain`                        | 11 passed: four existing explain tests, one new physical report invariant and six link tests, including exact No Variant URL and all five expert deck/action round trips. Recorder `acc043624e7e44698ad6069a178e2145`.                                                                                   |
+
+An intermediate compile identified one omitted text-rendering caller of the new
+identity-formatting signature; threading the same universe through text
+projection rendering fixed it. The test assertions were preserved.
+
+Independent read-only review verified all9 IDs against official source and the
+CLI universe propagation/redaction boundaries. One minor finding, a five-suit
+text stack caption on a six-stack board, was corrected. These tests do not
+certify all historical/prospective redaction or H-Group admission semantics.
+
+The generator now emits this verified source-data replay link:
+[1, turn 46](https://hanab.live/shared-replay-json/315wmuob0tux2mfrfniw-zza2ajz3sqgih1ddvxny-bkc0kkpgrh1vsalpelqp-fuc,03lbehpb1b1afkfa-oafllcfiengbetgaeefj-esfr1afmfzfpkae1fvkb-e3e2fowc1cf0xctce7tb-efeqewxclaeCe4gbfcwc-e8wbeE,13,1#46).
+The fixture still contains the original discard/strike, not a regenerated game.
+
+Native `analyze` evidence is now available under ignored
+`target/foundation-audit/p0-native-admission.json` and `p0-native-owner.json`.
+Commands use the recovered fixture,
+`--convention h-group --h-group-level 4 --format json --lines 1 --move-time-ms 5000 --exact-world-limit 16 --exact-node-limit 256`,
+with `--live-turn 45 --candidate red:Bob` and `--live-turn 46` respectively. At
+live45 the selected recorded Red-to-Bob clue still has PlayClue / generatorProof
+/ Unrecognized / actionCoverage0, connectionSteps1 and responseSafety Pass. At
+live46 actual `plan_move` selects Play39 as `forcedRoot=true`
+(budgetExhausted=false); recorded Discard2 is notAdmitted and has no retained
+projection. The chosen forecast starts Alice Play39, Bob Purple-to-Cathy, Cathy
+Purple-to-Bob. The latter choices are conditional forecasts, not a proof that
+Bob must immediately play Red4. This is one real planner budget observation, not
+certification over all budgets.
+
+CI for the preceding inference repair `373cc57` is observed successful:
+[run40018886867](https://github.com/BarsukovSergey/hanab-engine/actions/runs/40018886867).
+Full local validation, new-checkpoint CI and the remaining semantic gates stay
+open. Next semantic batch: source-backed P0 admission/recipient/projection
+contracts and deterministic hard-obligation behavior across planner budgets,
+with a No Variant reviewed-position equivalent. The 48 whole-section statuses
+remain unchanged; tool correctness is supporting evidence, not row
+certification.
 
 ## Review, delivery and remaining gates
 

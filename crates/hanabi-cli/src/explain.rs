@@ -1,7 +1,7 @@
 //! Typed reports built from retained evidence, never a second inference run.
 use std::{collections::BTreeMap, process::Command, time::Instant};
 
-use hanabi_core::{Action, PlayerView};
+use hanabi_core::{Action, Card, IdentityUniverse, PlayerView};
 use hanabi_protocol::{HanabiLiveActionCommand, HanabiLiveReplay};
 use hanabi_search::{
     CandidateComparison, ConventionAnalysis, IdentitySet, PlannerActionEvaluation, PlannerConfig,
@@ -157,7 +157,7 @@ pub(crate) fn run(
             "{}",
             serde_json::to_string_pretty(&report).expect("serializable report")
         ),
-        OutputFormat::Text => print_text(&report),
+        OutputFormat::Text => print_text(&report, view.variant.identities()),
     }
     Ok(())
 }
@@ -190,40 +190,45 @@ fn fixture_action(replay: &HanabiLiveReplay, view: &PlayerView) -> Option<Action
     })
 }
 
-fn identities(domain: IdentitySet) -> String {
+fn identities(domain: IdentitySet, universe: &IdentityUniverse) -> String {
     domain
-        .iter()
-        .map(|card| {
-            format!(
-                "{}{}",
-                match card.suit.value() {
-                    0 => "r",
-                    1 => "y",
-                    2 => "g",
-                    3 => "b",
-                    4 => "p",
-                    _ => "?",
-                },
-                card.rank.number()
-            )
-        })
+        .iter_in(universe)
+        .map(identity_label)
         .collect::<Vec<_>>()
         .join("/")
+}
+
+fn identity_label(card: Card) -> String {
+    if card.suit.value() > 4 {
+        return format!("s{}:{}", card.suit.value(), card.rank.number());
+    }
+    format!(
+        "{}{}",
+        match card.suit.value() {
+            0 => "r",
+            1 => "y",
+            2 => "g",
+            3 => "b",
+            4 => "p",
+            _ => "?",
+        },
+        card.rank.number()
+    )
 }
 
 fn board(view: &PlayerView) -> Value {
     json!({"observer": view.observer.index(), "turn": view.turn + 1, "clueTokens": view.clue_tokens,
         "strikes": view.strikes, "deckSize": view.deck_size, "finalTurnsRemaining": view.final_turns_remaining,
         "stacks": view.play_stacks.iter().map(Vec::len).collect::<Vec<_>>(),
-        "discards": view.discard_pile.iter().map(|(id, card)| json!({"card":id.index(), "identity": identities(IdentitySet::singleton(*card))})).collect::<Vec<_>>(),
+        "discards": view.discard_pile.iter().map(|(id, card)| json!({"card":id.index(), "identity": identity_label(*card)})).collect::<Vec<_>>(),
         "hands": view.hands.iter().enumerate().map(|(player, hand)| json!({"player":player,
             "cards":hand.iter().enumerate().map(|(index, card)| json!({"card":card.id.index(), "slot":hand.len()-index,
-                "visibleIdentity": card.identity.map(|c| identities(IdentitySet::singleton(c))),
+                "visibleIdentity": card.identity.map(identity_label),
                 "clueFacts": format!("{:?}", card.clues)})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
 }
 
-fn knowledge(analysis: &ConventionAnalysis) -> Value {
-    crate::live_action::convention_inferences_json(analysis.inferences.clone())
+fn knowledge(analysis: &ConventionAnalysis, universe: &IdentityUniverse) -> Value {
+    crate::live_action::convention_inferences_json(analysis.inferences.clone(), universe)
 }
 
 fn exact(value: &PlannerActionEvaluation) -> Value {
@@ -299,8 +304,8 @@ fn candidates(
             }),
             semantic_evidence: clue.map_or(Value::Null, |c| json!({"recognition":c.recognition,"validation":c.validation.iter().map(|v|json!({"principle":v.principle,"verdict":format!("{:?}",v.verdict),"evidence":v.evidence,"exception":v.exception,"newCards":v.new_cards})).collect::<Vec<_>>(),
                 "recipientInterpretation": c.interpretation.as_ref().map(|i|json!({"focus":i.focus.index(),"focusWasChop":i.focus_was_chop,
-                    "kind":format!("{:?}",i.kind),"identities":identities(i.focus_identities),"playIdentities":identities(i.play_identities),
-                    "saveIdentities":identities(i.save_identities),"touched":i.touched.iter().map(|id|id.index()).collect::<Vec<_>>()})),
+                    "kind":format!("{:?}",i.kind),"identities":identities(i.focus_identities, view.variant.identities()),"playIdentities":identities(i.play_identities, view.variant.identities()),
+                    "saveIdentities":identities(i.save_identities, view.variant.identities()),"touched":i.touched.iter().map(|id|id.index()).collect::<Vec<_>>()})),
                 "safetyContinuation":c.safety_continuation.as_ref().map(|w| json!({
                     "firstTurn":w.first_turn + 1,
                     "actions":w.actions.iter().enumerate().map(|(i, s)|json!({"turn":w.first_turn as usize+i+1,"actor":s.actor.index(),"action":HanabiLiveActionCommand::from_engine_action(0,s.action)})).collect::<Vec<_>>(),
@@ -375,7 +380,12 @@ fn report(
     let result = &analysis.planner;
     let convention = &analysis.convention_analysis;
     let fixture = fixture_action(replay, view);
-    let mut planning = crate::live_action::planner_details_json(0, result.best_action, result);
+    let mut planning = crate::live_action::planner_details_json(
+        0,
+        result.best_action,
+        result,
+        view.variant.identities(),
+    );
     let roots = planning["rootActions"].as_array().expect("root array");
     let mut order = (0..result.root_actions.len()).collect::<Vec<_>>();
     order.sort_by_key(|index| {
@@ -431,7 +441,7 @@ fn report(
             turn: d.view.turn + 1,
             actor: d.view.observer.index(),
             board: board(&d.view),
-            knowledge: knowledge(&d.convention),
+            knowledge: knowledge(&d.convention, d.view.variant.identities()),
             selected: d
                 .selected
                 .map(|a| action_label(&d.view, &replay.players, a)),
@@ -449,7 +459,7 @@ fn report(
             alternatives: d.candidates.iter().map(|candidate|json!({"action":wire(candidate.action),
                 "label":action_label(&d.view,&replay.players,candidate.action),"selected":Some(candidate.action)==d.selected,
                 "projectionEvaluated":candidate.projection_evaluated,
-                "projection":crate::live_action::projection_evidence_json(0,&candidate.projection),
+                "projection":crate::live_action::projection_evidence_json(0,&candidate.projection, d.view.variant.identities()),
                 "endpoint":candidate.symbolic_line.position_value.map(crate::live_action::position_value_json),
                 "stopReason":format!("{:?}",candidate.symbolic_line.stop_reason)})).collect(),
             selection: if d.comparisons.iter().any(|c| c.reason == hanabi_search::ComparisonReason::MajorityCoverage) {
@@ -474,7 +484,7 @@ fn report(
         configuration: json!({"moveTimeMs":args.move_time_ms,"exactWorldLimit":args.exact_world_limit,"exactNodeLimit":args.exact_node_limit}),
         engine: revision(),
         board: board(view),
-        knowledge: knowledge(convention),
+        knowledge: knowledge(convention, view.variant.identities()),
         best_action: wire(result.best_action),
         best_label: action_label(view, &replay.players, result.best_action),
         fixture_action: fixture.map(wire),
@@ -596,7 +606,7 @@ fn print_comparison(c: &ComparisonReport) {
     }
 }
 
-fn print_text(report: &Report) {
+fn print_text(report: &Report, universe: &IdentityUniverse) {
     println!(
         "Hanab Live turn {} (after {} completed actions); actor {}",
         report.hanab_live_turn, report.completed_actions, report.players[report.actor]
@@ -644,7 +654,7 @@ fn print_text(report: &Report) {
             println!("Exact outcome: {}", line.exact);
         }
         if line.evaluation.projection_evaluated {
-            print_projection(&line.evaluation.projection, &report.players, "  ");
+            print_projection(&line.evaluation.projection, &report.players, "  ", universe);
         } else {
             println!("  Projection not evaluated; no complete forecast is available.");
         }
@@ -697,8 +707,16 @@ fn print_text(report: &Report) {
 }
 
 fn print_board(board: &Value, players: &[String]) {
+    let labels = (0..board["stacks"].as_array().unwrap().len())
+        .map(|index| {
+            ["r", "y", "g", "b", "p"]
+                .get(index)
+                .map_or_else(|| format!("s{index}"), |label| (*label).to_owned())
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     println!(
-        "Tokens {}; strikes {}; deck {}; stacks [r,y,g,b,p] {}",
+        "Tokens {}; strikes {}; deck {}; stacks [{labels}] {}",
         board["clueTokens"], board["strikes"], board["deckSize"], board["stacks"]
     );
     for (player, hand) in board["hands"].as_array().unwrap().iter().enumerate() {
@@ -725,6 +743,7 @@ fn print_projection(
     projection: &hanabi_search::ProjectionEvidence,
     players: &[String],
     indent: &str,
+    universe: &IdentityUniverse,
 ) {
     for step in &projection.steps {
         println!(
@@ -732,8 +751,10 @@ fn print_projection(
             step.turn + 1,
             players[step.projected.actor.index()],
             selector(step.projected.action, players),
-            step.interpreted_identities
-                .map_or_else(|| "not recorded".to_owned(), identities),
+            step.interpreted_identities.map_or_else(
+                || "not recorded".to_owned(),
+                |domain| identities(domain, universe)
+            ),
             step.consequences.clues_spent,
             step.consequences.clues_gained,
             step.consequences.score_gain,
@@ -752,7 +773,12 @@ fn print_projection(
             branch.touched,
             branch.turn + 1
         );
-        print_projection(&branch.continuation, players, &format!("{indent}  "));
+        print_projection(
+            &branch.continuation,
+            players,
+            &format!("{indent}  "),
+            universe,
+        );
     }
     for branch in &projection.discard_branches {
         println!(
@@ -761,7 +787,12 @@ fn print_projection(
             branch.identity,
             branch.turn + 1
         );
-        print_projection(&branch.continuation, players, &format!("{indent}  "));
+        print_projection(
+            &branch.continuation,
+            players,
+            &format!("{indent}  "),
+            universe,
+        );
     }
     for branch in &projection.private_branches {
         println!(
@@ -770,7 +801,12 @@ fn print_projection(
             branch.actor.index(),
             branch.turn + 1
         );
-        print_projection(&branch.continuation, players, &format!("{indent}  "));
+        print_projection(
+            &branch.continuation,
+            players,
+            &format!("{indent}  "),
+            universe,
+        );
     }
     if !projection.assumptions.is_empty() {
         println!("{indent}Assumptions: {:?}", projection.assumptions);
@@ -911,7 +947,11 @@ mod tests {
         };
         let rows = comparisons(&view, &replay.players, &[comparison], &[a.clone(), b]);
         assert!(rows[0].in_cycle);
-        let evidence = crate::live_action::projection_evidence_json(0, &a.projection);
+        let evidence = crate::live_action::projection_evidence_json(
+            0,
+            &a.projection,
+            view.variant.identities(),
+        );
         assert_eq!(evidence["clueBranches"][0]["turn"], 2);
         assert_eq!(evidence["clueBranches"][0]["touched"][0], 4);
         assert_eq!(evidence["privateBranches"][0]["turn"], 3);
