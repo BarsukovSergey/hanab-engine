@@ -158,9 +158,7 @@ impl ConventionFacts {
     }
 
     pub(super) fn apply_identity_effect(&mut self, signal: &HGroupSignal) {
-        for card in &signal.cards {
-            self.ensure_card(*card);
-        }
+        self.ensure_cards(&signal.cards);
         // A Bluff signal records the blind-played identity, not the identity
         // of its final focus card. Resolving it also supersedes any earlier
         // provisional direct Play claim on that focus.
@@ -340,6 +338,12 @@ impl ConventionFacts {
             return Err("convention identity claim has no candidate cards".to_owned());
         }
         Ok(())
+    }
+
+    fn ensure_cards(&mut self, cards: &[CardId]) {
+        for card in cards {
+            self.ensure_card(*card);
+        }
     }
 
     fn ensure_card(&mut self, card: CardId) {
