@@ -876,3 +876,116 @@ fn contract_hidden_finesse_after_prompt_uses_reordered_successor_domain() {
         ))
     );
 }
+
+// V5 contracts reuse these physical snapshots; they establish no variant
+// convention pack. Context's documented precedence is unchanged.
+#[test]
+fn contract_v5_context_dated_active_connector_and_observer_negative() {
+    for (variant, suit, next) in [
+        (VariantSpec::no_variant(), Suit::Red, Rank::Two),
+        (reordered(), Suit::new(5), Rank::Three),
+    ] {
+        let mut view = snapshot(variant, 3);
+        let focus = view.hands[1][0].id;
+        let identity = Card::new(suit, next);
+        view.hands[1][0].identity = Some(identity);
+        // Current stacks are later than the event being interpreted.
+        view.play_stacks[0] = vec![(CardId::new(50), Card::new(suit, Rank::One))];
+        let entry = clue_entry(1, Clue::Rank(next), focus);
+        let hands = layout(&view);
+        let facts = facts(&view);
+        let mut context = context(&view, &entry);
+        context.before.dynamic_stack_heights.fill(0);
+        context.after.hands = &hands;
+        context.after.facts = &facts;
+        let mut effects = Effects::default();
+        crate::h_group::recognition::apply_context_effects(
+            &context,
+            &view,
+            &mut effects.borrow(&[]),
+        );
+        let signal = effects
+            .signals
+            .iter()
+            .find(|s| s.kind == HGroupMoveKind::Context)
+            .unwrap();
+        assert_eq!(signal.identity, Some(identity));
+        let mut claims = ConventionFacts::default();
+        claims.apply_identity_effect(signal);
+        assert_eq!(claims.known_identity(focus), Some(identity));
+
+        // A future reveal of the observer's own card must not establish Context.
+        let hidden = view.hands[0][0].id;
+        view.hands[0][0].identity = Some(identity);
+        let hidden_entry = clue_entry(0, Clue::Rank(next), hidden);
+        let mut context = self::context(&view, &hidden_entry);
+        context.after.hands = &hands;
+        let mut effects = Effects::default();
+        crate::h_group::recognition::apply_context_effects(
+            &context,
+            &view,
+            &mut effects.borrow(&[]),
+        );
+        assert!(effects.signals.iter().next().is_none());
+    }
+}
+
+#[test]
+fn contract_v5_context_active_focus_inversion_preserves_existing_connection_and_fix() {
+    for variant in [VariantSpec::no_variant(), reordered()] {
+        let mut view = snapshot(variant, 3);
+        let old = view.hands[1][0].id;
+        let new = view.hands[1][1].id;
+        view.hands[1].truncate(2);
+        // Rank 1 is playable in both universes; rank 5 is not.
+        view.hands[1][0].clues = ClueFacts::default();
+        let mut entry = clue_entry(1, Clue::Suit(Suit::Red), new);
+        if let ObservedEvent::Clued { touched, .. } = &mut entry.event {
+            *touched = vec![old, new];
+        }
+        let mut context = context(&view, &entry);
+        // Active-ID fact masks deliberately exclude a directly playable old focus.
+        let five = Card::new(Suit::Red, Rank::Five);
+        context.before.facts[old.index()].add_positive_clue(Clue::Rank(Rank::Five));
+        for guard in [0, 1, 2] {
+            let mut effects = Effects::default();
+            let clues = vec![interpretation(&view, old, five, 1, Clue::Suit(Suit::Red))];
+            if guard == 1 {
+                effects.pending.start(
+                    entry.turn,
+                    obligation(
+                        2,
+                        vec![view.hands[2][0].id],
+                        Card::new(Suit::Red, Rank::One),
+                        old,
+                        five,
+                        HGroupConnectionKind::Finesse,
+                    ),
+                );
+            }
+            if guard == 2 {
+                push_signal(
+                    &mut effects.signals,
+                    &entry,
+                    PlayerId::new(0),
+                    Some(PlayerId::new(1)),
+                    HGroupMoveKind::FixClue,
+                    vec![old],
+                    None,
+                );
+            }
+            crate::h_group::recognition::apply_context_effects(
+                &context,
+                &view,
+                &mut effects.borrow(&clues),
+            );
+            assert_eq!(
+                effects
+                    .signals
+                    .has_at_turn(entry.turn, HGroupMoveKind::FocusInversion),
+                guard == 0
+            );
+            assert_eq!(effects.forced.contains(&new), guard == 0);
+        }
+    }
+}

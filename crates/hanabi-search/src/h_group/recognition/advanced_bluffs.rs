@@ -1,9 +1,9 @@
 use super::{
-    BluffTargetKind, Card, CardSet, Clue, ConnectionTransitionReason, HGroupClueKind,
-    HGroupMoveKind, HGroupRuleEffects, HGroupTurnContext, IdentitySet, ObservedEvent, PlayerView,
-    Rank, bluff_play_connects, bluff_target_kind_at, bluff_target_order_is_legal, chop,
-    finesse_position_id, focus, identity_of, is_critical_save_identity, is_playable_at,
-    is_trash_at, next_player, protected_cards, push_signal, same_turn_signal, was_clued_before,
+    BluffTargetKind, CardSet, Clue, ConnectionTransitionReason, HGroupClueKind, HGroupMoveKind,
+    HGroupRuleEffects, HGroupTurnContext, IdentitySet, ObservedEvent, PlayerView, Rank,
+    bluff_play_connects, bluff_target_kind_at, bluff_target_order_is_legal, chop,
+    finesse_position_id, focus, is_critical_save_identity, is_trash_at, next_player,
+    protected_cards, push_signal, same_turn_signal, was_clued_before,
 };
 use crate::h_group::identity::{
     connection_advance, connection_allows, connection_heights, connection_playable,
@@ -21,6 +21,7 @@ pub(in crate::h_group) fn apply_context_effects(
     // https://hanabi.github.io/level-12/#focus-inversion
     let entry = context.entry;
     let hands = context.after.hands;
+    let heights = &context.before.dynamic_stack_heights;
     let ObservedEvent::Clued {
         giver,
         target,
@@ -76,20 +77,22 @@ pub(in crate::h_group) fn apply_context_effects(
             context
                 .historical
                 .identity(card)
-                .is_some_and(|identity| is_trash_at(context.before.stack_heights, identity))
+                .is_some_and(|identity| connection_trash(view, heights, identity))
         })
         && newest_touched.is_some_and(|card| {
             context
                 .historical
                 .identity(card)
-                .is_some_and(|identity| is_playable_at(context.before.stack_heights, identity))
+                .is_some_and(|identity| connection_playable(view, heights, identity))
         });
     let directly_impossible_focus = old_focus.is_some_and(|old_focus| {
-        !IdentitySet::all().iter().any(|identity| {
-            clue.matches(identity)
-                && context.before.facts[old_focus.index()].allows(identity)
-                && is_playable_at(context.before.stack_heights, identity)
-        })
+        !IdentitySet::all_in(view.variant.identities())
+            .iter_in(view.variant.identities())
+            .any(|identity| {
+                crate::h_group::physical_clue_matches(view, (*clue).into(), identity)
+                    && connection_allows(view, context.before.facts[old_focus.index()], identity)
+                    && connection_playable(view, heights, identity)
+            })
     });
     // https://hanabi.github.io/level-12/#focus-inversion
     // A physically playable newly touched card does not invert focus when the
@@ -121,11 +124,13 @@ pub(in crate::h_group) fn apply_context_effects(
         && directly_impossible_focus
         && !old_focus_has_executable_connection
         && newest_touched.is_some_and(|card| {
-            IdentitySet::all().iter().any(|identity| {
-                clue.matches(identity)
-                    && context.before.facts[card.index()].allows(identity)
-                    && is_playable_at(context.before.stack_heights, identity)
-            })
+            IdentitySet::all_in(view.variant.identities())
+                .iter_in(view.variant.identities())
+                .any(|identity| {
+                    crate::h_group::physical_clue_matches(view, (*clue).into(), identity)
+                        && connection_allows(view, context.before.facts[card.index()], identity)
+                        && connection_playable(view, heights, identity)
+                })
         });
     if let (true, Some(old_focus), Some(new_focus)) =
         (stale_ones || focus_inversion, old_focus, newest_touched)
@@ -160,16 +165,18 @@ pub(in crate::h_group) fn apply_context_effects(
     let Some(focus) = touched.last().copied() else {
         return;
     };
-    let Some(identity) = identity_of(view, focus) else {
+    let Some(identity) = context.historical.identity(focus) else {
         return;
     };
-    let height = view.play_stacks[identity.suit.index()].len();
-    if usize::from(identity.rank.number()) <= height + 1 {
+    let Some(connector) = connection_predecessors(view, heights, identity)
+        .first()
+        .copied()
+    else {
         return;
-    }
-    let connector = Card::new(identity.suit, Rank::ALL[height]);
+    };
     let selfish = hands[giver.index()].iter().any(|card| {
-        effects.explicitly_clued.contains(card) && identity_of(view, *card) == Some(connector)
+        effects.explicitly_clued.contains(card)
+            && context.historical.identity(*card) == Some(connector)
     });
     push_signal(
         effects.signals,
