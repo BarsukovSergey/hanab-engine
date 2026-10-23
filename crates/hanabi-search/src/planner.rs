@@ -4873,11 +4873,11 @@ mod tests {
         let deductions = LogicalDeductions::new(state.view_for(PlayerId::new(0)).unwrap()).unwrap();
         let legal = deductions.view().legal_actions();
         let required = legal[0];
-        let stale = legal[1];
+        let unrelated_preference = legal[1];
         let analysis = ConventionAnalysis {
             actions: vec![
                 ConventionAction {
-                    action: stale,
+                    action: unrelated_preference,
                     preference: crate::ActionPreference::new(900, false),
                     reason: crate::ConventionActionReason::PromisedPlay,
                 },
@@ -4889,7 +4889,7 @@ mod tests {
                 },
             ],
             forced_action: Some(required),
-            preferred_action: Some(stale),
+            preferred_action: Some(unrelated_preference),
             ..ConventionAnalysis::default()
         };
         for completed in [false, true] {
