@@ -596,12 +596,12 @@ pub(in crate::h_group) fn apply_out_of_order_effects(
             return false;
         };
         if focus_identity.rank != Rank::Four
-            || !view
+            || view
                 .variant
                 .stack_suits()
                 .iter()
                 .position(|suit| *suit == focus_identity.suit)
-                .is_some_and(|suit| stack_heights[suit] == 0)
+                .is_none_or(|suit| stack_heights[suit] != 0)
         {
             return false;
         }

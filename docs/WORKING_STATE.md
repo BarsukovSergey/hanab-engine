@@ -249,8 +249,11 @@ The final combined `check-scoped.sh hanabi-search --test-only contract_v5_ --lib
 run passed all 13 contracts and formatting; the equivalent production-config
 check passed at the final Phantom boundary. One independent read-only review
 of `bd96055..6ce94f9` found no actionable material regression or critical missing
-regression preventing integration. PR CI is pending; focused local success
-alone is not a full-validation claim. Detailed local
+regression preventing integration. Integration is tracked in [PR #49](https://github.com/BarsukovSergey/hanab-engine/pull/49).
+Its first CI run found `clippy::nonminimal_bool` in the Out-of-Order empty-stack
+guard; the follow-up uses the equivalent `is_none_or` form. Live PR checks
+record the final integration result; focused local success alone is not a
+full-validation claim. Detailed local
 commands/logs and checkpoint notes are in ignored `target/workflow/m4-v5-*`.
 
 Legacy reducer stack/count arrays, V5 `Rank::ALL`/`Suit::ALL` loops, remaining
