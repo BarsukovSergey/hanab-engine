@@ -16,14 +16,15 @@ use super::{
     apply_post_event_rules, bluff_play_connects, bluff_target_kind_at, bluff_target_order_is_legal,
     build_convention_knowledge, chop, claimed_identities_at_clue,
     clue_permits_direct_play_deferral, elimination_finesse_card, finesse_position_id,
-    five_chop_moved_card, focus, interpretation, is_playable_at, loaded_connection_plan,
-    next_player, physical_clue_matches, primary, protected_cards, public_layers, push_signal,
+    five_chop_moved_card, focus, interpretation, loaded_connection_plan, next_player,
+    physical_clue_matches, primary, protected_cards, public_layers, push_signal,
     reconcile_connection_fact_lifecycles, record_declined_direct_plays, remove_card, rule_enabled,
     snapshot_good_touch_identities, snapshot_play_identities, snapshot_save_identities,
     subjective_action_context_before, was_clued_before, was_clued_before_with,
 };
 use crate::h_group::identity::{
-    connection_allows, connection_domain, connection_heights, connection_predecessors,
+    connection_advance, connection_allows, connection_domain, connection_heights,
+    connection_playable, connection_predecessors,
 };
 
 struct ReplayReducer {
@@ -33,7 +34,7 @@ struct ReplayReducer {
     clues: Vec<HGroupClueInterpretation>,
     public_removed: Vec<u8>,
     facts: Vec<ClueFacts>,
-    stack_heights: [u8; 5],
+    stack_heights: Vec<usize>,
     historical_deck_size: usize,
     pending_connections: ConnectionManager,
     already_playing: ProvenancedCardSet,
@@ -95,7 +96,7 @@ pub(super) fn replay_h_group_inner_uncached(
     let clues = Vec::<HGroupClueInterpretation>::new();
     let public_removed = vec![0_u8; view.variant.identities().identities().len()];
     let facts = vec![ClueFacts::default(); view.variant.identities().deck_size()];
-    let stack_heights = [0_u8; 5];
+    let stack_heights = vec![0; view.variant.stack_suits().len()];
     let historical_deck_size = view.deck_size
         + view
             .history
@@ -152,6 +153,20 @@ pub(super) fn replay_h_group_inner_uncached(
 }
 
 impl ReplayReducer {
+    /// Retained standard-suit metadata for unmigrated recognizers. Canonical
+    /// history storage and basic readers keep every active stack, including White.
+    fn standard_stack_heights(&self, view: &PlayerView) -> [u8; 5] {
+        Suit::ALL.map(|suit| {
+            view.variant
+                .stack_suits()
+                .iter()
+                .position(|active| *active == suit)
+                .map_or(0, |index| {
+                    u8::try_from(self.stack_heights[index]).expect("stack height fits in u8")
+                })
+        })
+    }
+
     #[allow(clippy::too_many_lines)]
     fn run(
         mut self,
@@ -248,8 +263,8 @@ impl ReplayReducer {
             let before = HGroupTurnSnapshot {
                 hands: self.hands.clone(),
                 facts: self.facts.clone(),
-                stack_heights: self.stack_heights,
-                dynamic_stack_heights: connection_heights(view, Some(entry.turn)),
+                stack_heights: self.standard_stack_heights(view),
+                dynamic_stack_heights: self.stack_heights.clone(),
                 clue_tokens: self.historical_clue_tokens,
                 deck_size: self.historical_deck_size,
                 early_game: self.early_game,
@@ -300,8 +315,8 @@ impl ReplayReducer {
                 after: HGroupTurnView {
                     hands: &self.hands,
                     facts: &self.facts,
-                    stack_heights: self.stack_heights,
-                    dynamic_stack_heights: connection_heights(view, Some(entry.turn + 1)),
+                    stack_heights: self.standard_stack_heights(view),
+                    dynamic_stack_heights: self.stack_heights.clone(),
                     clue_tokens: self.historical_clue_tokens,
                     deck_size: self.historical_deck_size,
                     early_game: self.early_game,
@@ -382,7 +397,11 @@ impl ReplayReducer {
                                             .facts()
                                             .known_identity_before(*card, entry.turn)
                                             .is_some_and(|identity| {
-                                                super::is_playable_at(self.stack_heights, identity)
+                                                connection_playable(
+                                                    view,
+                                                    &self.stack_heights,
+                                                    identity,
+                                                )
                                             })
                                     })
                                     .collect(),
@@ -582,7 +601,7 @@ impl ReplayReducer {
                 .iter()
                 .filter(|identity| {
                     physical_clue_matches(frame.view, public_clue, *identity)
-                        && !is_playable_at(self.stack_heights, *identity)
+                        && !connection_playable(frame.view, &self.stack_heights, *identity)
                         && frame.historical.has_unseen_copy(*identity, &self.hands)
                 })
             {
@@ -740,7 +759,7 @@ impl ReplayReducer {
                     target: *target,
                     clue: public_clue,
                     touched: touched.clone(),
-                    stack_heights: self.stack_heights,
+                    stack_heights: self.standard_stack_heights(view),
                     focus,
                     focus_was_chop: false,
                     kind: HGroupClueKind::Unrecognized,
@@ -1305,7 +1324,8 @@ impl ReplayReducer {
                     focus_identities
                         .iter()
                         .filter(|identity| {
-                            identity.rank.number() > self.stack_heights[identity.suit.index()]
+                            usize::from(identity.rank.number())
+                                > self.stack_heights[identity.suit.index()]
                                 && !gotten.iter().copied().any(|other| {
                                     if other == focus {
                                         return false;
@@ -1344,11 +1364,7 @@ impl ReplayReducer {
                 &basic_heights,
                 &basic_discarded,
             );
-            let score = self
-                .stack_heights
-                .iter()
-                .map(|height| usize::from(*height))
-                .sum::<usize>();
+            let score = self.stack_heights.iter().copied().sum::<usize>();
             let low_score_number_five = rule_enabled(profile, HGroupRuleId::FiveTech)
                         && *clue == Clue::Rank(Rank::Five)
                         // Level 19 turns off Play Clues, not ordinary 5 Saves.
@@ -1392,7 +1408,9 @@ impl ReplayReducer {
                         )
                         || convention_facts_before_clue
                             .known_identity(*card)
-                            .is_some_and(|identity| is_playable_at(self.stack_heights, identity)))
+                            .is_some_and(|identity| {
+                                connection_playable(view, &basic_heights, identity)
+                            }))
             });
             let interpretation_plan = ClueInterpretationPlan::resolve(PrimaryClueInputs {
                 clue: public_clue,
@@ -1750,7 +1768,7 @@ impl ReplayReducer {
                 target: *target,
                 clue: public_clue,
                 touched: touched.clone(),
-                stack_heights: self.stack_heights,
+                stack_heights: self.standard_stack_heights(view),
                 focus,
                 focus_was_chop,
                 kind,
@@ -2146,7 +2164,7 @@ impl ReplayReducer {
                 &self.explicitly_clued,
                 &self.forced_playable,
                 &self.pending_connections,
-                self.stack_heights,
+                self.standard_stack_heights(view),
             ) {
                 let clue = &mut self.clues[proof.clue_index];
                 self.pending_connections.cancel_where(
@@ -2331,7 +2349,7 @@ impl ReplayReducer {
         self.invisibly_clued.remove(card);
         self.already_playing.remove(card);
         if *successful {
-            self.stack_heights[identity.suit.index()] = identity.rank.number();
+            connection_advance(view, &mut self.stack_heights, *identity);
             if identity.rank == Rank::Five {
                 self.historical_clue_tokens = self
                     .historical_clue_tokens
@@ -2446,7 +2464,11 @@ impl ReplayReducer {
                                 .facts()
                                 .known_identity_before(*card, entry.turn)
                                 .is_some_and(|identity| {
-                                    super::is_playable_at(self.stack_heights, identity)
+                                    connection_playable(
+                                        view,
+                                        &frame.before.dynamic_stack_heights,
+                                        identity,
+                                    )
                                 })
                         })
                         .collect(),

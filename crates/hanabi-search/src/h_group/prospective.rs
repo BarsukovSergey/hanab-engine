@@ -1859,7 +1859,7 @@ pub(super) fn subjective_view_before_action(
             entry
         })
         .collect::<Vec<_>>();
-    let mut play_stacks = vec![Vec::<(CardId, Card)>::new(); 5];
+    let mut play_stacks = vec![Vec::<(CardId, Card)>::new(); source.variant.stack_suits().len()];
     let mut discard_pile = Vec::new();
     let mut clue_tokens = MAX_CLUE_TOKENS;
     let mut strikes = 0;
@@ -1872,7 +1872,13 @@ pub(super) fn subjective_view_before_action(
                 successful: true,
                 ..
             } => {
-                play_stacks[identity.suit.index()].push((card, identity));
+                let stack = source
+                    .variant
+                    .stack_suits()
+                    .iter()
+                    .position(|suit| *suit == identity.suit)
+                    .expect("historical play has an active stack");
+                play_stacks[stack].push((card, identity));
                 if identity.rank == Rank::Five {
                     clue_tokens = clue_tokens.saturating_add(1).min(MAX_CLUE_TOKENS);
                 }
