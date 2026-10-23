@@ -172,6 +172,63 @@ fn contract_generic_connection_no_variant_and_sixth_suit_prompt_finesse_parity()
 }
 
 #[test]
+fn contract_foundation_no_variant_finesse_rejects_visible_wrong_connector() {
+    // Algorithmic visibility invariant from L1 Finesse and Empathy, not an
+    // invented strategy replay. Every returned step must respect known faces.
+    // https://hanabi.github.io/beginner/finesse/#finesse-position
+    for players in [3, 4] {
+        let mut view = snapshot(VariantSpec::no_variant(), players);
+        let wrong = Card::new(Suit::Blue, Rank::Two);
+        view.hands[1].last_mut().unwrap().identity = Some(wrong);
+        let connector = view.hands[1].last().unwrap().id;
+        let focus = view.hands[2][0].id;
+        let (steps, _) = plan(
+            &view,
+            PlayerId::new(0),
+            PlayerId::new(2),
+            focus,
+            Card::new(Suit::Red, Rank::Two),
+            Clue::Suit(Suit::Red).into(),
+            &CardSet::default(),
+            &[0; 5],
+        );
+        assert!(
+            !steps
+                .iter()
+                .any(|step| step.cards.contains(&connector) && step.expected != wrong),
+            "visible contradiction: {steps:?}"
+        );
+    }
+}
+
+#[test]
+fn contract_foundation_no_variant_finesse_allows_hidden_own_connector() {
+    for players in [3, 4] {
+        let mut view = snapshot(VariantSpec::no_variant(), players);
+        view.observer = PlayerId::new(1);
+        let connector = view.hands[1].last().unwrap().id;
+        let focus = view.hands[2][0].id;
+        let (steps, _) = plan(
+            &view,
+            PlayerId::new(0),
+            PlayerId::new(2),
+            focus,
+            Card::new(Suit::Red, Rank::Two),
+            Clue::Suit(Suit::Red).into(),
+            &CardSet::default(),
+            &[0; 5],
+        );
+        assert!(
+            steps.iter().any(|step| step.actor == view.observer
+                && step.cards == [connector]
+                && step.expected == Card::new(Suit::Red, Rank::One)
+                && step.kind == HGroupConnectionKind::Finesse),
+            "hidden blind response missing: {steps:?}"
+        );
+    }
+}
+
+#[test]
 fn contract_generic_connection_prompt_precedes_earlier_finesse_in_six_player_order() {
     let mut view = snapshot(VariantSpec::from_catalog(VariantId::Rainbow6Suits), 6);
     let one = Card::new(Suit::new(5), Rank::One);
