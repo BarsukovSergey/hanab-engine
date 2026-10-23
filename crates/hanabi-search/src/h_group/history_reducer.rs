@@ -20,8 +20,7 @@ use super::{
     next_player, physical_clue_matches, primary, protected_cards, public_layers, push_signal,
     reconcile_connection_fact_lifecycles, record_declined_direct_plays, remove_card, rule_enabled,
     snapshot_good_touch_identities, snapshot_play_identities, snapshot_save_identities,
-    standard_h_group_clue, subjective_action_context_before, was_clued_before,
-    was_clued_before_with,
+    subjective_action_context_before, was_clued_before, was_clued_before_with,
 };
 use crate::h_group::identity::{
     connection_allows, connection_domain, connection_heights, connection_predecessors,
@@ -653,7 +652,10 @@ impl ReplayReducer {
             .map(usize::from)
             .collect::<Vec<_>>();
         let public_clue = GenericClue::from(*clue);
-        let clue = &standard_h_group_clue(&view.variant, public_clue);
+        // History already has checked, representable Clue labels. Keep that
+        // label for literal convention comparisons; physical domains/touching
+        // use public_clue and the original variant. The standard-only semantic
+        // adapter remains the gate for callers requesting No Variant meanings.
 
         let priority_load = if rule_enabled(profile, HGroupRuleId::Priority) {
             super::recognition::retract_loaded_priority(
@@ -1163,18 +1165,19 @@ impl ReplayReducer {
             // prove that sequence with the same planner that will
             // materialize its obligations, not a special clue score.
             // https://hanabi.github.io/level-18/#the-elimination-finesse
-            for identity in focus_identities.without(play_identities).iter() {
-                let height = self.stack_heights[identity.suit.index()];
-                if identity.rank.number() <= height + 2
-                    || !rule_enabled(profile, HGroupRuleId::Elimination)
+            for identity in focus_identities
+                .without(play_identities)
+                .iter_in(view.variant.identities())
+                .filter(|_| rule_enabled(profile, HGroupRuleId::Elimination))
+            {
+                let missing = connection_predecessors(view, &basic_heights, identity);
+                if missing.len() <= 1
                     || !convention_facts_before_clue
                         .identity_claims()
                         .iter()
                         .any(|claim| {
                             claim.source == HGroupMoveKind::Elimination
-                                && claim.identity.suit == identity.suit
-                                && claim.identity.rank.number() > height
-                                && claim.identity.rank.number() < identity.rank.number()
+                                && missing.contains(&claim.identity)
                         })
                 {
                     continue;
@@ -1184,8 +1187,7 @@ impl ReplayReducer {
                     &self.pending_connections,
                     &self.invisibly_clued,
                 );
-                let complete = ((height + 1)..identity.rank.number()).all(|rank| {
-                    let expected = Card::new(identity.suit, Rank::ALL[usize::from(rank - 1)]);
+                let complete = missing.iter().copied().all(|expected| {
                     self.pending_connections.identity_is_queued(expected)
                         || interpretation::snapshot_accounted(
                             expected,
@@ -1209,15 +1211,19 @@ impl ReplayReducer {
                 let evidenced = hypothesis.connection_steps.iter().all(|step| {
                     step.cards.last().is_some_and(|card| {
                         historical.identity(*card) == Some(step.expected)
-                            || self.facts[card.index()].identity_mask()
-                                == 1 << step.expected.index()
+                            || self.facts[card.index()].identity_mask_in(&view.variant)
+                                == super::identity::connection_bit(view, step.expected)
                             || convention_facts_before_clue.known_identity(*card)
                                 == Some(step.expected)
                             || (step.actor == view.observer
                                 && *giver != view.observer
                                 && step.kind == HGroupConnectionKind::Finesse
                                 && step.cards.iter().all(|candidate| {
-                                    self.facts[candidate.index()].allows(step.expected)
+                                    connection_allows(
+                                        view,
+                                        self.facts[candidate.index()],
+                                        step.expected,
+                                    )
                                 })
                                 && historical.has_unseen_copy(step.expected, &self.hands))
                     })
@@ -1231,7 +1237,7 @@ impl ReplayReducer {
                             step.expected,
                             &convention_facts_before_clue,
                             &self.chop_moved,
-                            |card| self.facts[card.index()].allows(step.expected),
+                            |card| connection_allows(view, self.facts[card.index()], step.expected),
                         )
                         .is_some_and(|card| step.cards == [card])
                 });
@@ -1659,8 +1665,12 @@ impl ReplayReducer {
                 .copied()
                 .map(|card| {
                     let direct = historical.identity(card).map_or_else(
-                        || IdentitySet::from_mask(self.facts[card.index()].identity_mask()),
-                        IdentitySet::singleton,
+                        || {
+                            IdentitySet::from_bits(
+                                self.facts[card.index()].identity_mask_in(&view.variant),
+                            )
+                        },
+                        |identity| connection_domain(view, identity),
                     );
                     let good_touch = snapshot_good_touch_identities(
                         card,
@@ -1691,19 +1701,23 @@ impl ReplayReducer {
                 .collect::<Vec<_>>();
             let completing_suit = (matches!(kind, HGroupClueKind::Play)
                 && play_identities.len() == 1)
-                .then(|| play_identities.iter().next())
+                .then(|| play_identities.iter_in(view.variant.identities()).next())
                 .flatten()
                 .filter(|identity| {
                     *clue == Clue::Suit(identity.suit)
                         && identity.rank == Rank::Five
-                        && is_playable_at(self.stack_heights, *identity)
+                        && super::identity::connection_playable(view, &basic_heights, *identity)
                 });
             let non_focus_trash_identities = non_focus_identities
                 .iter()
                 .filter_map(|(card, good_touch)| {
                     let direct = historical.identity(*card).map_or_else(
-                        || IdentitySet::from_mask(self.facts[card.index()].identity_mask()),
-                        IdentitySet::singleton,
+                        || {
+                            IdentitySet::from_bits(
+                                self.facts[card.index()].identity_mask_in(&view.variant),
+                            )
+                        },
+                        |identity| connection_domain(view, identity),
                     );
                     let trash = if completing_suit.is_some() {
                         direct.without(focus_identities).without(*good_touch)
