@@ -59,6 +59,55 @@ when evaluating whether the actual bot can play a coherent White game.
 **A completed game is NOT proof of official White H-Group semantics**
 until variant-specific meanings have been checked against those sources.
 
+## Read-only audit clarifications (2026-10-23)
+
+The read-only audit of main `90b5b1c3` confirms the proposed
+`physical_view_for -> try_standard -> InformationSet::new ->
+SupportedConvention::HGroup(profile) -> plan_move` uses the existing
+H-Group inference, action generation, and planner. This is a technically
+plausible *offline* White-only boundary, not a proven running game.
+Implement checkpoint 1 first and report the actual first failing call.
+No replacement policy, scripted action, or silent fallback.
+
+Specific directly relevant known hazards, **not blanket refactor requests**:
+
+- `crates/hanabi-search/src/h_group/history_reducer.rs` has
+  `stack_heights: [u8; 5]` and `reduce_play` writes
+  `self.stack_heights[identity.suit.index()]` after successful plays.
+  A White sixth-suit successful play can index out of bounds. Repair
+  event-time historical bookkeeping and direct reached consumers when
+  exercised; do not silently skip the sixth-suit update.
+- `crates/hanabi-search/src/h_group.rs::standard_h_group_clue`
+  explicitly asserts No Variant. `inverse_planning.rs`,
+  `public_layers.rs`, and `recognition/late_game.rs` contain callers.
+  Confirm which paths the selected Level1/Level4 replay actually reaches.
+  For White-compatible labels, any narrower adapter must prove literal
+  touching parity and semantic validity at its caller, while preserving
+  unsupported-variant rejection elsewhere. Do **not** simply remove the
+  global assertion for every variant.
+- `crates/hanabi-search/src/planner.rs::solve_partitioned` calls
+  `FullState::view_for` on simulated worlds. That method intentionally
+  returns None for all non-No-Variant states. If exact search is reached,
+  use a checked White-compatible observer projection rather than
+  turning White into No Variant, accepting hidden truth, or silently
+  misreporting exact-search success.
+- `planner.rs::score_ceiling` uses five suit/rank arrays; additional
+  perfect-score/terminal proofs use fixed 25/24 thresholds although
+  White (6 Suits) has a 30-point ceiling. For this White offline pilot,
+  explicitly set `PlanningObjective::ExpectedScore`, and fix directly
+  reached wrong-variant score paths or fail clearly; do not claim that
+  reducing search limits alone makes them correct. Keep No Variant
+  perfect-score parity unchanged.
+
+Level1 establishes first-action plumbing, not White H-Group compatibility.
+Evaluate Level4 only against supported, sourced semantics. The official
+White 3/4 Save Loaded Play Clue Assumption must be independently checked
+and its implementation status reported, not silently inferred from the
+physical clue match. Log whether each evaluated move used symbolic or
+exact planning, any budget fallback, and which documented semantic
+assumptions the move required. A timer stop with no completed game
+remains INCOMPLETE.
+
 ## Do the shortest vertical, not comprehensive framework work
 
 ### Checkpoint 1 — one real H-Group choice
