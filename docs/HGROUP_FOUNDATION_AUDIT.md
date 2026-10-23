@@ -1,7 +1,9 @@
 # H-Group foundation audit: No Variant and cumulative Levels 1–4
 
-Status: **OPEN, checkpoint 1 in progress** (2026-10-23). This is a coverage map
-and baseline, not certification. See
+Status: **PAUSED at the user's request** (2026-10-24), checkpoint 1 incomplete.
+No automatic continuation is authorized. Full 48-section certification is no
+longer the immediate objective; future work requires separately bounded tasks.
+This is a coverage map and baseline, not certification. See
 [the Goal](HGROUP_FOUNDATION_CORRECTNESS_GOAL.md).
 
 ## Revisions and authority
@@ -81,7 +83,7 @@ Perspective boundaries:
 | L1-09 | [The Early Game](https://hanabi.github.io/level-1/#the-early-game)                                                                                 | Before first chop discard, exhaust available Play/Save Clues, excluding ordinary Tempo.                         | L1+                         | `history_reducer.rs`; `decision.rs`                                                          | Available valid Play Clue prevents premature chop discard.                                   | Do not count illegal/unfunded clues or require L9-only stall rules.                                                                                 | E/O; actual action and chop at that time.                        | T-OCM red; missing focused phase pair                     | NOT YET TESTED | Baseline failure compares two clues, not clue versus discard; do not overinterpret it.            |
 | L1-10 | [The 5 Save](https://hanabi.github.io/level-1/#the-5-save)                                                                                         | First rank-5 touch on chop is Save.                                                                             | L1+                         | `primary.rs::PrimaryClueResolution::direct_save`                                             | Rank-5 on untouched chop protects it.                                                        | Color touching a 5 is not classified 5 Save.                                                                                                        | E/O/V; pre-clue chop.                                            | T-PRIMARY; missing historical boundary                    | NOT YET TESTED | Separate critical/color and later stall interpretations.                                          |
 | L1-11 | [The 2 Save](https://hanabi.github.io/level-1/#the-2-save)                                                                                         | Rank-2 chop Save obeys visible-copy rule and double-chop exception.                                             | L1+                         | `primary.rs`; `turn_context.rs`                                                              | Either duplicate on double chops may be saved.                                               | Visible other copy off chop forbids ordinary 2 Save; color only critical Save.                                                                      | E/O/V; visibility is relative to historical giver.               | T-PRIMARY, T-HIGH; missing double-chop/early obligation   | NOT YET TESTED | Four-player and own-hidden-copy controls required.                                                |
-| L1-12 | [The Prompt](https://hanabi.github.io/level-1/#the-prompt)                                                                                         | Previously clued unknown connector; leftmost eligible; not an already due play.                                 | L1+                         | `h_group.rs::schedule_connection`; `action_schedule.rs`                                      | Unknown compatible clued card becomes due connector.                                         | Already-playing card is not a Prompt; impossible visible card cannot connect.                                                                       | E/O/V across all actors.                                         | T-CONN, T-P0; full admission/executor chain pending       | NOT YET TESTED | C1 repairs a visible contradiction; remaining Prompt semantics not certified.                     |
+| L1-12 | [The Prompt](https://hanabi.github.io/level-1/#the-prompt)                                                                                         | Previously clued unknown connector; leftmost eligible; not an already due play.                                 | L1+                         | `h_group.rs::schedule_connection`; `action_schedule.rs`                                      | Unknown compatible clued card becomes due connector.                                         | Already-playing card is not a Prompt; impossible visible card cannot connect.                                                                       | E/O/V across all actors.                                         | T-CONN, T-P0, T-PROMPT; full pipeline pending             | NOT YET TESTED | Ordering, prior knowledge and successful alternatives covered; complete pipeline remains open.    |
 | L1-13 | [The Finesse](https://hanabi.github.io/level-1/#the-finesse)                                                                                       | Blind connecting play demonstrates the promise promptly.                                                        | L1+                         | `h_group.rs::schedule_connection`; `action_schedule.rs`                                      | Own hidden finesse position may carry the required predecessor.                              | Different player's visibly wrong identity cannot be the predecessor.                                                                                | E/O/V; indistinguishable hidden worlds agree.                    | T-CONN, T-HIGH, T-P0; complete actor matrix pending       | NOT YET TESTED | C1 red/green repair, own-hidden control and one conditional due response; full rule remains open. |
 | L1-14 | [Finesse Position](https://hanabi.github.io/level-1/#finesse-position)                                                                             | Leftmost unclued position at clue time.                                                                         | L1+                         | `h_group.rs::schedule_connection`; `history_reducer.rs`                                      | Original connector follows its card ID after drawing shifts slots.                           | New draw cannot replace old promised card; L5 queued rules stay gated.                                                                              | E/O/P; original hand membership.                                 | T-CONN; missing L1–4 versus L5 controls                   | NOT YET TESTED | Position and due-time tests needed beyond identity matching.                                      |
 | L1-15 | [Finessed Cards](https://hanabi.github.io/level-1/#finessed-cards)                                                                                 | Finessed cards are already gotten for later focus.                                                              | L1+                         | `facts.rs`; `recognition.rs`                                                                 | Touching gotten finesse and a new card focuses the new card.                                 | Invisible clue does not become literal physical color/rank knowledge.                                                                               | E/O/P; promise lifetime.                                         | T-CONN, T-FC; missing focus lifecycle pair                | NOT YET TESTED | Protection, literal facts and connection promises must remain distinct.                           |
@@ -140,6 +142,12 @@ checks. No existing test/assertion/fixture has been modified.
 | T-FIX       | `reviewed_cancelled_identity_cannot_turn_a_fresh_clue_into_a_fix`                                                                                                                                                                                                                                                                                                                                                                                                         | Not run; further multi-card and stop-clue coverage missing.                                                                                                                                                     |
 | T-OCM       | `second_replay_order_chop_move_protects_alices_red_two`                                                                                                                                                                                                                                                                                                                                                                                                                   | **B3 failed** at `tests/learning_rules.rs:145`, preferred-action assertion. Assertions for Alice's card0 protection, signal, rule and mutation passed before this point; later Bob assertions were not reached. |
 | T-CM-PROMPT | `replay::fourth_replay_two_save_does_not_invent_a_prompt_on_a_chop_moved_card`                                                                                                                                                                                                                                                                                                                                                                                            | Not run; reviewed position candidate for L4-07.                                                                                                                                                                 |
+
+T-PROMPT denotes the three new
+`generic_connections::contract_foundation_prompt_*` contracts described in the
+source-backed Prompt continuation below. They cover algorithm ordering,
+exclusion, historical facts and successful alternatives; they do not yet
+discharge the complete admission/executor/recipient contract.
 
 T-P0 denotes the five `contract_foundation_` tests listed in the checkpoint1
 section. C1-scoped runs all five. These are partial behavioral evidence for rows
@@ -567,6 +575,85 @@ official examples/reviewed No Variant positions, including impossible
 connectors, already-due plays and recipient consequences. Quantify the P0
 recipient proof gap over valid giver-hand worlds before calling admission safe
 or declaring a defect; differing-information labels alone are insufficient.
+
+## Checkpoint 1 continuation: source-backed Prompt contracts
+
+The three new `generic_connections::contract_foundation_prompt_*` tests use the
+pinned official
+[L1 Prompt paragraph](https://github.com/hanabi/hanabi.github.io/blob/dd55b51aa622f709059a17e0d6afc2adb8402408/docs/level-1.mdx#the-prompt),
+[beginner Prompt explanation](https://github.com/hanabi/hanabi.github.io/blob/dd55b51aa622f709059a17e0d6afc2adb8402408/docs/beginner/prompt.mdx)
+and its `prompt/prompt-4.yml` diagram as independent authority. They supply
+partial algorithm snapshots, not invented game histories or optimal moves. They
+cover 32 configurations across cumulative Levels1–4:
+
+- **Ordering and exclusion:** in 3-/4-player inputs, unknown red-clued
+  candidates preserve left-to-right order; an already-due candidate cannot
+  become a new Prompt candidate.
+- **Successful alternatives:** the official Blue3, Green3, Red3 sequence
+  preserves one Prompt promise and its provenance through both alternative
+  plays. Red4 is physically unplayable until Red3 succeeds. The source's
+  Yellow/Purple stacks remain on1 while Red/Blue/Green are on2; thus a prior
+  rank3-only card was not already certainly playable.
+- **Event-time knowledge:** for a conditional Red4 Self-Prompt interpretation,
+  the same Red clue also retouches a previously rank3-clued connector. Prior
+  rank3-only knowledge permits a new Prompt; prior Red+3 knowledge already
+  establishes playable Red3 and must not generate a new Prompt. Current facts
+  are identical; only `facts_before` differ. Other stacks on1 preserve the prior
+  rank3 uncertainty. This asserts neither the complete recipient superposition
+  nor a particular best action.
+
+Independent review caught a draft-test prerequisite error: `[2;5]` stacks made
+every rank3-only candidate already playable. Restoring the exact source stack
+context fixed the oracle before delivery, without changing production code. An
+intermediate scoped run passed its two then-compiled tests but failed formatting
+while the third draft test was being added (recorder
+`32510588f5a446a6928170b024d66f43`); the final coherent version is revalidated.
+The final contracts do not prove complete giver admission, actor execution or
+recipient inference; L1-12 remains NOT YET TESTED at whole-section level.
+
+The reviewed p4v0s1 live32 negative authority
+`t32-known-purple-three-is-not-a-new-prompt` still matches position key
+`4d46a4f32b10bf5927ab18ee5c401156a76de5ad2748a019641ed94ded99d327`. Its existing
+Max regression remains the human-reviewed compatibility witness.
+
+Inspection also found unconditional later-visible duplicate selection with L5
+Ambiguous Finesse comments. Independent review distinguishes the initial
+possibility of a visible connector from the advanced deduction after an earlier
+player's decline. L1 does not independently specify a replacement tie-break for
+this ambiguous case. No speculative gate or forced earlier play was added;
+post-decline lower-level certification remains an open contract. The existential
+unknown-own fallback must not be deleted: ordinary hidden Finesses need it.
+
+CI for `3d88dd4` is observed failed only on `similar_names` for the new test's
+`state`/`stale` local names:
+[run40023182349](https://github.com/BarsukovSergey/hanab-engine/actions/runs/40023182349).
+The mechanical correction renames the preference variable and preserves every
+assertion. A crate-scoped strict Clippy run is justified here by that observed
+failure; it is not a full repository-validation claim.
+
+Final delivery validation:
+`bash scripts/check-scoped.sh hanabi-search generic_connections:: --lib` passed
+all 16 module tests, Rust formatting and the production crate check (recorder
+`8f132e436a9c46dbb103b1e353972fc9`). The focused crate Clippy command
+`cargo clippy -p hanabi-search --lib --tests --locked -- -D warnings` also
+passed (recorder `e20450214027475693a42b48a212a25a`). It ran before the final
+negative-oracle correction, which only removed the unsupported requirement that
+excluding an already-due candidate must create a Prompt on another card. That
+earlier test was already green; review corrected its authority, not its
+compatibility with the implementation. The final module rerun includes this
+correction. Existing test assertions were preserved.
+
+Independent read-only review verified all three final contracts, source stack
+prerequisites, `facts`/`facts_before` order and partial-evidence claims; no
+blocking finding remained. No new production semantic defect was demonstrated in
+this batch. The existing reviewed Max Prompt regression was not rerun in this
+delivery; its provenance anchor was checked only.
+
+Mechanical CI repair `b5e28da` is pushed and its CI is observed successful:
+[run40039622412](https://github.com/BarsukovSergey/hanab-engine/actions/runs/40039622412).
+This is not full local validation. All 48 whole-section dispositions and the
+known red B3 baseline remain unresolved. The user's stop instruction cancels
+automatic execution of the previously listed next steps; PR54 stays Draft.
 
 ## Review, delivery and remaining gates
 
