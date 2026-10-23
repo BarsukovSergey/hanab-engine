@@ -132,3 +132,165 @@ fn contract_physical_touch_and_literal_facts_preserve_every_standard_clue() {
         }
     }
 }
+// Physical/inference infrastructure contract, not a convention/optimal-move ruling.
+#[test]
+#[allow(clippy::too_many_lines)] // Keep one legal trace and its observer checks together.
+fn contract_v5_r2_legal_rainbow_clue_discard() {
+    let variant = VariantSpec::from_catalog(VariantId::Rainbow6Suits);
+    let deck: Vec<_> = variant
+        .identities()
+        .identities()
+        .iter()
+        .flat_map(|identity| {
+            std::iter::repeat_n(
+                Card::new(identity.suit, identity.rank),
+                usize::from(identity.copies),
+            )
+        })
+        .collect();
+    let mut state = FullState::new_variant(3, variant.clone(), deck.clone()).unwrap();
+    let mut reconstructed = FullState::new_variant(3, variant.clone(), deck).unwrap();
+    let view = state.physical_view_for(PlayerId::new(0)).unwrap();
+    let rank = view.hands[1][0].identity.unwrap().rank;
+    let label = GenericClue::Rank(ClueRank::new(rank.number()));
+    let action = hanabi_core::PhysicalAction::Clue {
+        target: PlayerId::new(1),
+        clue: label,
+    };
+    assert_eq!(state.clue_tokens(), 8);
+    state.apply_physical(action).unwrap();
+    reconstructed.apply_physical(action).unwrap();
+    let before_discard = state.clone();
+    let discarded = state.hands()[1][0];
+    let revealed = view.hands[1][0].identity.unwrap();
+    state.apply(Action::Discard(discarded)).unwrap();
+    reconstructed
+        .apply(Action::Discard(reconstructed.hands()[1][0]))
+        .unwrap();
+    let profile = HGroupProfile::Level(HGroupLevel::Level1);
+    for observer in (0..3).map(PlayerId::new) {
+        let physical = state.physical_view_for(observer).unwrap();
+        assert_eq!(physical, reconstructed.physical_view_for(observer).unwrap());
+        assert_eq!(physical.variant, variant);
+        assert!(
+            physical.hands[observer.index()]
+                .iter()
+                .all(|card| card.identity.is_none())
+        );
+        let view = physical.clone().try_standard().unwrap();
+        assert_eq!(view.variant, variant);
+        assert_eq!(view.history.len(), 3); // Clue, discard, draw; no filtered events.
+        assert_eq!(view.clue_tokens, 8);
+        let ObservedEvent::Clued {
+            giver,
+            target,
+            clue,
+            touched,
+            untouched,
+        } = &view.history[0].event
+        else {
+            panic!("missing clue")
+        };
+        assert_eq!(
+            (*giver, *target, GenericClue::from(*clue)),
+            (PlayerId::new(0), PlayerId::new(1), label)
+        );
+        assert!(touched.contains(&discarded));
+        assert_eq!(touched.len() + untouched.len(), 5);
+        assert!(
+            matches!(view.history[1].event, ObservedEvent::Discarded { player, card, identity }
+            if player == PlayerId::new(1) && card == discarded && identity == revealed)
+        );
+        assert!(
+            matches!(view.history[2].event, ObservedEvent::Drew { player, identity, .. }
+            if player == PlayerId::new(1) && identity.is_none() == (observer == player))
+        );
+        assert_eq!(view.history[0].turn, 0);
+        assert_eq!(view.history[1].turn, 1);
+        let prior = before_discard
+            .physical_view_for(observer)
+            .unwrap()
+            .try_standard()
+            .unwrap();
+        assert_eq!(prior.history.len(), 1);
+        assert_eq!(prior.clue_tokens, 7);
+        assert!(prior.discard_pile.is_empty());
+        assert_eq!(view.discard_pile, vec![(discarded, revealed)]);
+        let before = replay_h_group(&LogicalDeductions::new(prior.clone()).unwrap(), profile);
+        let deductions = LogicalDeductions::new(view.clone()).unwrap();
+        let replay = replay_h_group(&deductions, profile);
+        replay.validate().unwrap();
+        assert_eq!(
+            replay.hands,
+            view.hands
+                .iter()
+                .map(|hand| hand.iter().map(|card| card.id).collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(replay.clues.len(), 1);
+        // Later public identity/replacement draw must not rewrite clue-time meaning.
+        assert_eq!(replay.clues, before.clues);
+        assert_eq!(replay.clues[0].clue, label);
+        assert_eq!(&replay.clues[0].touched, touched);
+        // The causal journal stores materialized changes, not no-op draw events.
+        assert_eq!(replay.transitions.len(), 1);
+        assert_eq!(
+            replay
+                .transitions
+                .iter()
+                .map(|event| event.turn)
+                .collect::<Vec<_>>(),
+            vec![0]
+        );
+        for card in touched {
+            assert!(
+                replay.transitions[0]
+                    .delta
+                    .card_changes
+                    .iter()
+                    .any(|change| change.card == *card
+                        && change.fact
+                            == super::super::transition::MaterializedCardFact::ExplicitlyClued
+                        && change.kind == super::super::transition::FactChangeKind::Added)
+            );
+        }
+        assert!(!replay.cards.already_playing.contains(&discarded));
+        assert_eq!(
+            super::super::identity::connection_heights(&view, Some(1)),
+            vec![0; 6]
+        );
+        if observer == PlayerId::new(1) {
+            assert_eq!(
+                super::super::HistoricalView::new(&view, 1).identity(discarded),
+                None
+            );
+            assert_eq!(
+                super::super::HistoricalView::new(&view, 2).identity(discarded),
+                Some(revealed)
+            );
+            let logical = LogicalDeductions::new(prior).unwrap();
+            let domain = logical.possible_identities(discarded).unwrap();
+            let sixth = variant
+                .identities()
+                .identities()
+                .iter()
+                .find(|identity| identity.suit == variant.stack_suits()[5] && identity.rank == rank)
+                .unwrap();
+            assert!(domain.contains_id(sixth.id));
+            assert!(
+                before.clues[0]
+                    .non_focus_identities
+                    .iter()
+                    .any(|(_, identities)| identities.contains_id(sixth.id))
+            );
+            assert!(
+                domain
+                    .iter_in(variant.identities())
+                    .all(|card| card.rank == rank)
+            );
+            // Literal rank evidence alone does not disclose a suit. Convention
+            // focus may be narrower; its chronology is checked above by parity.
+            assert!(domain.len() > 1);
+        }
+    }
+}
