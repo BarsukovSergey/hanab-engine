@@ -1144,3 +1144,154 @@ fn contract_v5_duplication_extra_value_uses_origin_heights() {
         );
     }
 }
+
+#[test]
+fn contract_v5_elimination_active_copy_count_resolution_and_constraints() {
+    for (variant, suit, copies) in [
+        (VariantSpec::no_variant(), Suit::Red, 3),
+        (reordered(), Suit::new(5), 4),
+    ] {
+        let mut view = snapshot(variant, 3);
+        let identity = Card::new(suit, Rank::One);
+        let discarded = view.hands[0][0].id;
+        let candidate = view.hands[0][1].id;
+        view.hands[0].truncate(2);
+        // Leave exactly one physical copy after this discard. Reordered
+        // variants deliberately disagree with Rank::copies().
+        for turn in 0..copies - 2 {
+            view.history.push(ObservedHistoryEntry {
+                turn,
+                event: ObservedEvent::Discarded {
+                    player: PlayerId::new(2),
+                    card: CardId::new(40 + turn as usize),
+                    identity,
+                },
+            });
+        }
+        let entry = ObservedHistoryEntry {
+            turn: 4,
+            event: ObservedEvent::Discarded {
+                player: PlayerId::new(0),
+                card: discarded,
+                identity,
+            },
+        };
+        let mut hands = layout(&view);
+        hands[0].retain(|card| *card != discarded);
+        let facts = facts(&view);
+        let mut context = context(&view, &entry);
+        context.after.hands = &hands;
+        context.after.facts = &facts;
+        let mut effects = Effects::default();
+        crate::h_group::recognition::apply_elimination_effects(
+            &entry,
+            &view,
+            &hands,
+            &context.after.dynamic_stack_heights,
+            1,
+            &mut effects.signals,
+        );
+        crate::h_group::recognition::apply_elimination_resolution_effects(
+            &context,
+            &view,
+            &mut effects.borrow(&[]),
+        );
+        assert!(effects.signals.has_at_turn(4, HGroupMoveKind::Elimination));
+        assert!(effects.moved.contains(&candidate));
+        assert!(effects.forced.contains(&candidate));
+        // Build only the consumer seed through the No Variant-era reducer.
+        // Sixth-suit historical discards still hit its retained public_removed
+        // array; the production migration does not claim that boundary closed.
+        let mut seed = view.clone();
+        seed.history.clear();
+        let deductions = LogicalDeductions::new(seed).unwrap();
+        let mut replay = replay_h_group(&deductions, HGroupProfile::Level(HGroupLevel::Level1));
+        replay.cards.facts = effects.signals.facts().clone();
+        let inferred = HGroupInferences::default();
+        let constraints = crate::h_group::constraint_graph::ConventionConstraintGraph::from_replay(
+            &deductions,
+            &replay,
+            &inferred,
+        )
+        .into_belief_constraints();
+        assert!(
+            constraints
+                .factors
+                .iter()
+                .flatten()
+                .any(|branch| branch.contains(&(candidate, connection_domain(&view, identity))))
+        );
+
+        // A literal exclusion retracts the claim instead of forcing an
+        // impossible constraint, even in the reordered active universe.
+        context.before.facts[candidate.index()].add_negative_clue(Clue::Rank(Rank::One));
+        context.after.facts = &context.before.facts;
+        crate::h_group::recognition::apply_elimination_resolution_effects(
+            &context,
+            &view,
+            &mut effects.borrow(&[]),
+        );
+        assert!(effects.signals.facts().identity_claims().is_empty());
+    }
+}
+
+#[test]
+fn contract_v5_elimination_visibility_and_exhausted_copy_negative() {
+    for (variant, suit, copies) in [
+        (VariantSpec::no_variant(), Suit::Red, 3),
+        (reordered(), Suit::new(5), 4),
+    ] {
+        for visible in [false, true] {
+            let mut view = snapshot(variant.clone(), 3);
+            let identity = Card::new(suit, Rank::One);
+            let discarded = view.hands[1][0].id;
+            // Opponent visible copy blocks Elimination. The observer's own
+            // current identity, even if injected, cannot be earlier evidence.
+            view.hands[if visible { 2 } else { 0 }][0].identity = Some(identity);
+            let entry = ObservedHistoryEntry {
+                turn: 4,
+                event: ObservedEvent::Discarded {
+                    player: PlayerId::new(1),
+                    card: discarded,
+                    identity,
+                },
+            };
+            let mut hands = layout(&view);
+            hands[1].retain(|card| *card != discarded);
+            let heights = vec![0; view.variant.stack_suits().len()];
+            let mut signals = ConventionJournal::default();
+            crate::h_group::recognition::apply_elimination_effects(
+                &entry,
+                &view,
+                &hands,
+                &heights,
+                1,
+                &mut signals,
+            );
+            assert_eq!(
+                signals.has_at_turn(4, HGroupMoveKind::Elimination),
+                !visible
+            );
+            for turn in 0..copies - 1 {
+                view.history.push(ObservedHistoryEntry {
+                    turn,
+                    event: ObservedEvent::Discarded {
+                        player: PlayerId::new(2),
+                        card: CardId::new(40 + turn as usize),
+                        identity,
+                    },
+                });
+            }
+            let mut signals = ConventionJournal::default();
+            crate::h_group::recognition::apply_elimination_effects(
+                &entry,
+                &view,
+                &hands,
+                &heights,
+                1,
+                &mut signals,
+            );
+            assert!(!signals.has_at_turn(4, HGroupMoveKind::Elimination));
+        }
+    }
+}

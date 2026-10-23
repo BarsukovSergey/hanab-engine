@@ -231,7 +231,7 @@ fn apply_rule(
                 context.entry,
                 view,
                 context.after.hands,
-                context.after.stack_heights,
+                &context.after.dynamic_stack_heights,
                 context.before.clue_tokens,
                 effects.signals,
             );

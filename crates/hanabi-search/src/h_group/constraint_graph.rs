@@ -21,6 +21,8 @@ impl ConventionConstraintGraph {
         replay: &HGroupState,
         inferred: &HGroupInferences,
     ) -> Self {
+        let view = deductions.view();
+        let all = IdentitySet::all_in(view.variant.identities());
         let mut common = inferred
             .cards
             .iter()
@@ -35,7 +37,7 @@ impl ConventionConstraintGraph {
         for claim in replay.cards.facts.identity_claims().iter().filter(|claim| {
             claim.relation == IdentityClaimRelation::OneOf && !is_connection_claim(claim.source)
         }) {
-            let claimed = IdentitySet::singleton(claim.identity);
+            let claimed = super::identity::connection_domain(view, claim.identity);
             let claim_was_demonstrated = claim
                 .cards
                 .iter()
@@ -48,7 +50,7 @@ impl ConventionConstraintGraph {
                     .copied()
                     .filter(|card| own_cards.contains(card))
                 {
-                    common.push((card, IdentitySet::all().without(claimed)));
+                    common.push((card, all.without(claimed)));
                 }
                 continue;
             }
@@ -73,7 +75,7 @@ impl ConventionConstraintGraph {
                                 if card == selected {
                                     claimed
                                 } else {
-                                    IdentitySet::all().without(claimed)
+                                    all.without(claimed)
                                 },
                             )
                         })
@@ -83,20 +85,14 @@ impl ConventionConstraintGraph {
             factors.push(claim_alternatives);
         }
 
-        let view = deductions.view();
-        let immediately_playable = IdentitySet::from_mask(
-            IdentitySet::all()
-                .iter()
-                .filter(|identity| {
-                    identity.rank.number()
-                        == u8::try_from(view.play_stacks[identity.suit.index()].len())
-                            .expect("a standard stack has at most five cards")
-                            + 1
-                })
-                .fold(0, |mask, identity| mask | (1 << identity.index())),
+        let heights = super::identity::connection_heights(view, None);
+        let immediately_playable = IdentitySet::from_bits(
+            all.iter_ids()
+                .filter(|id| view.variant.playable(&heights, *id))
+                .fold(0, |mask, id| mask | (1_u64 << id.index())),
         );
         for promise in &inferred.connection_promises {
-            let expected = IdentitySet::singleton(promise.identity);
+            let expected = super::identity::connection_domain(view, promise.identity);
             let wrong_success = immediately_playable.without(expected);
             let promise_alternatives = promise
                 .cards

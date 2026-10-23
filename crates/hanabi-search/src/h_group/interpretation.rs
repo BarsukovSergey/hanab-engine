@@ -2644,7 +2644,7 @@ pub(super) fn elimination_finesse_connection(
                 expected,
                 convention_facts,
                 chop_moved,
-                |card| direct_facts(card).allows(expected),
+                |card| connection_allows(view, direct_facts(card), expected),
             )?;
             (player == view.observer || visible_identity(promised) == Some(expected))
                 .then_some((player, promised, expected))
