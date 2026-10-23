@@ -132,3 +132,42 @@ fn contract_physical_touch_and_literal_facts_preserve_every_standard_clue() {
         }
     }
 }
+// Temporary probe: deliberately fails at the first retained boundary.
+#[test]
+fn contract_v5_r2_legal_rainbow_clue_discard() {
+    let variant = VariantSpec::from_catalog(VariantId::Rainbow6Suits);
+    let deck = variant
+        .identities()
+        .identities()
+        .iter()
+        .flat_map(|identity| {
+            std::iter::repeat_n(
+                Card::new(identity.suit, identity.rank),
+                usize::from(identity.copies),
+            )
+        })
+        .collect();
+    let mut state = FullState::new_variant(3, variant, deck).unwrap();
+    let view = state.physical_view_for(PlayerId::new(0)).unwrap();
+    let rank = view.hands[1][0].identity.unwrap().rank;
+    state
+        .apply_physical(hanabi_core::PhysicalAction::Clue {
+            target: PlayerId::new(1),
+            clue: GenericClue::Rank(ClueRank::new(rank.number())),
+        })
+        .unwrap();
+    state.apply(Action::Discard(state.hands()[1][0])).unwrap();
+    let view = state
+        .physical_view_for(PlayerId::new(0))
+        .unwrap()
+        .try_standard()
+        .unwrap();
+    assert!(
+        view.history
+            .iter()
+            .any(|entry| matches!(entry.event, ObservedEvent::Discarded { .. }))
+    );
+    let deductions = LogicalDeductions::new(view).unwrap();
+    replay_h_group(&deductions, HGroupProfile::Level(HGroupLevel::Level1));
+}
+
