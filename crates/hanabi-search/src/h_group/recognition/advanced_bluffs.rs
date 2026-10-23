@@ -2,8 +2,8 @@ use super::{
     BluffTargetKind, CardSet, Clue, ConnectionTransitionReason, HGroupClueKind, HGroupMoveKind,
     HGroupRuleEffects, HGroupTurnContext, IdentitySet, ObservedEvent, PlayerView, Rank,
     bluff_play_connects, bluff_target_kind_at, bluff_target_order_is_legal, chop,
-    finesse_position_id, focus, is_critical_save_identity, is_trash_at, next_player,
-    protected_cards, push_signal, same_turn_signal, was_clued_before,
+    finesse_position_id, focus, is_critical_save_identity, next_player, protected_cards,
+    push_signal, same_turn_signal, was_clued_before,
 };
 use crate::h_group::identity::{
     connection_advance, connection_allows, connection_heights, connection_playable,
@@ -745,18 +745,18 @@ pub(in crate::h_group) fn apply_duplication_effects(
                     && (effects.explicitly_clued.contains(&other)
                         || effects.invisibly_clued.contains(&other))
                     && (context.historical.identity(other) == Some(*identity)
-                        || IdentitySet::from_mask(
-                            context.after.facts[other.index()].identity_mask(),
-                        ) == IdentitySet::singleton(*identity)
+                        || IdentitySet::from_bits(
+                            context.after.facts[other.index()].identity_mask_in(&view.variant),
+                        ) == crate::h_group::identity::connection_domain(view, *identity)
                         || (is_trash_chop_move_focus
-                            && context.after.facts[other.index()].allows(*identity)
-                            && IdentitySet::from_mask(
-                                context.after.facts[other.index()].identity_mask(),
+                            && connection_allows(view, context.after.facts[other.index()], *identity)
+                            && IdentitySet::from_bits(
+                                context.after.facts[other.index()].identity_mask_in(&view.variant),
                             )
-                            .iter()
+                            .iter_in(view.variant.identities())
                             .filter(|candidate| *candidate != *identity)
                             .all(|candidate| {
-                                is_trash_at(context.before.stack_heights, candidate)
+                                connection_trash(view, &context.before.dynamic_stack_heights, candidate)
                                     || context.after.hands.iter().flatten().copied().any(
                                         |duplicate| {
                                             duplicate != other
@@ -779,6 +779,7 @@ pub(in crate::h_group) fn apply_duplication_effects(
             let newly_secured_focus = (direct.is_none()
                 && !origin.previously_gotten.contains(&origin.focus))
             .then_some(origin.focus);
+            let origin_heights = connection_heights(view, Some(origin.turn));
             let valuable_extra = origin
                 .new_non_focus
                 .iter()
@@ -791,10 +792,12 @@ pub(in crate::h_group) fn apply_duplication_effects(
                                 && origin
                                     .play_identities
                                     .union(origin.save_identities)
-                                    .iter()
-                                    .any(|candidate| !is_trash_at(origin.stack_heights, candidate))
+                                    .iter_in(view.variant.identities())
+                                    .any(|candidate| {
+                                        !connection_trash(view, &origin_heights, candidate)
+                                    })
                         },
-                        |candidate| !is_trash_at(origin.stack_heights, candidate),
+                        |candidate| !connection_trash(view, &origin_heights, candidate),
                     )
                 });
             let filled_in = view
@@ -817,7 +820,7 @@ pub(in crate::h_group) fn apply_duplication_effects(
                     .historical
                     .identity(origin.focus)
                     .is_some_and(|focus_identity| {
-                        is_trash_at(origin.stack_heights, focus_identity)
+                        connection_trash(view, &origin_heights, focus_identity)
                     })
                 && origin.new_non_focus.is_empty();
             let kind = if assisted_trash {

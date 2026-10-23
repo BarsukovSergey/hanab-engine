@@ -989,3 +989,158 @@ fn contract_v5_context_active_focus_inversion_preserves_existing_connection_and_
         }
     }
 }
+
+#[test]
+fn contract_v5_duplication_active_old_duplicate_proof_and_cancellation() {
+    for (variant, suit) in [
+        (VariantSpec::no_variant(), Suit::Red),
+        (reordered(), Suit::new(5)),
+    ] {
+        let mut view = snapshot(variant, 3);
+        let played = view.hands[1][0].id;
+        let duplicate = view.hands[0][0].id;
+        let cover = view.hands[2][0].id;
+        let identity = Card::new(suit, Rank::One);
+        view.hands[0][0]
+            .clues
+            .add_positive_clue(Clue::Rank(Rank::One));
+        if suit == Suit::Red {
+            view.hands[0][0]
+                .clues
+                .add_positive_clue(Clue::Suit(Suit::Red));
+        }
+        view.hands[2][0].identity = Some(Card::new(Suit::Red, Rank::One));
+        let entry = ObservedHistoryEntry {
+            turn: 4,
+            event: ObservedEvent::Played {
+                player: PlayerId::new(1),
+                card: played,
+                identity,
+                successful: true,
+            },
+        };
+        let mut hands = layout(&view);
+        hands[1].retain(|card| *card != played);
+        let facts = facts(&view);
+        let mut context = context(&view, &entry);
+        context.after.hands = &hands;
+        context.after.facts = &facts;
+        for old in [false, true] {
+            let mut origin = interpretation(&view, played, identity, 1, Clue::Rank(Rank::One));
+            origin.turn = 2;
+            if old {
+                origin.previously_gotten.push(duplicate);
+            }
+            let mut trash = interpretation(&view, duplicate, identity, 0, Clue::Rank(Rank::One));
+            trash.turn = 1;
+            let clues = vec![trash, origin];
+            let mut effects = Effects::default();
+            effects.explicit.extend([duplicate, cover]);
+            effects.playing.insert(played);
+            effects.pending.start(
+                2,
+                obligation(
+                    1,
+                    vec![played],
+                    identity,
+                    played,
+                    identity,
+                    HGroupConnectionKind::Finesse,
+                ),
+            );
+            let mut trash_entry = entry.clone();
+            trash_entry.turn = 1;
+            push_signal(
+                &mut effects.signals,
+                &trash_entry,
+                PlayerId::new(2),
+                Some(PlayerId::new(0)),
+                HGroupMoveKind::TrashChopMove,
+                vec![duplicate],
+                None,
+            );
+            crate::h_group::recognition::apply_duplication_effects(
+                &context,
+                &view,
+                &mut effects.borrow(&clues),
+            );
+            assert_eq!(
+                effects
+                    .signals
+                    .has_at_turn(4, HGroupMoveKind::TimeTravelChopMove),
+                old
+            );
+            assert_eq!(effects.playing.contains(&played), !old);
+            assert_eq!(
+                effects.pending.iter().any(|c| effects.pending.is_active(c)),
+                !old
+            );
+        }
+    }
+}
+
+#[test]
+fn contract_v5_duplication_extra_value_uses_origin_heights() {
+    for (variant, suit) in [
+        (VariantSpec::no_variant(), Suit::Red),
+        (reordered(), Suit::new(5)),
+    ] {
+        let mut view = snapshot(variant, 3);
+        let played = view.hands[1][0].id;
+        let duplicate = view.hands[2][0].id;
+        let extra = view.hands[2][1].id;
+        let identity = Card::new(suit, Rank::One);
+        view.hands[2][0].identity = Some(identity);
+        view.hands[2][1].identity = Some(identity);
+        // This later public play makes all remaining copies trash now, but
+        // they were live at the originating clue. This is a dating invariant.
+        view.history.push(ObservedHistoryEntry {
+            turn: 3,
+            event: ObservedEvent::Played {
+                player: PlayerId::new(2),
+                card: CardId::new(40),
+                identity,
+                successful: true,
+            },
+        });
+        let entry = ObservedHistoryEntry {
+            turn: 4,
+            event: ObservedEvent::Played {
+                player: PlayerId::new(1),
+                card: played,
+                identity,
+                successful: true,
+            },
+        };
+        let mut hands = layout(&view);
+        hands[1].retain(|card| *card != played);
+        let facts = facts(&view);
+        let mut context = context(&view, &entry);
+        context.after.hands = &hands;
+        context.after.facts = &facts;
+        let mut origin = interpretation(&view, played, identity, 1, Clue::Rank(Rank::One));
+        origin.turn = 2;
+        origin.previously_gotten.push(duplicate);
+        origin.new_non_focus.push(extra);
+        // The retained standard stack field cannot describe the sixth suit;
+        // dynamic historical reconstruction must be the source of truth.
+        origin.stack_heights = [5; 5];
+        let mut effects = Effects::default();
+        effects.explicit.insert(duplicate);
+        crate::h_group::recognition::apply_duplication_effects(
+            &context,
+            &view,
+            &mut effects.borrow(&[origin]),
+        );
+        assert!(
+            effects
+                .signals
+                .has_at_turn(4, HGroupMoveKind::DuplicitousValue)
+        );
+        assert!(
+            !effects
+                .signals
+                .has_at_turn(4, HGroupMoveKind::TimeTravelChopMove)
+        );
+    }
+}
