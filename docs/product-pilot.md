@@ -1,4 +1,324 @@
-# No Variant and Rainbow product pilot
+# No Variant, Rainbow and White product pilots
+
+## White H-Group first complete game
+
+Clean source `5f7585da1da6a2b45d6a6551c84eafea304a834f`, measured 2026-10-23 on
+Windows native Rust: the existing H-Group Level4 bot completed a real
+three-player White6Suits game, seed 1, with **official final score 24/30**.
+`FullState` reports `Finished(FinalRoundComplete)`, with two strikes. This is
+one offline game, not comprehensive White convention support or live enablement.
+
+| Profile                   | Completed                 | Play / Discard / Clue | Official final score | Elapsed           |
+| ------------------------- | ------------------------- | --------------------- | -------------------- | ----------------- |
+| Level1 first-action smoke | One legal action applied  | 0 / 0 / 1             | Unavailable          | 0.6705 s decision |
+| Level4 seed 1             | Yes, final round complete | 26 / 21 / 27          | 24                   | 461.5205 s        |
+
+Every one of the 74 actions came from the existing `plan_move`, using actual
+H-Group inference and the acting observer's redacted physical view. The runner
+checks physical legality and own-hand/draw redaction on every decision, applies
+the returned action unchanged, and reconstructs an identical final `FullState`
+from the complete physical deck and recorded actions. There were no planner,
+legality, replay or belief errors and no runner fallback actions.
+
+The pilot uses `ExpectedScore`, 16 exact worlds, 256 exact nodes and a 15-second
+move budget; production defaults are unchanged. The earlier 5-second pilot
+stopped with a genuine deadline error, which was preserved rather than replaced
+with an action. All 74 completed-game choices used symbolic planning: 71 had
+`WorldLimit`, two `SingleCandidate`, and one `PreflightLimit` exact status.
+Twenty `WorldLimit` decisions exhausted the move budget and returned the
+existing planner's recorded symbolic result; the other 54 did not exhaust it. No
+exact-search success is claimed. Decision latency: mean 6.2360 s, median 3.7601
+s, p95 15.0602 s, maximum 15.0877 s; total decision time 461.4661 s. The budget
+is cooperative, so measured calls can slightly exceed 15 seconds.
+
+The first genuine generated clue is rank 1 to player 1. That recipient plays
+card ID 7 next with all stacks empty: literal rank-1 knowledge supports this
+play for every active suit. This establishes the requested clue/recipient-play
+example without treating self-play as authority for optimal strategy. Per-turn
+evidence records the action, planning phase/status, budget outcome and complete
+root-action diagnostics. The semantic warning explicitly limits the run to
+existing Level4 inference; it does not certify each White-specific meaning. The
+official White rank-3/4 Save Loaded Play Clue Assumption remains absent. See the
+[official White conventions](https://hanabi.github.io/variant-specific/white)
+and [recommended Level4 profile](https://hanabi.github.io/learning-path).
+
+Independent read-only review checked all four real rank-3/4 clues against that
+missing rule. The documented condition is a Save to a Loaded player: a globally
+known play or safe discard, per the
+[Always Loaded Principle](https://hanabi.github.io/variant-specific#the-always-loaded-principle-alp).
+The following are zero-based engine turns (add one for a displayed game turn):
+
+| Turn                   | Recorded meaning                     | Why White Loaded semantics are not required                                                                                                                               |
+| ---------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 33, rank 4 to player 2 | Critical Save on chop card 34        | Recipient is unloaded: no card has an entirely playable or trash domain; the fresh draw is unknown.                                                                       |
+| 34, rank 3 to player 2 | Re-clue, focus 16 off chop           | It is not a new chop Save.                                                                                                                                                |
+| 36, rank 3 to player 1 | Play with an ordinary white-2 Prompt | Focus 30 is off chop; no Save-to-Loaded interpretation.                                                                                                                   |
+| 40, rank 4 to player 2 | PlayOrSave on chop card 35           | The known purple-3 has been played. Remaining fours include useful nonplayable alternatives, the fives remain useful, and the new draw is unknown: recipient is unloaded. |
+
+For the first Save, the earlier purple domain contains ranks 2/3/4, rather than
+a known play. For the second, purple-4 remains mixed with green/blue/white-4;
+red/white-5 remain unplayed possibilities. Public discards have not exhausted
+their prerequisite ranks, so those future-useful alternatives are not known
+trash. This is an audit of the recorded run and the rule's applicability, not a
+self-play assertion of optimal moves or a new convention ruling.
+
+An additional opt-in audit replays the saved game, checks the full deck, actor
+and final-state fields, and re-analyzes only public observer views. It records
+per-turn actual H-Group inferences, actions and candidate clue explanations,
+complementing the original projection assumptions/dependencies in `rootActions`.
+It never chooses or substitutes actions. Its report separately identifies the
+game source and audit source, since adding diagnostics did not change the
+measured engine. Invoke it after the game with:
+
+```sh
+cargo test --locked -p hanabi-search --test white_hgroup_pilot white_saved_trace_semantic_audit -- --ignored
+```
+
+The final source batch reifies only an exactly recorded public White clue at the
+inverse-choice observation boundary, with literal touching parity checked over
+all active identities. It retains the global unsupported-variant semantic gate
+and ordinary rational-choice proof requirements. Historical choice facts,
+identity domains and private-world copy accounting now use the active catalog,
+including White. The complete branch also repairs active historical stacks,
+prospective draw IDs/score ceiling and Good Touch domain narrowing. Production,
+CLI and live No Variant gates remain unchanged.
+
+Focused tests passed for observed-choice label/history/redaction invariants,
+unsupported-variant rejection, active private-world multiplicities, historical
+giver redaction, incomplete inverse-proof conservatism and the existing reviewed
+No Variant private-protection regression. Earlier checkpoint checks below cover
+the other source repairs. Scoped formatting/production checks and
+`git diff --check` passed. CI run
+[279](https://github.com/BarsukovSergey/hanab-engine/actions/runs/39998963291)
+passed all seven jobs for this source SHA; the local checks are not a full-suite
+claim. The measured explicit opt-in invocation passed the then-existing three
+integration tests:
+
+```sh
+cargo test --locked -p hanabi-search --test white_hgroup_pilot -- --include-ignored --test-threads=1
+```
+
+The measured run used the already-built test binary with those arguments, after
+compilation finished and the source commit was pushed. Exact immutable local
+evidence under ignored `target/product-pilot/`: `white-hgroup-5f7585d.json`,
+`.ndjson` and `white-hgroup-5f7585d-first.json`. These contain the full deck,
+actions, source SHA, profile and budgets. The supplemental semantic audit is
+`white-hgroup-5f7585d-audit-1c546ae.json`, produced by audit source
+`1c546ae1f2b5a43e123eaaa991e8d63432f3260e`. Command logs:
+`target/white-choice-clean-checkpoint.log`, `white-choice-scoped.log`,
+`white-private-counts-contract.log`, `white-private-reviewed.log` and
+`white-inverse-proof-parity.log`; audit validation is in
+`white-semantic-audit-final.log` and `white-semantic-audit-scoped.log`. The
+unversioned report names are overwritten by later runs. The next product
+capability is a sourced implementation and review of White rank-3/4 Loaded
+semantics; this completed offline game does not enable White in production.
+
+## White active historical stacks checkpoint: INCOMPLETE (historical)
+
+Clean source `94a20714efc40c89f3c4a1723a1a9cb11d26fcd3`, measured 2026-10-23,
+same three-player White deck, seed 1 and bounded ExpectedScore config described
+below. The existing H-Group bot now applies **13 real actions** before an
+unsupported semantic boundary stops it. This is not a completed game.
+
+| Profile                   | Completed                | Play / Discard / Clue | Official final score | Stack score / strikes | Elapsed           |
+| ------------------------- | ------------------------ | --------------------- | -------------------- | --------------------- | ----------------- |
+| Level1 first-action smoke | One legal action applied | 0 / 0 / 1             | Unavailable          | 0 / 0                 | 0.3157 s decision |
+| Level4 seed 1             | No                       | 2 / 4 / 7             | Unavailable          | 2 / 0                 | 3.0582 s          |
+
+All 13 returned Level4 choices used Symbolic/WorldLimit planning; none exhausted
+the move budget. Successful decision times total 3.0462 s, maximum 0.4542 s. The
+failed decision at zero-based real turn 13 took 0.0071 s. The exact applied
+prefix reconstructs identically. The first real clue is rank 1 to player 1; that
+recipient plays card ID 7 next, when every stack is empty. Its rank-1 literal
+knowledge justifies that play regardless of which active suit it is. This
+observation is not an assertion of optimal play or comprehensive White
+convention correctness.
+
+**Current first blocker:** `inverse_planning::deduce` calls
+`standard_h_group_clue` at its choice-observation boundary; that adapter still
+asserts `H-Group semantics require No Variant`. No global rejection was relaxed,
+no action was substituted, and no error was treated as a budget fallback. The
+next minimal capability is a proven White-compatible boundary at this specific
+inverse-planning caller. White rank-3/4 Loaded Play Clue Assumption remains
+unimplemented; production/CLI/live variant gates remain intact. PR #53 is draft.
+
+This checkpoint fixes the directly reached historical stack producers and
+consumers: reducer storage is a vector in active suit order, successful plays
+advance every active stack, and basic known-playable checks use dynamic
+historical state. The retained five-suit metadata is an explicitly named
+standard-suit projection, not canonical storage. Dynamic before/after snapshots
+now follow individual events, including a draw after a same-turn successful
+play. Subjective historical views also allocate/map every active stack. A
+separate CI cleanup removed the unused fixed-score transition wrapper after its
+last caller switched to the variant-aware function; no gate was weakened.
+
+Focused checks passed: the new legal-prefix replay/subjective-stack contract for
+No Variant and White; the existing future-reveal/draw redaction test; the
+reviewed No Variant duplicate-fours regression; both unchanged semantic
+rejection tests; scoped formatting/production checks for search and the core
+cleanup; and `git diff --check`. The opt-in integration invocation returns 101:
+physical-label/deck and Level1 tests pass, while the Level4 game fails at the
+semantic boundary above. No full suite or green CI is claimed. Independent
+read-only review found no blocking issue; the new replay regression catches the
+prior sixth-suit panic and checks physical hand/reconstructed stack parity, but
+does not independently expose the reducer's private canonical vector.
+
+Immutable local evidence is archived under ignored `target/product-pilot/` as
+`white-hgroup-94a2071.json`, `.ndjson` and `white-hgroup-94a2071-first.json`.
+The unversioned `white-hgroup*` report names are overwritten by later runs.
+Command logs: `target/white-active-history-checkpoint.log`,
+`white-active-stack-contract-final.log`,
+`white-active-history-knowledge-final.log`,
+`white-active-history-no-variant-final.log`, `white-active-history-gates.log`,
+`white-active-history-scoped.log` and `white-transition-cleanup.log`. The caller
+backtrace from the same source changes before commit is in
+`target/white-active-history-projection.log`.
+
+## White prospective draw checkpoint: INCOMPLETE (historical)
+
+Clean source `4d0ba162c1dabeae2b69e5c75e7aa3085b96105d`, measured 2026-10-23,
+same seed/deck/profile budgets as the initial checkpoint below. The earlier
+owner-domain widening was caused by `ProspectiveTransition::card_action`
+allocating draws with `50 - deck_size`: White's initial 45-card draw pile
+produced card ID 5, duplicating a live card, instead of the actual ID 15. It now
+uses the catalog deck size and the variant score ceiling (30 for White, 25 for
+No Variant). The original knowledge-validation assertion is unchanged; temporary
+diagnostics were removed. No convention interpretation changed.
+
+The new deterministic physical invariant test compares the entire projected
+successful-play view against `FullState` for both No Variant and White,
+including unique live IDs and a blank own draw. It passes, as does the existing
+No Variant transition-parity test through the final round. Commands:
+
+```sh
+cargo test --locked -p hanabi-search --lib contract_prospective_card_action_keeps_variant_draw_ids_unique
+cargo test --locked -p hanabi-search --lib prospective_transitions_match_the_simulator_through_the_final_round
+bash scripts/check-scoped.sh hanabi-search --check-only
+git diff --check
+```
+
+The source was committed before rerunning the already-built debug integration
+binary with `--include-ignored --test-threads=1`. The physical-label/deck
+contract passes; both opt-in planner tests still exit 101:
+
+| Profile       | Completed | Play / Discard / Clue | Official final score | Stack score / strikes | Failed decision |
+| ------------- | --------- | --------------------- | -------------------- | --------------------- | --------------- |
+| Level1 smoke  | No        | 0 / 0 / 0             | Unavailable          | 0 / 0                 | 0.4820 s        |
+| Level4 seed 1 | No        | 0 / 0 / 0             | Unavailable          | 0 / 0                 | 0.1823 s        |
+
+Level4 elapsed time is 0.1825 s; reconstruction matches. No planner result,
+symbolic/exact phase or budget-fallback status is returned before the panic. The
+current first blocker is `history_reducer::reduce_discard` at the
+`known_playable` check: it calls `identity::is_playable_at` with five historical
+stack heights and a sixth-suit identity. The exact backtrace is retained in
+`target/white-draw-fix-backtrace.log`. The next minimal capability is using
+active, event-time stack state in that historical discard check.
+
+Latest evidence: `target/product-pilot/white-hgroup-first.json`,
+`white-hgroup.json` and `white-hgroup.ndjson`, all labeled with source SHA
+`4d0ba16`. Command results: `target/white-draw-fix-checkpoint.log`,
+`white-draw-contract.log`, `white-transition-parity.log`,
+`white-draw-scoped.log`. The original Level4 failure report/trace is archived as
+`target/product-pilot/white-hgroup-owner-widening.json` and `.ndjson`.
+Acceptance remains unmet; White 3/4 Loaded semantics remain absent and all
+production gates remain unchanged. PR #53 stays draft.
+
+## Initial White H-Group checkpoint: INCOMPLETE (historical)
+
+Measured 2026-10-23 on Windows native Rust at clean source commit
+`269949174753b50bbf5d6cf14cfece371d9efe14`. This is an offline diagnostic, not
+enabled production/live support. The existing H-Group inference, candidate
+generation and `plan_move` are used without action substitution.
+
+Three players, official catalog `White6Suits`, all 60 cards with catalog copy
+counts, seed 1, `splitmix64-fisher-yates-modulo-v1` as described below. Only the
+acting observer's `physical_view_for` crosses the decision boundary; own-hand
+and own-draw identities are asserted hidden before the checked `try_standard`
+conversion, retaining the White variant. Config: ExpectedScore, 16 exact worlds,
+256 exact nodes, five-second move limit. These limits apply only to this opt-in
+runner. Production defaults and No Variant gates are intact.
+
+```sh
+cargo test --locked -p hanabi-search --test white_hgroup_pilot \
+  -- --include-ignored --test-threads=1
+```
+
+This invocation exits **101**, not success: the physical-label/deck contract
+passes, but both opt-in planner tests fail with debug assertions enabled.
+
+| Profile                   | Completed | Applied Play / Discard / Clue | Official final score | Stack score / strikes | Decision time |
+| ------------------------- | --------- | ----------------------------- | -------------------- | --------------------- | ------------- |
+| Level1 first-action smoke | No        | 0 / 0 / 0                     | Unavailable          | 0 / 0                 | 0.4741 s      |
+| Level4 game, seed 1       | No        | 0 / 0 / 0                     | Unavailable          | 0 / 0                 | 0.4325 s      |
+
+Level4 elapsed time including evidence writes/reconstruction: 0.4328 s. The
+initial Level4 decision fails before returning a symbolic/exact result or budget
+status; no timeout fallback or replacement action is applied. Its empty applied
+prefix reconstructs identically. It is not a completed zero-score game.
+
+**Historical blocker (resolved by the draw-ID fix above):**
+`h_group/history_reducer.rs::finish` rejects an ordinary owner-knowledge domain
+widening while computing prospective continuations of real turn 0:
+
+```text
+ReplaceDomain { card: CardId(5), identities: IdentitySet(1073217503), source: Clue(3) }
+```
+
+`Clue(3)` is an internal prospective history turn, not a fourth applied game
+action. The invariant is preserved; its error now includes the offending effect.
+The later checkpoint traced this invariant failure to duplicate prospective card
+IDs, rather than a missing convention rule. No convention rule was invented.
+
+Earlier dirty-worktree release diagnostics first reproduced a Good Touch panic:
+a sixth-suit singleton was decoded with the No Variant iterator. This checkpoint
+fixes that producer and direct consumers with active identity IDs and includes
+an invariant-only duplicate-accounting regression. The intermediate release
+build then made a legal Level1 choice and a Level4 rank-1 clue followed by the
+recipient's successful play (Symbolic/WorldLimit, no budget exhaustion), before
+failing at `identity::is_playable_at` on the sixth suit at real turn 2. These
+exploratory logs are **not** clean-SHA acceptance evidence: release also omits
+the earlier debug owner-knowledge assertion. No completed game is claimed.
+
+The official [White rules](https://hanabi.github.io/variant-specific/white)
+apply the Loaded Play Clue Assumption to 3/4 Saves, excluding 2/5; the
+[learning path](https://hanabi.github.io/learning-path) recommends Level4. That
+White-specific assumption is **absent from this implementation**; the existing
+base Save resolver explicitly omits Loaded conventions. Physical touching parity
+does not certify these semantics. No White convention release or supported
+recipient-play acceptance claim is made.
+
+Historical Level4 evidence under ignored `target/product-pilot/` is archived as
+`white-hgroup-owner-widening.json` and `.ndjson`; the ordinary `white-hgroup*`
+report names now contain the latest checkpoint above. The trace flushes before
+each decision, on failure, and at the result. Compiler and test logs are
+`target/white-checkpoint.log`, `target/white-unit-final.log`,
+`target/white-no-variant-final.log`, `target/white-gates-final.log`, and
+`target/white-scoped.log`. The historical release diagnostics remain in
+`target/white-first.log`, `target/white-first-after.log`, and
+`target/white-game-backtrace.log`.
+
+Independent read-only review found no blocking issue in the local Good Touch fix
+or redacted action path. It required rerunning from a clean commit (done) and
+noted that the report's redaction-check flag records enabled assertions, not
+proof that an arbitrary failing decision passed them. The current failure occurs
+after those assertions. Acceptance is unmet; keep the PR draft.
+
+Focused validation (all exit 0 unless explicitly described above):
+
+```sh
+cargo test --locked -p hanabi-search --lib contract_admission_good_touch_preserves_white_identity
+cargo test --locked -p hanabi-search --lib third_replay_two_new_duplicate_fours_still_violate_good_touch
+cargo test --locked -p hanabi-search --lib standard_semantic_adapter_rejects
+bash scripts/check-scoped.sh hanabi-search --check-only
+git diff --check
+```
+
+These cover one new invariant, one reviewed No Variant Good Touch regression,
+two unchanged semantic rejection tests, formatting and production crate
+compilation. The physical-label/deck integration contract also passes. No full
+suite, 200-game baseline or CI pass is claimed.
+
+## Earlier No Variant and Rainbow measurements
 
 Measured on 2026-10-23, Windows native Rust, release profile. This is a small
 offline product experiment, not an H-Group strength gate or an M4 migration.

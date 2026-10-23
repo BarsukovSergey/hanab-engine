@@ -32,6 +32,95 @@ fn layouts(view: &PlayerView) -> Vec<Vec<CardId>> {
         .collect()
 }
 
+// A legal physical prefix checks history bookkeeping, not convention strategy.
+#[test]
+fn contract_history_reducer_successful_active_last_suit_play() {
+    use hanabi_core::PhysicalAction;
+    for variant_id in [VariantId::NoVariant, VariantId::White6Suits] {
+        let variant = VariantSpec::from_catalog(variant_id);
+        let suit = *variant.stack_suits().last().unwrap();
+        let mut deck = variant
+            .identities()
+            .identities()
+            .iter()
+            .flat_map(|identity| {
+                std::iter::repeat_n(
+                    Card::new(identity.suit, identity.rank),
+                    usize::from(identity.copies),
+                )
+            })
+            .collect::<Vec<_>>();
+        let first = deck
+            .iter()
+            .position(|card| card.suit == suit && card.rank == Rank::One)
+            .unwrap();
+        deck.swap(0, first);
+        let mut state = FullState::new_variant(3, variant, deck).unwrap();
+        state
+            .apply_physical(PhysicalAction::Play(CardId::new(0)))
+            .unwrap();
+        let view = state
+            .physical_view_for(PlayerId::new(0))
+            .unwrap()
+            .try_standard()
+            .unwrap();
+        let deductions = LogicalDeductions::new(view.clone()).unwrap();
+        let replay = replay_h_group_inner(
+            &deductions,
+            HGroupProfile::Level(HGroupLevel::Level1),
+            PerspectiveDepth::ObserverOnly,
+            false,
+        );
+        assert_eq!(replay.hands, layouts(&view));
+        let facts = vec![ClueFacts::default(); view.variant.identities().deck_size()];
+        let subjective = super::super::prospective::subjective_view_before_action(
+            &view,
+            view.observer,
+            &view.history,
+            &layouts(&view),
+            &facts,
+            view.deck_size,
+        );
+        assert_eq!(subjective.variant, view.variant);
+        assert_eq!(subjective.play_stacks, view.play_stacks);
+        assert_eq!(
+            super::super::identity::connection_heights(&view, None).last(),
+            Some(&1)
+        );
+    }
+}
+
+// Artificial inputs check duplicate accounting across the active sixth suit,
+// not a White convention meaning or an optimal clue.
+#[test]
+fn contract_admission_good_touch_preserves_white_identity() {
+    let mut view = snapshot(VariantSpec::from_catalog(VariantId::White6Suits));
+    let white = Card::new(Suit::new(5), Rank::One);
+    view.hands[1][0].identity = Some(white);
+    view.hands[1][1].identity = Some(white);
+    let touched = [view.hands[1][0].id, view.hands[1][1].id];
+    let empty = CardSet::default();
+    let context = super::super::admission::GoodTouchContext {
+        view: &view,
+        newly_touched: &touched[..1],
+        clue: None,
+        explicitly_clued: &empty,
+        fixed_cards: &empty,
+        convention_cards: &[],
+    };
+    assert!(super::super::admission::good_touch(context));
+    assert!(!super::super::admission::good_touch(
+        super::super::admission::GoodTouchContext {
+            newly_touched: &touched,
+            ..context
+        }
+    ));
+    assert_eq!(
+        super::super::admission::minimum_clue_value(&view, &[], touched),
+        1
+    );
+}
+
 #[test]
 fn contract_basic_good_touch_no_variant_matches_legacy_usefulness_and_claims() {
     let mut view = snapshot(VariantSpec::no_variant());

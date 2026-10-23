@@ -213,13 +213,17 @@ pub(super) fn deduce(
                 && note.identity_status == super::HGroupIdentityStatus::Settled
                 && note
                     .identities
-                    .iter()
+                    .iter_in(view.variant.identities())
                     .any(|identity| is_playable_now(view, identity))
-                && note.identities.iter().next().is_some_and(|first| {
-                    note.identities
-                        .iter()
-                        .all(|identity| identity.rank == first.rank)
-                })
+                && note
+                    .identities
+                    .iter_in(view.variant.identities())
+                    .next()
+                    .is_some_and(|first| {
+                        note.identities
+                            .iter_in(view.variant.identities())
+                            .all(|identity| identity.rank == first.rank)
+                    })
                 && was_clued_before(view, view.turn, note.card)
         })
         .collect::<Vec<_>>();
@@ -248,7 +252,7 @@ pub(super) fn deduce(
     for note in eligible {
         for identity in note
             .identities
-            .iter()
+            .iter_in(view.variant.identities())
             .filter(|identity| !is_playable_now(view, *identity))
         {
             for clue in replay
@@ -263,10 +267,7 @@ pub(super) fn deduce(
                 })
                 .take(CHOICE_LIMIT)
             {
-                let chosen = Action::Clue {
-                    target: clue.target,
-                    clue: crate::h_group::standard_h_group_clue(&view.variant, clue.clue),
-                };
+                let chosen = observed_choice_action(view, clue.turn, clue.target, clue.clue);
                 let Some(before) = HistoricalChoice::new(view, clue.turn, chosen) else {
                     continue;
                 };
@@ -300,6 +301,44 @@ pub(super) fn deduce(
     result
 }
 
+/// Reify an already observed action, without interpreting a new clue meaning.
+/// The rational-choice proof compares this exact recorded action against the
+/// ordinary model; this boundary does not certify White-specific conventions.
+/// White's physical labels may be used here only with full literal touching
+/// parity. Other callers retain the global No Variant semantic adapter.
+fn observed_choice_action(
+    view: &PlayerView,
+    turn: u32,
+    target: hanabi_core::PlayerId,
+    clue: hanabi_core::GenericClue,
+) -> Action {
+    let standard = if view.variant.catalog_id() == Some(hanabi_core::VariantId::White6Suits) {
+        let standard = hanabi_core::Clue::try_from(clue).expect("White physical clue label");
+        assert!(
+            view.variant
+                .identities()
+                .identities()
+                .iter()
+                .all(|identity| {
+                    standard.matches(Card::new(identity.suit, identity.rank))
+                        == view.variant.touches(identity.id, clue)
+                }),
+            "observed White action must retain literal touching"
+        );
+        standard
+    } else {
+        super::standard_h_group_clue(&view.variant, clue)
+    };
+    assert!(view.history.iter().any(|entry| {
+        entry.turn == turn && matches!(entry.event, ObservedEvent::Clued { target: actual_target, clue: actual_clue, .. }
+            if actual_target == target && actual_clue == standard)
+    }), "inverse choice must be the exact recorded public action");
+    Action::Clue {
+        target,
+        clue: standard,
+    }
+}
+
 struct HistoricalChoice {
     turn: u32,
     chosen: Action,
@@ -321,8 +360,9 @@ impl HistoricalChoice {
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
-        let mut facts = vec![ClueFacts::default(); 50];
-        let mut deck_size = 50 - source.hands.len() * hand_size;
+        let deck_cards = source.variant.identities().deck_size();
+        let mut facts = vec![ClueFacts::default(); deck_cards];
+        let mut deck_size = deck_cards - source.hands.len() * hand_size;
         for (index, entry) in source.history.iter().enumerate() {
             if entry.turn == turn {
                 if let ObservedEvent::Clued { giver, .. } = entry.event {
@@ -397,7 +437,15 @@ fn prove_exclusion(
                 notes
                     .iter()
                     .find(|note| note.card == *card)
-                    .is_some_and(|note| note.identities.contains(*identity))
+                    .is_some_and(|note| {
+                        !note
+                            .identities
+                            .intersection(super::identity::connection_domain(
+                                deductions.view(),
+                                *identity,
+                            ))
+                            .is_empty()
+                    })
             })
         {
             return false;
@@ -435,7 +483,7 @@ fn prove_exclusion(
         inferred_turn: deductions.view().turn - 1,
         observed_turn: before.turn,
         card: focal,
-        excluded: IdentitySet::singleton(identity),
+        excluded: super::identity::connection_domain(deductions.view(), identity),
         checked_assignments,
         witnesses: worlds
             .into_iter()
@@ -645,6 +693,72 @@ fn substitution_witness(
 mod tests {
     use super::*;
     use hanabi_core::{Clue, PlayerId, Rank, Suit};
+
+    // Physical action/history and redaction invariants, not a proof of a new
+    // White convention or an assertion that any recorded clue is optimal.
+    #[test]
+    fn contract_observed_choice_preserves_white_labels_and_history_shape() {
+        use hanabi_core::{FullState, PhysicalAction, VariantId, VariantSpec};
+        for id in [VariantId::NoVariant, VariantId::White6Suits] {
+            let variant = VariantSpec::from_catalog(id);
+            let deck = variant
+                .identities()
+                .identities()
+                .iter()
+                .flat_map(|identity| {
+                    std::iter::repeat_n(
+                        Card::new(identity.suit, identity.rank),
+                        usize::from(identity.copies),
+                    )
+                })
+                .collect();
+            let state = FullState::new_variant(3, variant.clone(), deck).unwrap();
+            let view = state.physical_view_for(state.current_player()).unwrap();
+            for action in view.legal_physical_actions() {
+                let PhysicalAction::Clue { target, clue } = action else {
+                    continue;
+                };
+                let mut branch = state.clone();
+                branch.apply_physical(action).unwrap();
+                let after = branch
+                    .physical_view_for(branch.current_player())
+                    .unwrap()
+                    .try_standard()
+                    .unwrap();
+                let chosen = observed_choice_action(&after, 0, target, clue);
+                assert_eq!(
+                    chosen,
+                    Action::Clue {
+                        target,
+                        clue: Clue::try_from(clue).unwrap()
+                    }
+                );
+                let choice = HistoricalChoice::new(&after, 0, chosen).unwrap();
+                assert_eq!(choice.facts.len(), variant.identities().deck_size());
+                assert_eq!(choice.deck_size, variant.identities().deck_size() - 15);
+                let giver = choice.giver_view(&after);
+                assert_eq!(giver.variant, variant);
+                assert!(giver.history.is_empty());
+                assert!(
+                    giver.hands[giver.observer.index()]
+                        .iter()
+                        .all(|card| card.identity.is_none())
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "H-Group semantics require No Variant")]
+    fn contract_observed_choice_rejects_unproven_variant_even_with_standard_label() {
+        let mut view = hanabi_core::FullState::new_standard(3, hanabi_core::standard_deck())
+            .unwrap()
+            .view_for(PlayerId::new(0))
+            .unwrap();
+        view.variant =
+            hanabi_core::VariantSpec::from_catalog(hanabi_core::VariantId::Rainbow6Suits);
+        observed_choice_action(&view, 0, PlayerId::new(1), Clue::Rank(Rank::One).into());
+    }
 
     fn reviewed_position() -> PlayerView {
         let replay = hanabi_protocol::HanabiLiveReplay::from_json(include_str!(

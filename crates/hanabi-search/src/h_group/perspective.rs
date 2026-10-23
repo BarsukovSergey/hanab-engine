@@ -419,12 +419,13 @@ impl ProspectiveTransition {
         if !play || successful && identity.rank == Rank::Five {
             after.clue_tokens = hanabi_core::public_transition::refunded_clues(after.clue_tokens);
         }
-        after.status = hanabi_core::public_transition::status_after_play(
+        after.status = hanabi_core::public_transition::status_after_play_with_max(
             after.play_stacks.iter().map(Vec::len).sum(),
             after.strikes,
+            source.variant.max_score(),
         );
         if source.deck_size > 0 && after.status == GameStatus::InProgress {
-            let drawn = CardId::new(50 - source.deck_size);
+            let drawn = CardId::new(source.variant.identities().deck_size() - source.deck_size);
             after.hands[player.index()].push(ObservedCard {
                 id: drawn,
                 identity: None,
@@ -626,6 +627,63 @@ mod tests {
             state.status(),
             GameStatus::Finished(EndReason::FinalRoundComplete)
         );
+    }
+
+    // Physical transition parity, not a convention meaning or a preferred play.
+    #[test]
+    fn contract_prospective_card_action_keeps_variant_draw_ids_unique() {
+        use hanabi_core::{PhysicalAction, VariantId, VariantSpec};
+        for variant_id in [VariantId::NoVariant, VariantId::White6Suits] {
+            let variant = VariantSpec::from_catalog(variant_id);
+            let deck = variant
+                .identities()
+                .identities()
+                .iter()
+                .flat_map(|id| {
+                    std::iter::repeat_n(Card::new(id.suit, id.rank), usize::from(id.copies))
+                })
+                .collect();
+            let mut state = FullState::new_variant(3, variant, deck).unwrap();
+            let actor = state.current_player();
+            let source = state
+                .physical_view_for(actor)
+                .unwrap()
+                .try_standard()
+                .unwrap();
+            let played = source.hands[actor.index()][0].id;
+            let identity = state.card(played).unwrap();
+            let after = ProspectiveTransition::successful_play(&source, actor, played, identity);
+            state.apply_physical(PhysicalAction::Play(played)).unwrap();
+            assert_eq!(
+                after,
+                state
+                    .physical_view_for(actor)
+                    .unwrap()
+                    .try_standard()
+                    .unwrap()
+            );
+            let mut ids = after
+                .hands
+                .iter()
+                .flatten()
+                .map(|card| card.id)
+                .collect::<Vec<_>>();
+            let live_cards = ids.len();
+            ids.sort_unstable();
+            ids.dedup();
+            assert_eq!(ids.len(), live_cards);
+            assert_eq!(
+                after.hands[actor.index()].last().unwrap().id,
+                CardId::new(15)
+            );
+            assert!(
+                after.hands[actor.index()]
+                    .last()
+                    .unwrap()
+                    .identity
+                    .is_none()
+            );
+        }
     }
 
     #[test]
