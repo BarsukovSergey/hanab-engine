@@ -1587,3 +1587,113 @@ fn contract_v5_ignition_active_known_playable_actor_is_skipped() {
         assert!(effects.forced.contains(&second));
     }
 }
+
+#[test]
+fn contract_v5_phantom_active_predecessors_require_visible_unaccounted_connector() {
+    for (variant, suit, middle, rank) in [
+        (VariantSpec::no_variant(), Suit::Red, Rank::Two, Rank::Three),
+        (reordered(), Suit::new(5), Rank::Three, Rank::Five),
+    ] {
+        for guard in 0..3 {
+            let mut view = snapshot(variant.clone(), 3);
+            let discarded = view.hands[0][0].id;
+            let focus = view.hands[2][0].id;
+            let first = view.hands[1][0].id;
+            let second = view.hands[1][1].id;
+            view.hands[2][0].identity = Some(Card::new(suit, rank));
+            view.hands[1][0].identity = Some(Card::new(suit, Rank::One));
+            if guard != 1 {
+                view.hands[1][1].identity = Some(Card::new(suit, middle));
+            }
+            let entry = ObservedHistoryEntry {
+                turn: 4,
+                event: ObservedEvent::Discarded {
+                    player: PlayerId::new(0),
+                    card: discarded,
+                    identity: Card::new(suit, rank),
+                },
+            };
+            let mut hands = layout(&view);
+            hands[0].retain(|card| *card != discarded);
+            let facts = facts(&view);
+            let mut context = context(&view, &entry);
+            context.after.hands = &hands;
+            context.after.facts = &facts;
+            let mut effects = Effects::default();
+            if guard == 2 {
+                effects.explicit.extend([first, second]);
+            }
+            push_signal(
+                &mut effects.signals,
+                &entry,
+                PlayerId::new(0),
+                Some(PlayerId::new(2)),
+                HGroupMoveKind::ScreamDiscard,
+                vec![focus],
+                None,
+            );
+            crate::h_group::recognition::apply_phantom_effects(
+                &context,
+                &view,
+                &mut effects.borrow(&[]),
+            );
+            assert_eq!(
+                effects
+                    .signals
+                    .has_at_turn(4, HGroupMoveKind::PhantomPlayable),
+                guard == 0
+            );
+        }
+    }
+}
+
+#[test]
+fn contract_v5_phantom_sacrifice_uses_active_copies_and_prior_owner_knowledge() {
+    let mut view = snapshot(reordered(), 3);
+    let identity = Card::new(Suit::new(5), Rank::Five);
+    let discarded = view.hands[1][0].id;
+    let entry = ObservedHistoryEntry {
+        turn: 4,
+        event: ObservedEvent::Discarded {
+            player: PlayerId::new(1),
+            card: discarded,
+            identity,
+        },
+    };
+    for exhausted in [false, true] {
+        view.history.clear();
+        for turn in 0..if exhausted { 3 } else { 2 } {
+            view.history.push(ObservedHistoryEntry {
+                turn,
+                event: ObservedEvent::Discarded {
+                    player: PlayerId::new(2),
+                    card: CardId::new(40 + turn as usize),
+                    identity,
+                },
+            });
+        }
+        let mut hands = layout(&view);
+        hands[1].retain(|card| *card != discarded);
+        let facts = facts(&view);
+        let mut context = context(&view, &entry);
+        context
+            .before
+            .protected
+            .extend(context.before.hands[1].iter().copied());
+        context.after.hands = &hands;
+        context.after.facts = &facts;
+        let mut effects = Effects::default();
+        effects.explicit.insert(discarded);
+        crate::h_group::recognition::apply_phantom_effects(
+            &context,
+            &view,
+            &mut effects.borrow(&[]),
+        );
+        assert_eq!(
+            effects
+                .signals
+                .has_at_turn(4, HGroupMoveKind::SacrificeDiscard),
+            !exhausted
+        );
+    }
+}

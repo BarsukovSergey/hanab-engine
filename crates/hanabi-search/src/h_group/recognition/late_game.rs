@@ -355,7 +355,7 @@ pub(in crate::h_group) fn apply_phantom_effects(
         return;
     };
     let hands = context.after.hands;
-    let stack_heights = context.before.stack_heights;
+    let stack_heights = &context.before.dynamic_stack_heights;
     let gotten = protected_cards(
         effects.explicitly_clued,
         effects.invisibly_clued,
@@ -363,16 +363,17 @@ pub(in crate::h_group) fn apply_phantom_effects(
     );
     let safe_action = |actor: PlayerId| {
         hands[actor.index()].iter().any(|candidate| {
-            let identities =
-                IdentitySet::from_mask(context.after.facts[candidate.index()].identity_mask());
+            let identities = IdentitySet::from_bits(
+                context.after.facts[candidate.index()].identity_mask_in(&view.variant),
+            );
             !identities.is_empty()
                 && (identities
-                    .iter()
-                    .all(|candidate| is_playable_at(stack_heights, candidate))
+                    .iter_in(view.variant.identities())
+                    .all(|candidate| connection_playable(view, stack_heights, candidate))
                     || (effects.explicitly_clued.contains(candidate)
                         && identities
-                            .iter()
-                            .all(|candidate| is_trash_at(stack_heights, candidate))))
+                            .iter_in(view.variant.identities())
+                            .all(|candidate| connection_trash(view, stack_heights, candidate))))
         })
     };
     let important = |candidate: CardId| {
@@ -380,7 +381,7 @@ pub(in crate::h_group) fn apply_phantom_effects(
             .historical
             .identity(candidate)
             .is_none_or(|candidate| {
-                if is_playable_at(stack_heights, candidate) {
+                if connection_playable(view, stack_heights, candidate) {
                     return true;
                 }
                 let removed = view
@@ -399,23 +400,29 @@ pub(in crate::h_group) fn apply_phantom_effects(
                         )
                     })
                     .count();
-                removed + 1 == usize::from(candidate.rank.copies()) || candidate.rank == Rank::Two
+                removed + 1
+                    == view
+                        .variant
+                        .standard_identity_id(candidate)
+                        .and_then(|id| view.variant.copies(id))
+                        .map_or(0, usize::from)
+                    || candidate.rank == Rank::Two
             })
     };
     let phantom = |candidate: CardId| {
         let Some(candidate_identity) = context.historical.identity(candidate) else {
             return false;
         };
-        let height = stack_heights[candidate_identity.suit.index()];
-        if candidate_identity.rank.number() <= height + 1 {
+        let predecessors = crate::h_group::identity::connection_predecessors(
+            view,
+            stack_heights,
+            candidate_identity,
+        );
+        if predecessors.is_empty() {
             return false;
         }
         let mut has_unaccounted_connector = false;
-        for rank_number in (height + 1)..candidate_identity.rank.number() {
-            let connector = Card::new(
-                candidate_identity.suit,
-                Rank::ALL[usize::from(rank_number - 1)],
-            );
+        for connector in predecessors {
             let Some((owner, connector_card)) =
                 hands.iter().enumerate().find_map(|(owner, hand)| {
                     hand.iter()
@@ -560,7 +567,12 @@ pub(in crate::h_group) fn apply_phantom_effects(
             )
         })
         .count();
-    let non_critical = removed_before + 1 < usize::from(identity.rank.copies());
+    let non_critical = removed_before + 1
+        < view
+            .variant
+            .standard_identity_id(*identity)
+            .and_then(|id| view.variant.copies(id))
+            .map_or(0, usize::from);
     let not_generation = !effects.signals.iter().any(|signal| {
         signal.turn == entry.turn && signal.kind == HGroupMoveKind::GenerationDiscard
     });
@@ -571,11 +583,11 @@ pub(in crate::h_group) fn apply_phantom_effects(
     let known_playable = context
         .actor_before
         .discarded_identity
-        .is_some_and(|known| is_playable_at(stack_heights, known));
+        .is_some_and(|known| connection_playable(view, stack_heights, known));
     if locked
         && discarded_was_clued
         && non_critical
-        && !is_trash_at(stack_heights, *identity)
+        && !connection_trash(view, stack_heights, *identity)
         && not_generation
         && !known_playable
     {
