@@ -4,8 +4,10 @@ Base: `bd960555c5b0df35865d8c42617b016a1094fe49`
 Branch: `m4-v5-high-level-refinements`
 Prepared: 2026-10-23
 
-This is a **bounded implementation queue**, not permission to complete all of
-M4-V5 or invent H-Group conventions overnight. The actual slice definition is
+This is a temporary, branch-local **bounded implementation queue**; remove
+this night-only packet from the eventual V5 PR once its useful outcomes are
+recorded in `WORKING_STATE.md`. It is not permission to complete all of M4-V5
+or invent H-Group conventions overnight. The actual slice definition is
 in [M4_VERTICAL_EXECUTION_PLAN.md](M4_VERTICAL_EXECUTION_PLAN.md). Follow
 `AGENTS.md` and [codex-workflow.md](codex-workflow.md). One V5 branch/PR may
 contain many short batches; this overnight run must not open or merge the PR.
