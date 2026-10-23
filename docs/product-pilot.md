@@ -1,6 +1,119 @@
 # No Variant, Rainbow and White product pilots
 
-## White active historical stacks checkpoint: INCOMPLETE
+## White H-Group first complete game
+
+Clean source `5f7585da1da6a2b45d6a6551c84eafea304a834f`, measured 2026-10-23 on
+Windows native Rust: the existing H-Group Level4 bot completed a real
+three-player White6Suits game, seed 1, with **official final score 24/30**.
+`FullState` reports `Finished(FinalRoundComplete)`, with two strikes. This is
+one offline game, not comprehensive White convention support or live enablement.
+
+| Profile                   | Completed                 | Play / Discard / Clue | Official final score | Elapsed           |
+| ------------------------- | ------------------------- | --------------------- | -------------------- | ----------------- |
+| Level1 first-action smoke | One legal action applied  | 0 / 0 / 1             | Unavailable          | 0.6705 s decision |
+| Level4 seed 1             | Yes, final round complete | 26 / 21 / 27          | 24                   | 461.5205 s        |
+
+Every one of the 74 actions came from the existing `plan_move`, using actual
+H-Group inference and the acting observer's redacted physical view. The runner
+checks physical legality and own-hand/draw redaction on every decision, applies
+the returned action unchanged, and reconstructs an identical final `FullState`
+from the complete physical deck and recorded actions. There were no planner,
+legality, replay or belief errors and no runner fallback actions.
+
+The pilot uses `ExpectedScore`, 16 exact worlds, 256 exact nodes and a 15-second
+move budget; production defaults are unchanged. The earlier 5-second pilot
+stopped with a genuine deadline error, which was preserved rather than replaced
+with an action. All 74 completed-game choices used symbolic planning: 71 had
+`WorldLimit`, two `SingleCandidate`, and one `PreflightLimit` exact status.
+Twenty `WorldLimit` decisions exhausted the move budget and returned the
+existing planner's recorded symbolic result; the other 54 did not exhaust it. No
+exact-search success is claimed. Decision latency: mean 6.2360 s, median 3.7601
+s, p95 15.0602 s, maximum 15.0877 s; total decision time 461.4661 s. The budget
+is cooperative, so measured calls can slightly exceed 15 seconds.
+
+The first genuine generated clue is rank 1 to player 1. That recipient plays
+card ID 7 next with all stacks empty: literal rank-1 knowledge supports this
+play for every active suit. This establishes the requested clue/recipient-play
+example without treating self-play as authority for optimal strategy. Per-turn
+evidence records the action, planning phase/status, budget outcome and complete
+root-action diagnostics. The semantic warning explicitly limits the run to
+existing Level4 inference; it does not certify each White-specific meaning. The
+official White rank-3/4 Save Loaded Play Clue Assumption remains absent. See the
+[official White conventions](https://hanabi.github.io/variant-specific/white)
+and [recommended Level4 profile](https://hanabi.github.io/learning-path).
+
+Independent read-only review checked all four real rank-3/4 clues against that
+missing rule. The documented condition is a Save to a Loaded player: a globally
+known play or safe discard, per the
+[Always Loaded Principle](https://hanabi.github.io/variant-specific#the-always-loaded-principle-alp).
+The following are zero-based engine turns (add one for a displayed game turn):
+
+| Turn                   | Recorded meaning                     | Why White Loaded semantics are not required                                                                                                                               |
+| ---------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 33, rank 4 to player 2 | Critical Save on chop card 34        | Recipient is unloaded: no card has an entirely playable or trash domain; the fresh draw is unknown.                                                                       |
+| 34, rank 3 to player 2 | Re-clue, focus 16 off chop           | It is not a new chop Save.                                                                                                                                                |
+| 36, rank 3 to player 1 | Play with an ordinary white-2 Prompt | Focus 30 is off chop; no Save-to-Loaded interpretation.                                                                                                                   |
+| 40, rank 4 to player 2 | PlayOrSave on chop card 35           | The known purple-3 has been played. Remaining fours include useful nonplayable alternatives, the fives remain useful, and the new draw is unknown: recipient is unloaded. |
+
+For the first Save, the earlier purple domain contains ranks 2/3/4, rather than
+a known play. For the second, purple-4 remains mixed with green/blue/white-4;
+red/white-5 remain unplayed possibilities. Public discards have not exhausted
+their prerequisite ranks, so those future-useful alternatives are not known
+trash. This is an audit of the recorded run and the rule's applicability, not a
+self-play assertion of optimal moves or a new convention ruling.
+
+An additional opt-in audit replays the saved game, checks the full deck, actor
+and final-state fields, and re-analyzes only public observer views. It records
+per-turn actual H-Group inferences, actions and candidate clue explanations,
+complementing the original projection assumptions/dependencies in `rootActions`.
+It never chooses or substitutes actions. Its report separately identifies the
+game source and audit source, since adding diagnostics did not change the
+measured engine. Invoke it after the game with:
+
+```sh
+cargo test --locked -p hanabi-search --test white_hgroup_pilot white_saved_trace_semantic_audit -- --ignored
+```
+
+The final source batch reifies only an exactly recorded public White clue at the
+inverse-choice observation boundary, with literal touching parity checked over
+all active identities. It retains the global unsupported-variant semantic gate
+and ordinary rational-choice proof requirements. Historical choice facts,
+identity domains and private-world copy accounting now use the active catalog,
+including White. The complete branch also repairs active historical stacks,
+prospective draw IDs/score ceiling and Good Touch domain narrowing. Production,
+CLI and live No Variant gates remain unchanged.
+
+Focused tests passed for observed-choice label/history/redaction invariants,
+unsupported-variant rejection, active private-world multiplicities, historical
+giver redaction, incomplete inverse-proof conservatism and the existing reviewed
+No Variant private-protection regression. Earlier checkpoint checks below cover
+the other source repairs. Scoped formatting/production checks and
+`git diff --check` passed. CI run
+[279](https://github.com/BarsukovSergey/hanab-engine/actions/runs/39998963291)
+passed all seven jobs for this source SHA; the local checks are not a full-suite
+claim. The measured explicit opt-in invocation passed the then-existing three
+integration tests:
+
+```sh
+cargo test --locked -p hanabi-search --test white_hgroup_pilot -- --include-ignored --test-threads=1
+```
+
+The measured run used the already-built test binary with those arguments, after
+compilation finished and the source commit was pushed. Exact immutable local
+evidence under ignored `target/product-pilot/`: `white-hgroup-5f7585d.json`,
+`.ndjson` and `white-hgroup-5f7585d-first.json`. These contain the full deck,
+actions, source SHA, profile and budgets. The supplemental semantic audit is
+`white-hgroup-5f7585d-audit-1c546ae.json`, produced by audit source
+`1c546ae1f2b5a43e123eaaa991e8d63432f3260e`. Command logs:
+`target/white-choice-clean-checkpoint.log`, `white-choice-scoped.log`,
+`white-private-counts-contract.log`, `white-private-reviewed.log` and
+`white-inverse-proof-parity.log`; audit validation is in
+`white-semantic-audit-final.log` and `white-semantic-audit-scoped.log`. The
+unversioned report names are overwritten by later runs. The next product
+capability is a sourced implementation and review of White rank-3/4 Loaded
+semantics; this completed offline game does not enable White in production.
+
+## White active historical stacks checkpoint: INCOMPLETE (historical)
 
 Clean source `94a20714efc40c89f3c4a1723a1a9cb11d26fcd3`, measured 2026-10-23,
 same three-player White deck, seed 1 and bounded ExpectedScore config described
