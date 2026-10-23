@@ -216,6 +216,88 @@ fn action_json(action: PhysicalAction) -> Value {
 }
 
 #[test]
+#[ignore = "audit meanings in the saved White trace; run the game first"]
+fn white_saved_trace_semantic_audit() {
+    use hanabi_core::{Action, CardId, PlayerId, Rank, Suit};
+    use hanabi_search::LogicalDeductions;
+
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let path = root.join("target/product-pilot/white-hgroup.json");
+    let report: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert_eq!(report["seed"], 1);
+    assert_eq!(report["variant"], "White6Suits");
+    let cards = deck(1);
+    assert_eq!(cards.len(), report["orderedDeck"].as_array().unwrap().len());
+    for (card, recorded) in cards.iter().zip(report["orderedDeck"].as_array().unwrap()) {
+        assert_eq!(recorded["suit"], card.suit.value());
+        assert_eq!(recorded["rank"], card.rank.value());
+    }
+    let mut state = FullState::new_variant(3, variant(), cards).unwrap();
+    let mut audit = Vec::new();
+    for decision in report["decisions"].as_array().unwrap() {
+        assert_eq!(decision["turn"], state.turn());
+        assert_eq!(decision["actor"], state.current_player().index());
+        let raw = &decision["action"];
+        let action = match raw["kind"].as_str().unwrap() {
+            "Play" => Action::Play(CardId::new(
+                raw["cardId"].as_u64().unwrap().try_into().unwrap(),
+            )),
+            "Discard" => Action::Discard(CardId::new(
+                raw["cardId"].as_u64().unwrap().try_into().unwrap(),
+            )),
+            "Clue" => Action::Clue {
+                target: PlayerId::new(raw["target"].as_u64().unwrap().try_into().unwrap()),
+                clue: if let Some(rank) = raw["clue"]["Rank"].as_u64() {
+                    Clue::Rank(Rank::ALL[usize::try_from(rank - 1).unwrap()])
+                } else {
+                    Clue::Suit(
+                        Suit::ALL[usize::try_from(raw["clue"]["Color"].as_u64().unwrap()).unwrap()],
+                    )
+                },
+            },
+            _ => panic!("unsupported recorded action"),
+        };
+        let view = state
+            .physical_view_for(state.current_player())
+            .unwrap()
+            .try_standard()
+            .unwrap();
+        let deductions = LogicalDeductions::new(view).unwrap();
+        // Re-analyze public observations only. This audit neither plans a move
+        // nor substitutes a different action into the measured game.
+        let (analysis, _) = hanabi_search::capture_decisions(|| {
+            SupportedConvention::HGroup(HGroupProfile::Level(HGroupLevel::Level4))
+                .analyze(&deductions)
+        });
+        audit.push(json!({
+            "turn": state.turn(), "action": decision["action"],
+            "stackHeights": state.physical_view_for(state.current_player()).unwrap().play_stacks.iter().map(Vec::len).collect::<Vec<_>>(),
+            "clueExplanations": format!("{:?}", analysis.clue_explanations),
+            "inferences": format!("{:?}", analysis.inferences),
+            "actions": format!("{:?}", analysis.actions),
+        }));
+        state.apply_physical(action.into()).unwrap();
+    }
+    assert_eq!(report["completed"], state.is_terminal());
+    assert_eq!(report["terminalReason"], format!("{:?}", state.status()));
+    assert_eq!(report["turns"], state.turn());
+    assert_eq!(report["stackScore"], state.score());
+    assert_eq!(report["strikes"], state.strikes());
+    assert_eq!(report["officialFinalScore"], json!(state.final_score()));
+    let audit_sha = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(audit_sha.status.success());
+    let audit_sha = String::from_utf8(audit_sha.stdout).unwrap();
+    fs::write(root.join("target/product-pilot/white-hgroup-semantic-audit.json"),
+        serde_json::to_vec_pretty(&json!({"gameSourceSha": report["codeSha"], "auditSourceSha": audit_sha.trim(),
+            "note": "engine meanings and projection evidence are not independent convention certification",
+            "moves": audit})).unwrap()).unwrap();
+}
+
+#[test]
 #[ignore = "offline White Level4 game; explicit invocation only"]
 // Keep the flushed failure evidence and exact reconstruction beside the game loop.
 #[allow(clippy::too_many_lines)]
