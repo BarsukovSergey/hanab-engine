@@ -29,7 +29,7 @@ pub(super) struct ConventionIdentityClaim {
 /// `HGroupSignal` answers "why did we infer this?"; this type answers "what is
 /// true now?" Rules should query this index rather than searching old signals
 /// and accidentally treating a cancelled interpretation as live state.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq)]
 pub(super) struct ConventionFacts {
     fixed_cards: CardSet,
     known_identities: Vec<Option<Card>>,
@@ -43,6 +43,28 @@ pub(super) struct ConventionFacts {
     /// the explanation journal.
     exact_transfers: Vec<(CardId, Card)>,
     identity_claims: Vec<ConventionIdentityClaim>,
+}
+
+impl PartialEq for ConventionFacts {
+    fn eq(&self, other: &Self) -> bool {
+        // Unallocated card slots carry exactly the same unknown/empty facts
+        // as allocated default slots. Growth must not turn a no-op into a change.
+        fn slots_equal<T: Default + PartialEq>(left: &[T], right: &[T]) -> bool {
+            let empty = T::default();
+            (0..left.len().max(right.len())).all(|index| {
+                left.get(index).unwrap_or(&empty) == right.get(index).unwrap_or(&empty)
+            })
+        }
+        self.fixed_cards == other.fixed_cards
+            && slots_equal(&self.known_identities, &other.known_identities)
+            && slots_equal(&self.known_conflicts, &other.known_conflicts)
+            && slots_equal(&self.excluded_identities, &other.excluded_identities)
+            && slots_equal(&self.demonstrated_layers, &other.demonstrated_layers)
+            && slots_equal(&self.layer_conflicts, &other.layer_conflicts)
+            && self.active_priority == other.active_priority
+            && self.exact_transfers == other.exact_transfers
+            && self.identity_claims == other.identity_claims
+    }
 }
 
 impl Default for ConventionFacts {
@@ -403,7 +425,11 @@ mod tests {
             facts.excluded_identities(CardId::new(60)),
             IdentitySet::default()
         );
-        assert_eq!(facts, facts.clone());
+        let mut empty = ConventionFacts::default();
+        empty.set_priority(&[CardId::new(59)], false);
+        assert_eq!(empty, ConventionFacts::default());
+        assert_eq!(ConventionFacts::default(), empty);
+        assert_ne!(empty, facts);
         facts.validate().unwrap();
     }
 

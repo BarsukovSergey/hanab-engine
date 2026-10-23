@@ -1,6 +1,6 @@
 # Working State
 
-Updated: 2026-10-06
+Updated: 2026-10-23
 
 ## Current milestone
 
@@ -218,16 +218,54 @@ not closure of complete variant replay or M4-V5 acceptance.
 | Ignition | Dated dynamic playability/trash and active known-playable actor domains; actor selection and deck-empty guard retained | `994ff61` |
 | Phantom | Active safe-action domains, dated predecessors and variant copy counts; visible missing-connector negative proof and owner-belief guard retained | `6ce94f9` |
 
-**PARTIAL / concrete remaining barriers:** sixth-suit historical discards still
-reach `history_reducer::ReplayReducer::apply_discard` and its retained
-`public_removed[identity.index()]` 25-element array (observed index 25 panic).
-`h_group_phase` still reads exactly five stacks (observed index 2 panic for a
-two-stack physical test variant). The Elimination consumer contract therefore
-seeds replay without historical variant discards and supplies empty inferred
-inputs directly to the constraint graph; it does not establish complete variant
-replay. These unchanged boundaries require a separate sized migration before
-variant enablement. All migrated families remain PARTIAL at the complete
-variant-capability level until the shared barriers and remaining consumers close.
+**R1 replay foundations (2026-10-23):** checkpoints 1-4 close the shared
+physical bookkeeping interfaces: full physical-deck `ClueFacts`, growing
+`ConventionFacts` card-instance storage, event-time removed counts mapped through
+active `IdentityId`, dynamic base Save / Eight Clue Save inputs, and physical
+max-score phase arithmetic. Priority and ChopMoves use dated before/after dynamic
+stacks. The No Variant `LowScore < 5` classification is preserved; Level 19's
+separate Five Tech threshold is unchanged and remains R2.
+
+Focused evidence: six `contract_v5_replay_` contracts cover card 59 claim
+conflicts/retraction/layers and unknown fallback; active sixth-suit removed
+counts / dated Good Touch; sparse/reordered Save / Eight Save and giver-relative
+visibility; exact No Variant phase parity; two-/six-stack phase arithmetic; and
+production phase inference on legal initial states. Three existing `direct_save`
+contracts also pass. Each finished checkpoint passed scoped tests, formatting,
+production-config crate check and diff checks. These are focused results, not a
+full replay-suite or milestone pass. The final `contract_v5_` selection passed
+19/19 (six new replay contracts plus thirteen existing V5 contracts). Independent
+review found one storage-equality regression on no-op card-59 growth; equality
+now compares default-extended slots, with a focused no-op regression. No other
+actionable review findings remained.
+
+**PARTIAL / proven R2 integration blocker:** checkpoint 5 cannot establish a
+legal discard-only history starting from the initial game state. `FullState`
+rejects discard at eight clues (`DiscardAtMaximumClues`); a legal Rainbow clue
+followed by discard reaches `reduce_clue` -> `standard_h_group_clue` and panics
+with `H-Group semantics require No Variant` (`h_group.rs:1162`). A one-off,
+simulator-generated probe reproduced that exact first offender; its source and
+failure log are retained under ignored `target/workflow/m4-v5-boundary-probe.*`.
+To reproduce independently: construct a three-player Rainbow6Suits `FullState`
+with the active identities in universe order, repeated by each physical copy
+count. Player 0 gives player 1 the rank of player 1's first card, then player 1
+discards its first card. Project the complete physical view with `try_standard`,
+build `LogicalDeductions`, and call Level1 `replay_h_group`.
+The probe was removed from the passing contract selection, not converted to a
+silent skip or green variant-replay claim. No history was cleared to make it pass.
+The existing artificial Elimination consumer contract and its empty-history
+seed are unchanged; real card-50+ discard replay integration is still unproved.
+The earlier attempt to construct an all-discard simulator history failed on the
+core legality rule before replay and supplies no integration evidence.
+
+Next R2 step: migrate the historical clue producer and immediate interpretation
+consumers across the retained adapter using generic physical evidence and reviewed
+No Variant meanings; then replay that same legal clue/discard history without
+filtering it. Separately migrate `reduce_play`'s retained five-stack write
+`self.stack_heights[identity.suit.index()]` before claiming sixth-suit successful
+play support. This run did not probe a second legacy blocker. No production,
+CLI/live variant gate or V6 convention meaning changed. All recognizer families
+remain PARTIAL at complete variant-capability level.
 
 Charms, Unnecessary Moves, remaining Extras/Max special effects, Special Finesse
 discard evidence, and the public-layer/inverse-planning historical clue adapters
@@ -256,9 +294,9 @@ record the final integration result; focused local success alone is not a
 full-validation claim. Detailed local
 commands/logs and checkpoint notes are in ignored `target/workflow/m4-v5-*`.
 
-Legacy reducer stack/count arrays, V5 `Rank::ALL`/`Suit::ALL` loops, remaining
+Legacy reducer stack arrays, V5 `Rank::ALL`/`Suit::ALL` loops, remaining
 legacy identity claim masks, and `standard_h_group_clue` remain outside the
-migrated boundaries. The reducer arrays are retained; migrated families consume
+migrated boundaries. The legacy stack array is retained; migrated families consume
 dynamic snapshots or reconstruct dated public stacks. Special Finesse discard
 evidence remains a V5 boundary.
 The global No Variant policy gate stays until the remaining M4 slices are ready.

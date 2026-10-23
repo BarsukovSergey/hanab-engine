@@ -1842,3 +1842,38 @@ fn contract_v5_replay_phase_no_variant_parity_and_physical_maximum() {
         assert_eq!(h_group_phase(&view, false), HGroupPhase::LowScore);
     }
 }
+
+#[test]
+fn contract_v5_replay_initial_phase_inference_uses_physical_maximum() {
+    for variant in [
+        reordered(),
+        VariantSpec::from_catalog(VariantId::Rainbow6Suits),
+    ] {
+        let deck = variant
+            .identities()
+            .identities()
+            .iter()
+            .flat_map(|identity| {
+                std::iter::repeat_n(
+                    Card::new(identity.suit, identity.rank),
+                    usize::from(identity.copies),
+                )
+            })
+            .collect();
+        let state = FullState::new_variant(3, variant, deck).unwrap();
+        let view = state
+            .physical_view_for(PlayerId::new(0))
+            .unwrap()
+            .try_standard()
+            .unwrap();
+        assert!(view.history.is_empty()); // Actual initial state, no history removed.
+        let deductions = LogicalDeductions::new(view).unwrap();
+        let replay = replay_h_group(&deductions, HGroupProfile::Level(HGroupLevel::Level1));
+        let inferred = infer_h_group_from_replay(
+            &deductions,
+            replay,
+            HGroupProfile::Level(HGroupLevel::Level1),
+        );
+        assert_eq!(inferred.phase, HGroupPhase::EarlyGame);
+    }
+}

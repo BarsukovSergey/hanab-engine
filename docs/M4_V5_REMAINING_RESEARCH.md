@@ -6,6 +6,26 @@ remaining paths are already variant-safe. The authoritative milestone acceptance
 remains in [M4_VERTICAL_EXECUTION_PLAN.md](M4_VERTICAL_EXECUTION_PLAN.md);
 completed and partial boundaries are recorded in [WORKING_STATE.md](WORKING_STATE.md).
 
+## R1 execution update (2026-10-23)
+
+Checkpoints 1-4 implemented active physical card-instance storage, event-dated
+active-ID removed counts and Save inputs, and dynamic/max-score phases. The
+boundary table below records the original audit, not current storage after R1.
+
+Checkpoint 5 is PARTIAL: a legal simulator Rainbow clue followed by discard
+reproduces `reduce_clue` -> `standard_h_group_clue`'s explicit No Variant assert
+(`h_group.rs:1162`). Starting with discard instead is illegal at eight clues;
+removing the required clue would fabricate history. The existing Elimination
+empty-history workaround remains unchanged, and genuine card-50+ history replay
+is not certified. Initial-state two-/six-stack production phase inference is
+covered. See `WORKING_STATE.md` for exact evidence and scope.
+
+R2 must begin with the historical clue adapter and its immediate semantic
+consumers, then repeat the legal clue/discard integration trace. Retained
+`reduce_play` five-stack storage and the separate Five Tech threshold follow;
+no further legacy path was probed in R1. The original suggested discard-only
+integration order below is superseded by this demonstrated prerequisite.
+
 ## Executive decision
 
 **Next integration unit: variant-safe replay bookkeeping and phase decisions.**
