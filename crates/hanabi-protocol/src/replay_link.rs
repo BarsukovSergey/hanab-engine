@@ -6,7 +6,7 @@ use crate::HanabiLiveReplay;
 
 const BASE62: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-/// Generates a validated standard-game replay URL at a one-based Hanab Live turn.
+/// Generates a validated catalog-variant replay URL at a one-based Hanab Live turn.
 ///
 /// # Errors
 /// Returns an explanation if the replay is invalid, the turn is out of range,
@@ -36,7 +36,12 @@ fn payload_matches_replay(payload: &str, replay: &HanabiLiveReplay) -> bool {
     let [deck, actions, variant, seed] = fields.as_slice() else {
         return false;
     };
-    if *seed != replay.seed.as_deref().unwrap_or_default() || variant.replace('-', "") != "0" {
+    let Some(expected_variant) = live_variant_id(replay) else {
+        return false;
+    };
+    if *seed != replay.seed.as_deref().unwrap_or_default()
+        || variant.replace('-', "").parse::<u16>().ok() != Some(expected_variant)
+    {
         return false;
     }
     let deck = deck.replace('-', "");
@@ -90,6 +95,28 @@ fn payload_matches_replay(payload: &str, replay: &HanabiLiveReplay) -> bool {
         })
 }
 
+// Protocol wire IDs are independent of engine-owned VariantId discriminants.
+// Source: hanabi-live b0792ded044937776b36fc797dc25f060499e4f5,
+// misc/variants.txt; hypoCompress.ts writes variant.id in the third field.
+fn live_variant_id(replay: &HanabiLiveReplay) -> Option<u16> {
+    use hanabi_core::VariantId;
+    let name = replay
+        .options
+        .as_ref()
+        .map_or("No Variant", |options| options.variant.as_str());
+    Some(match crate::hanabi_live::variant_id_from_live_name(name)? {
+        VariantId::NoVariant => 0,
+        VariantId::Black6Suits => 2,
+        VariantId::Rainbow6Suits => 3,
+        VariantId::White6Suits => 13,
+        VariantId::Pink6Suits => 106,
+        VariantId::Brown6Suits => 69,
+        VariantId::Prism6Suits => 1464,
+        VariantId::Omni6Suits => 176,
+        VariantId::Null6Suits => 180,
+    })
+}
+
 fn digit(index: usize) -> Result<char, String> {
     BASE62
         .get(index)
@@ -108,7 +135,7 @@ fn compress(replay: &HanabiLiveReplay) -> Result<String, String> {
             "replay-link seed must contain only ASCII letters, digits, and hyphens".to_owned(),
         );
     }
-    // Validation above guarantees a full standard deck, hence ranks 1..5.
+    // The supported physical catalog uses card ranks 1..5.
     let mut encoded = format!("{}15", replay.players.len());
     for card in &replay.deck {
         encoded.push(digit(
@@ -145,7 +172,10 @@ fn compress(replay: &HanabiLiveReplay) -> Result<String, String> {
         )?);
         encoded.push(digit(action.target)?);
     }
-    encoded.push_str(",0");
+    let variant = live_variant_id(replay)
+        .ok_or_else(|| "replay variant has no supported Hanab Live wire ID".to_owned())?;
+    encoded.push(',');
+    encoded.push_str(&variant.to_string());
     // The upstream codec inserts hyphens every 20 characters for wrapping.
     let wrapped = encoded
         .as_bytes()
@@ -160,6 +190,61 @@ fn compress(replay: &HanabiLiveReplay) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catalog_replay_links_preserve_official_variant_ids() {
+        use hanabi_core::{VariantId, VariantSpec};
+        // Official wire IDs, not engine catalog discriminants:
+        // hanabi-live b0792ded044937776b36fc797dc25f060499e4f5,
+        // misc/variants.txt and client/src/lobby/hypoCompress.ts.
+        for (id, name, wire_id) in [
+            (VariantId::NoVariant, "No Variant", "0"),
+            (VariantId::Black6Suits, "Black (6 Suits)", "2"),
+            (VariantId::Rainbow6Suits, "Rainbow (6 Suits)", "3"),
+            (VariantId::White6Suits, "White (6 Suits)", "13"),
+            (VariantId::Pink6Suits, "Pink (6 Suits)", "106"),
+            (VariantId::Brown6Suits, "Brown (6 Suits)", "69"),
+            (VariantId::Prism6Suits, "Prism (6 Suits)", "1464"),
+            (VariantId::Omni6Suits, "Omni (6 Suits)", "176"),
+            (VariantId::Null6Suits, "Null (6 Suits)", "180"),
+        ] {
+            let spec = VariantSpec::from_catalog(id);
+            let deck = spec
+                .identities()
+                .identities()
+                .iter()
+                .flat_map(|identity| {
+                    std::iter::repeat_n(
+                        serde_json::json!({
+                            "suitIndex": identity.suit.value(), "rank": identity.rank.value()
+                        }),
+                        usize::from(identity.copies),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let replay = HanabiLiveReplay::from_json(
+                &serde_json::json!({
+                    "players": ["Alice", "Bob", "Cathy"], "deck": deck,
+                    "actions": [], "options": {"variant": name}, "seed": "custom-seed-1"
+                })
+                .to_string(),
+            )
+            .unwrap();
+            let link = replay_link(&replay, 1).unwrap();
+            let payload = link
+                .strip_prefix("https://hanab.live/shared-replay-json/")
+                .unwrap()
+                .strip_suffix("#1")
+                .unwrap();
+            let fields = payload.split(',').collect::<Vec<_>>();
+            assert_eq!(fields[2].replace('-', ""), wire_id, "{name}");
+            assert!(payload_matches_replay(payload, &replay));
+            // Matching deck/actions are insufficient if the variant is changed.
+            let wrong = if wire_id == "0" { "13" } else { "0" };
+            let damaged = format!("{},{},{wrong},{}", fields[0], fields[1], fields[3]);
+            assert!(!payload_matches_replay(&damaged, &replay), "{name}");
+        }
+    }
 
     #[test]
     fn round_trip_detects_transcription_and_field_corruption() {

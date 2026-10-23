@@ -4866,6 +4866,66 @@ mod tests {
     }
 
     #[test]
+    fn contract_forced_fallback_rejects_stale_preference_and_unestablished_belief() {
+        // Algorithm invariant: supply the hard constraint directly. No claim
+        // about the convention meaning of this artificial starting position.
+        let state = FullState::new_standard(2, standard_deck()).unwrap();
+        let deductions = LogicalDeductions::new(state.view_for(PlayerId::new(0)).unwrap()).unwrap();
+        let legal = deductions.view().legal_actions();
+        let required = legal[0];
+        let unrelated_preference = legal[1];
+        let analysis = ConventionAnalysis {
+            actions: vec![
+                ConventionAction {
+                    action: unrelated_preference,
+                    preference: crate::ActionPreference::new(900, false),
+                    reason: crate::ConventionActionReason::PromisedPlay,
+                },
+                ConventionAction {
+                    action: required,
+                    preference: crate::ActionPreference::new(1, false)
+                        .with_policy_tier(ConventionPolicyTier::Required),
+                    reason: crate::ConventionActionReason::PromisedPlay,
+                },
+            ],
+            forced_action: Some(required),
+            preferred_action: Some(unrelated_preference),
+            ..ConventionAnalysis::default()
+        };
+        for completed in [false, true] {
+            for count in [None, Some(WorldCount::Exact(1))] {
+                let evaluations = planning_candidates(&analysis)
+                    .iter()
+                    .map(|candidate| {
+                        let mut evaluation = symbolic_evaluation(&deductions, *candidate);
+                        evaluation.projection_evaluated = completed;
+                        evaluation
+                    })
+                    .collect();
+                let fallback = PlanningProgress {
+                    evaluations,
+                    count,
+                    exact_nodes: 0,
+                    exact_status: ExactSearchStatus::TimeLimit,
+                }
+                .fallback(analysis.preferred_action, None);
+                if count.is_some() {
+                    let result = fallback.unwrap();
+                    assert_eq!(result.best_action, required);
+                    assert!(result.budget_exhausted);
+                    assert_eq!(result.root_actions.len(), 1);
+                    assert_eq!(result.root_actions[0].action, required);
+                } else {
+                    assert_eq!(
+                        fallback,
+                        Err(PlannerError::Stopped(crate::AnalysisStopped::Deadline))
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn required_policy_tier_outweighs_a_larger_heuristic_number() {
         let state = FullState::new_standard(2, standard_deck()).unwrap();
         let deductions = LogicalDeductions::new(state.view_for(PlayerId::new(0)).unwrap()).unwrap();

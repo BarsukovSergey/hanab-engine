@@ -45,11 +45,38 @@ fn plan(
     gotten: &CardSet,
     heights: &[usize],
 ) -> (Vec<ConnectionObligation>, ConnectionManager) {
+    plan_with_constraints(
+        HGroupProfile::Level(HGroupLevel::Level2),
+        view,
+        giver,
+        target,
+        focus,
+        identity,
+        clue,
+        gotten,
+        &CardSet::default(),
+        heights,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn plan_with_constraints(
+    profile: HGroupProfile,
+    view: &PlayerView,
+    giver: PlayerId,
+    target: PlayerId,
+    focus: CardId,
+    identity: Card,
+    clue: GenericClue,
+    gotten: &CardSet,
+    already_playing: &CardSet,
+    heights: &[usize],
+) -> (Vec<ConnectionObligation>, ConnectionManager) {
     let mut pending = ConnectionManager::default();
     let mut invisible = ProvenancedCardSet::default();
     let facts = facts(view);
     let obligations = schedule_connection(
-        HGroupProfile::Level(HGroupLevel::Level2),
+        profile,
         view,
         3,
         giver,
@@ -63,7 +90,7 @@ fn plan(
         &facts,
         &[],
         gotten,
-        &CardSet::default(),
+        already_playing,
         &CardSet::default(),
         &ConventionFacts::default(),
         &CardSet::default(),
@@ -74,6 +101,237 @@ fn plan(
         false,
     );
     (obligations, pending)
+}
+
+#[test]
+fn contract_foundation_prompt_orders_unknown_candidates_and_excludes_due_plays() {
+    // Exact authority: pinned level-1 "The Prompt" and beginner/prompt.mdx,
+    // Prompt2: both red-clued unknowns must be tried left-to-right. A card
+    // already going to play is not a new Prompt. These partial algorithm
+    // inputs establish no invented game history or optimal clue assertion.
+    for level in [
+        HGroupLevel::Level1,
+        HGroupLevel::Level2,
+        HGroupLevel::Level3,
+        HGroupLevel::Level4,
+    ] {
+        for players in [3, 4] {
+            for known in [false, true] {
+                let mut view = snapshot(VariantSpec::no_variant(), players);
+                view.observer = PlayerId::new(1);
+                let hand = &mut view.hands[1];
+                let first = hand.last_mut().unwrap();
+                first.clues.add_positive_clue(Clue::Suit(Suit::Red));
+                let leftmost = first.id;
+                let next = hand.iter_mut().rev().nth(1).unwrap();
+                next.clues.add_positive_clue(Clue::Suit(Suit::Red));
+                let second = next.id;
+                let gotten = [leftmost, second].into_iter().collect();
+                let already_playing = if known {
+                    [leftmost].into_iter().collect()
+                } else {
+                    CardSet::default()
+                };
+                let focus = view.hands[2][0].id;
+                let (steps, pending) = plan_with_constraints(
+                    HGroupProfile::Level(level),
+                    &view,
+                    PlayerId::new(0),
+                    PlayerId::new(2),
+                    focus,
+                    Card::new(Suit::Red, Rank::Four),
+                    Clue::Suit(Suit::Red).into(),
+                    &gotten,
+                    &already_playing,
+                    &[2; 5],
+                );
+                if known {
+                    // Exclusion does not imply a fresh Prompt on the other
+                    // card: the existing play may already supply Red3.
+                    assert!(steps.iter().all(|step| {
+                        step.kind != HGroupConnectionKind::Prompt || !step.cards.contains(&leftmost)
+                    }));
+                } else {
+                    let prompt = steps
+                        .iter()
+                        .find(|step| {
+                            step.actor == PlayerId::new(1)
+                                && step.kind == HGroupConnectionKind::Prompt
+                        })
+                        .unwrap();
+                    assert_eq!(prompt.expected, Card::new(Suit::Red, Rank::Three));
+                    assert_eq!(prompt.cards, [leftmost, second]);
+                }
+                assert!(pending.validate().is_ok());
+            }
+        }
+    }
+}
+
+#[test]
+fn contract_foundation_prompt_alternatives_preserve_the_promise_until_connection() {
+    // Source: beginner/prompt.mdx Prompt4 and prompt/prompt-4.yml at the
+    // pinned authority. Bob's rank-3 candidates are Blue3, Green3, Red3;
+    // all prefixes play safely, and Cathy waits for Red3 before playing Red4.
+    // This tests the promise reducer, not a fabricated replay's best move.
+    for level in [
+        HGroupLevel::Level1,
+        HGroupLevel::Level2,
+        HGroupLevel::Level3,
+        HGroupLevel::Level4,
+    ] {
+        for players in [3, 4] {
+            let mut view = snapshot(VariantSpec::no_variant(), players);
+            view.observer = PlayerId::new(1);
+            let candidates = view.hands[1]
+                .iter_mut()
+                .rev()
+                .take(3)
+                .map(|card| {
+                    card.clues.add_positive_clue(Clue::Rank(Rank::Three));
+                    card.id
+                })
+                .collect::<Vec<_>>();
+            let gotten = candidates.iter().copied().collect();
+            let focus = view.hands[2][0].id;
+            let focus_identity = Card::new(Suit::Red, Rank::Four);
+            // Exact Prompt4 stack context: Yellow/Purple remain on1, so a
+            // rank3-only card was not already known playable before the clue.
+            let mut heights = [1; 5];
+            for suit in [Suit::Red, Suit::Blue, Suit::Green] {
+                heights[suit.index()] = 2;
+            }
+            let (steps, mut pending) = plan_with_constraints(
+                HGroupProfile::Level(level),
+                &view,
+                PlayerId::new(0),
+                PlayerId::new(2),
+                focus,
+                focus_identity,
+                Clue::Suit(Suit::Red).into(),
+                &gotten,
+                &CardSet::default(),
+                &heights,
+            );
+            assert_eq!(steps.len(), 1);
+            assert_eq!(steps[0].cards, candidates);
+            assert_eq!(steps[0].kind, HGroupConnectionKind::Prompt);
+            let provenance = pending.provenance(steps[0].promise).unwrap();
+            for (index, suit) in [Suit::Blue, Suit::Green, Suit::Red].into_iter().enumerate() {
+                assert!(!connection_playable(&view, &heights, focus_identity));
+                let identity = Card::new(suit, Rank::Three);
+                assert!(connection_playable(&view, &heights, identity));
+                pending.advance_play(
+                    4 + u32::from(players) * u32::try_from(index).unwrap(),
+                    PlayerId::new(1),
+                    candidates[index],
+                    identity,
+                    true,
+                );
+                connection_advance(&view, &mut heights, identity);
+                assert_eq!(pending.provenance(steps[0].promise), Some(provenance));
+                if index < 2 {
+                    let remaining = pending.active().next().unwrap();
+                    assert_eq!(remaining.promise, steps[0].promise);
+                    assert_eq!(remaining.cards, candidates[index + 1..]);
+                    assert_eq!(remaining.expected, Card::new(Suit::Red, Rank::Three));
+                    assert_eq!(remaining.focus, focus);
+                    assert!(!pending.actor_has_active(PlayerId::new(2)));
+                } else {
+                    assert!(pending.is_empty());
+                    assert!(connection_playable(&view, &heights, focus_identity));
+                    assert_eq!(
+                        pending.transitions().last().unwrap().to,
+                        ConnectionStatus::Satisfied
+                    );
+                }
+                assert!(pending.validate().is_ok());
+            }
+        }
+    }
+}
+
+#[test]
+fn contract_foundation_prompt_uses_pre_clue_knowledge_for_already_due_exclusion() {
+    // L1 "The Prompt": the exclusion applies only if the card WAS already
+    // going to play. This clue cannot establish its own historical premise.
+    // Test one conditional Red4 focus interpretation, not the best clue or
+    // the complete recipient superposition. The connector was rank3-clued
+    // before this Red clue in both cases; only prior suit knowledge differs.
+    for level in [
+        HGroupLevel::Level1,
+        HGroupLevel::Level2,
+        HGroupLevel::Level3,
+        HGroupLevel::Level4,
+    ] {
+        for previously_known in [false, true] {
+            let mut view = snapshot(VariantSpec::no_variant(), 3);
+            view.observer = PlayerId::new(1);
+            let connector = view.hands[1].last_mut().unwrap();
+            connector.clues.add_positive_clue(Clue::Rank(Rank::Three));
+            if previously_known {
+                connector.clues.add_positive_clue(Clue::Suit(Suit::Red));
+            }
+            let connector = connector.id;
+            let before = facts(&view);
+            view.hands[1]
+                .last_mut()
+                .unwrap()
+                .clues
+                .add_positive_clue(Clue::Suit(Suit::Red));
+            let focus = &mut view.hands[1][0];
+            focus.clues.add_positive_clue(Clue::Suit(Suit::Red));
+            let focus = focus.id;
+            let after = facts(&view);
+            let gotten = [connector].into_iter().collect();
+            let mut pending = ConnectionManager::default();
+            // A prior unknown3 is not already playable in this context.
+            let mut heights = [1; 5];
+            heights[Suit::Red.index()] = 2;
+            let steps = schedule_connection(
+                HGroupProfile::Level(level),
+                &view,
+                3,
+                PlayerId::new(0),
+                PlayerId::new(1),
+                focus,
+                Clue::Suit(Suit::Red).into(),
+                &[connector, focus],
+                Some(Card::new(Suit::Red, Rank::Four)),
+                &layout(&view),
+                &after,
+                &before,
+                &[],
+                &gotten,
+                &CardSet::default(),
+                &CardSet::default(),
+                &ConventionFacts::default(),
+                &CardSet::default(),
+                &mut ProvenancedCardSet::default(),
+                &heights,
+                &mut pending,
+                &mut None,
+                false,
+            );
+            if previously_known {
+                assert!(
+                    steps.is_empty(),
+                    "known connector became a new Prompt: {level:?}"
+                );
+            } else {
+                assert_eq!(
+                    steps.len(),
+                    1,
+                    "new knowledge suppressed the Prompt: {level:?}"
+                );
+                assert_eq!(steps[0].actor, PlayerId::new(1));
+                assert_eq!(steps[0].kind, HGroupConnectionKind::Prompt);
+                assert_eq!(steps[0].cards, [connector]);
+                assert_eq!(steps[0].expected, Card::new(Suit::Red, Rank::Three));
+            }
+            assert!(pending.validate().is_ok());
+        }
+    }
 }
 
 #[test]
@@ -168,6 +426,63 @@ fn contract_generic_connection_no_variant_and_sixth_suit_prompt_finesse_parity()
                 .is_some()
             );
         }
+    }
+}
+
+#[test]
+fn contract_foundation_no_variant_finesse_rejects_visible_wrong_connector() {
+    // Algorithmic visibility invariant from L1 Finesse and Empathy, not an
+    // invented strategy replay. Every returned step must respect known faces.
+    // https://hanabi.github.io/beginner/finesse/#finesse-position
+    for players in [3, 4] {
+        let mut view = snapshot(VariantSpec::no_variant(), players);
+        let wrong = Card::new(Suit::Blue, Rank::Two);
+        view.hands[1].last_mut().unwrap().identity = Some(wrong);
+        let connector = view.hands[1].last().unwrap().id;
+        let focus = view.hands[2][0].id;
+        let (steps, _) = plan(
+            &view,
+            PlayerId::new(0),
+            PlayerId::new(2),
+            focus,
+            Card::new(Suit::Red, Rank::Two),
+            Clue::Suit(Suit::Red).into(),
+            &CardSet::default(),
+            &[0; 5],
+        );
+        assert!(
+            !steps
+                .iter()
+                .any(|step| step.cards.contains(&connector) && step.expected != wrong),
+            "visible contradiction: {steps:?}"
+        );
+    }
+}
+
+#[test]
+fn contract_foundation_no_variant_finesse_allows_hidden_own_connector() {
+    for players in [3, 4] {
+        let mut view = snapshot(VariantSpec::no_variant(), players);
+        view.observer = PlayerId::new(1);
+        let connector = view.hands[1].last().unwrap().id;
+        let focus = view.hands[2][0].id;
+        let (steps, _) = plan(
+            &view,
+            PlayerId::new(0),
+            PlayerId::new(2),
+            focus,
+            Card::new(Suit::Red, Rank::Two),
+            Clue::Suit(Suit::Red).into(),
+            &CardSet::default(),
+            &[0; 5],
+        );
+        assert!(
+            steps.iter().any(|step| step.actor == view.observer
+                && step.cards == [connector]
+                && step.expected == Card::new(Suit::Red, Rank::One)
+                && step.kind == HGroupConnectionKind::Finesse),
+            "hidden blind response missing: {steps:?}"
+        );
     }
 }
 
