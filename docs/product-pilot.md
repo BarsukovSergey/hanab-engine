@@ -3,17 +3,17 @@
 ## White H-Group checkpoint: INCOMPLETE
 
 Measured 2026-10-23 on Windows native Rust at clean source commit
-`269949174753b50bbf5d6cf14cfece371d9efe14`. This is an offline diagnostic,
-not enabled production/live support. The existing H-Group inference,
-candidate generation and `plan_move` are used without action substitution.
+`269949174753b50bbf5d6cf14cfece371d9efe14`. This is an offline diagnostic, not
+enabled production/live support. The existing H-Group inference, candidate
+generation and `plan_move` are used without action substitution.
 
 Three players, official catalog `White6Suits`, all 60 cards with catalog copy
-counts, seed 1, `splitmix64-fisher-yates-modulo-v1` as described below. Only
-the acting observer's `physical_view_for` crosses the decision boundary;
-own-hand and own-draw identities are asserted hidden before the checked
-`try_standard` conversion, retaining the White variant. Config: ExpectedScore,
-16 exact worlds, 256 exact nodes, five-second move limit. These limits apply
-only to this opt-in runner. Production defaults and No Variant gates are intact.
+counts, seed 1, `splitmix64-fisher-yates-modulo-v1` as described below. Only the
+acting observer's `physical_view_for` crosses the decision boundary; own-hand
+and own-draw identities are asserted hidden before the checked `try_standard`
+conversion, retaining the White variant. Config: ExpectedScore, 16 exact worlds,
+256 exact nodes, five-second move limit. These limits apply only to this opt-in
+runner. Production defaults and No Variant gates are intact.
 
 ```sh
 cargo test --locked -p hanabi-search --test white_hgroup_pilot \
@@ -23,18 +23,18 @@ cargo test --locked -p hanabi-search --test white_hgroup_pilot \
 This invocation exits **101**, not success: the physical-label/deck contract
 passes, but both opt-in planner tests fail with debug assertions enabled.
 
-| Profile | Completed | Applied Play / Discard / Clue | Official final score | Stack score / strikes | Decision time |
-| ------- | --------- | ---------------------------- | -------------------- | --------------------- | ------------- |
-| Level1 first-action smoke | No | 0 / 0 / 0 | Unavailable | 0 / 0 | 0.4741 s |
-| Level4 game, seed 1 | No | 0 / 0 / 0 | Unavailable | 0 / 0 | 0.4325 s |
+| Profile                   | Completed | Applied Play / Discard / Clue | Official final score | Stack score / strikes | Decision time |
+| ------------------------- | --------- | ----------------------------- | -------------------- | --------------------- | ------------- |
+| Level1 first-action smoke | No        | 0 / 0 / 0                     | Unavailable          | 0 / 0                 | 0.4741 s      |
+| Level4 game, seed 1       | No        | 0 / 0 / 0                     | Unavailable          | 0 / 0                 | 0.4325 s      |
 
-Level4 elapsed time including evidence writes/reconstruction: 0.4328 s.
-The initial Level4 decision fails before returning a symbolic/exact result or
-budget status; no timeout fallback or replacement action is applied. Its empty
-applied prefix reconstructs identically. It is not a completed zero-score game.
+Level4 elapsed time including evidence writes/reconstruction: 0.4328 s. The
+initial Level4 decision fails before returning a symbolic/exact result or budget
+status; no timeout fallback or replacement action is applied. Its empty applied
+prefix reconstructs identically. It is not a completed zero-score game.
 
-**First authoritative blocker:** `h_group/history_reducer.rs::finish`
-rejects an ordinary owner-knowledge domain widening while computing prospective
+**First authoritative blocker:** `h_group/history_reducer.rs::finish` rejects an
+ordinary owner-knowledge domain widening while computing prospective
 continuations of real turn 0:
 
 ```text
@@ -45,7 +45,8 @@ ReplaceDomain { card: CardId(5), identities: IdentitySet(1073217503), source: Cl
 action. The invariant is preserved; its error now includes the offending effect.
 The next narrowly scoped capability is correct monotone White owner-knowledge
 compilation in that prospective path. Further cross-subsystem investigation was
-stopped under repository checkpoint/scope rules; no convention rule was invented.
+stopped under repository checkpoint/scope rules; no convention rule was
+invented.
 
 Earlier dirty-worktree release diagnostics first reproduced a Good Touch panic:
 a sixth-suit singleton was decoded with the No Variant iterator. This checkpoint
@@ -58,12 +59,12 @@ exploratory logs are **not** clean-SHA acceptance evidence: release also omits
 the earlier debug owner-knowledge assertion. No completed game is claimed.
 
 The official [White rules](https://hanabi.github.io/variant-specific/white)
-apply the Loaded Play Clue Assumption to 3/4 Saves, excluding 2/5;
-the [learning path](https://hanabi.github.io/learning-path) recommends Level4.
-That White-specific assumption is **absent from this implementation**; the
-existing base Save resolver explicitly omits Loaded conventions. Physical
-touching parity does not certify these semantics. No White convention release
-or supported recipient-play acceptance claim is made.
+apply the Loaded Play Clue Assumption to 3/4 Saves, excluding 2/5; the
+[learning path](https://hanabi.github.io/learning-path) recommends Level4. That
+White-specific assumption is **absent from this implementation**; the existing
+base Save resolver explicitly omits Loaded conventions. Physical touching parity
+does not certify these semantics. No White convention release or supported
+recipient-play acceptance claim is made.
 
 Evidence retained locally under ignored `target/product-pilot/`:
 `white-hgroup-first.json`, `white-hgroup.json`, `white-hgroup.ndjson` contain
@@ -75,11 +76,11 @@ and test logs are `target/white-checkpoint.log`, `target/white-unit-final.log`,
 `target/white-first.log`, `target/white-first-after.log`, and
 `target/white-game-backtrace.log`.
 
-Independent read-only review found no blocking issue in the local Good Touch
-fix or redacted action path. It required rerunning from a clean commit (done)
-and noted that the report's redaction-check flag records enabled assertions,
-not proof that an arbitrary failing decision passed them. The current failure
-occurs after those assertions. Acceptance is unmet; keep the PR draft.
+Independent read-only review found no blocking issue in the local Good Touch fix
+or redacted action path. It required rerunning from a clean commit (done) and
+noted that the report's redaction-check flag records enabled assertions, not
+proof that an arbitrary failing decision passed them. The current failure occurs
+after those assertions. Acceptance is unmet; keep the PR draft.
 
 Focused validation (all exit 0 unless explicitly described above):
 
