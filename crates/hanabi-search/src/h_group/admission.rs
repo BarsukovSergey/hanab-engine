@@ -26,7 +26,7 @@ pub(super) fn minimum_clue_value(
                 .iter()
                 .any(|(old, known)| *old == card || *known == Some(identity))
         {
-            identities = identities.union(IdentitySet::singleton(identity));
+            identities = identities.union(super::identity::connection_domain(view, identity));
         }
     }
     identities.len()
@@ -51,7 +51,11 @@ fn known_identity(context: GoodTouchContext<'_>, card: CardId) -> Option<Card> {
             .convention_cards
             .iter()
             .find(|note| note.card == card && note.identities.len() == 1)
-            .and_then(|note| note.identities.iter().next())
+            .and_then(|note| {
+                note.identities
+                    .iter_in(context.view.variant.identities())
+                    .next()
+            })
     })
 }
 
@@ -81,7 +85,7 @@ pub(super) fn good_touch(context: GoodTouchContext<'_>) -> bool {
             is_eventually_useful(context.view, identity).then_some(RecipientCardConsequence {
                 card,
                 owner: context.view.current_player,
-                identities: IdentitySet::singleton(identity),
+                identities: super::identity::connection_domain(context.view, identity),
                 disposition: RecipientCardDisposition::PlayAfterConnection,
             })
         })
@@ -94,14 +98,19 @@ pub(super) fn good_touch(context: GoodTouchContext<'_>) -> bool {
     for consequence in consequences {
         let identity = consequence
             .identities
-            .iter()
+            .iter_in(context.view.variant.identities())
             .next()
             .expect("Good Touch consequences are exact");
         let accounted_existing_copy = accounts_for_one_new_copy(context, identity);
-        if newly_promised.contains(identity) && !accounted_existing_copy {
+        if !newly_promised
+            .intersection(super::identity::connection_domain(context.view, identity))
+            .is_empty()
+            && !accounted_existing_copy
+        {
             return false;
         }
-        newly_promised = newly_promised.union(IdentitySet::singleton(identity));
+        newly_promised =
+            newly_promised.union(super::identity::connection_domain(context.view, identity));
         if !accounted_existing_copy
             && context.view.hands.iter().flatten().any(|candidate| {
                 candidate.id != consequence.card
@@ -113,7 +122,7 @@ pub(super) fn good_touch(context: GoodTouchContext<'_>) -> bool {
                             && context.convention_cards.iter().any(|note| {
                                 note.card == candidate.id
                                     && note.promised_identity.map_or_else(
-                                        || note.identities.contains(identity),
+                                        || !note.identities.intersection(super::identity::connection_domain(context.view, identity)).is_empty(),
                                         |promised| promised == identity,
                                     )
                             })))

@@ -608,14 +608,16 @@ impl HGroupState {
                 "owner-knowledge effect references a card outside the live hands".to_owned(),
             );
         }
-        if self.knowledge.effects().iter().any(|effect| {
+        if let Some(effect) = self.knowledge.effects().iter().find(|effect| {
             matches!(
                 effect,
                 CardKnowledgeEffect::ReplaceDomain { source, .. }
                     if !matches!(source, KnowledgeSource::Reinterpretation(_))
             )
         }) {
-            return Err("ordinary owner-knowledge inference widened an identity domain".to_owned());
+            return Err(format!(
+                "ordinary owner-knowledge inference widened an identity domain: {effect:?}"
+            ));
         }
         let transition_effects = self
             .transitions

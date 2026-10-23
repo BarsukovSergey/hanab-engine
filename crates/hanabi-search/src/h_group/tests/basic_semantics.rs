@@ -32,6 +32,37 @@ fn layouts(view: &PlayerView) -> Vec<Vec<CardId>> {
         .collect()
 }
 
+// Artificial inputs check duplicate accounting across the active sixth suit,
+// not a White convention meaning or an optimal clue.
+#[test]
+fn contract_admission_good_touch_preserves_white_identity() {
+    let mut view = snapshot(VariantSpec::from_catalog(VariantId::White6Suits));
+    let white = Card::new(Suit::new(5), Rank::One);
+    view.hands[1][0].identity = Some(white);
+    view.hands[1][1].identity = Some(white);
+    let touched = [view.hands[1][0].id, view.hands[1][1].id];
+    let empty = CardSet::default();
+    let context = super::super::admission::GoodTouchContext {
+        view: &view,
+        newly_touched: &touched[..1],
+        clue: None,
+        explicitly_clued: &empty,
+        fixed_cards: &empty,
+        convention_cards: &[],
+    };
+    assert!(super::super::admission::good_touch(context));
+    assert!(!super::super::admission::good_touch(
+        super::super::admission::GoodTouchContext {
+            newly_touched: &touched,
+            ..context
+        }
+    ));
+    assert_eq!(
+        super::super::admission::minimum_clue_value(&view, &[], touched),
+        1
+    );
+}
+
 #[test]
 fn contract_basic_good_touch_no_variant_matches_legacy_usefulness_and_claims() {
     let mut view = snapshot(VariantSpec::no_variant());
