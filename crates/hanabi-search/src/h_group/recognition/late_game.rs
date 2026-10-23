@@ -6,6 +6,7 @@ use super::{
     has_higher_basic_priority, identity_of, is_playable_at, is_trash_at, next_player,
     protected_cards, push_signal, same_turn_signal, unassigned_finesse_ranks, was_clued_before,
 };
+use crate::h_group::identity::{connection_playable, connection_trash};
 use crate::h_group::interpretation_resolution::supersedes;
 use crate::h_group::{FixObligations, ProvenancedCardSet};
 
@@ -32,8 +33,10 @@ pub(in crate::h_group) fn apply_ignition_effects(
         successful: false,
     } = &entry.event
     {
-        let globally_known_trash = is_trash_at(context.before.stack_heights, *identity)
-            && (effects.explicitly_clued.contains(card) || effects.invisibly_clued.contains(card));
+        let globally_known_trash =
+            connection_trash(view, &context.before.dynamic_stack_heights, *identity)
+                && (effects.explicitly_clued.contains(card)
+                    || effects.invisibly_clued.contains(card));
         // Positional Misplays are the ordinary end-game meaning. A known-trash
         // bomb while cards remain in the deck is instead the explicit
         // Double/Triple Ignition message.
@@ -56,8 +59,12 @@ pub(in crate::h_group) fn apply_ignition_effects(
                     candidate != *card
                         && effects.explicitly_clued.contains(&candidate)
                         && context.historical.identity(candidate).is_some_and(|known| {
-                            is_playable_at(context.before.stack_heights, known)
-                                || is_trash_at(context.before.stack_heights, known)
+                            connection_playable(view, &context.before.dynamic_stack_heights, known)
+                                || connection_trash(
+                                    view,
+                                    &context.before.dynamic_stack_heights,
+                                    known,
+                                )
                         })
                 });
         let requested = if clue_form_available { 3 } else { 2 };
@@ -71,7 +78,9 @@ pub(in crate::h_group) fn apply_ignition_effects(
                 context
                     .historical
                     .identity(candidate)
-                    .is_some_and(|known| is_playable_at(context.before.stack_heights, known))
+                    .is_some_and(|known| {
+                        connection_playable(view, &context.before.dynamic_stack_heights, known)
+                    })
                     .then_some(candidate)
             })
             .collect::<Vec<_>>();
@@ -118,7 +127,7 @@ pub(in crate::h_group) fn apply_ignition_effects(
         return;
     }
 
-    let stack_heights = context.before.stack_heights;
+    let stack_heights = &context.before.dynamic_stack_heights;
     let gotten = protected_cards(
         effects.explicitly_clued,
         effects.invisibly_clued,
@@ -134,12 +143,12 @@ pub(in crate::h_group) fn apply_ignition_effects(
     let globally_playable = touched_identities.as_ref().is_some_and(|identities| {
         identities
             .iter()
-            .all(|identity| is_playable_at(stack_heights, *identity))
+            .all(|identity| connection_playable(view, stack_heights, *identity))
     });
     let globally_trash = touched_identities.as_ref().is_some_and(|identities| {
         identities
             .iter()
-            .all(|identity| is_trash_at(stack_heights, *identity))
+            .all(|identity| connection_trash(view, stack_heights, *identity))
     });
 
     let actor_locked = !context.before.hands[giver.index()].is_empty()
@@ -167,7 +176,7 @@ pub(in crate::h_group) fn apply_ignition_effects(
                 context
                     .historical
                     .identity(*card)
-                    .is_some_and(|identity| is_playable_at(stack_heights, identity))
+                    .is_some_and(|identity| connection_playable(view, stack_heights, identity))
             })
         });
     if let Some(chop_moved_playable) = same_turn_chop_move {
@@ -259,12 +268,13 @@ pub(in crate::h_group) fn apply_ignition_effects(
         .collect::<Vec<_>>();
     let known_playable = |player: PlayerId| {
         context.after.hands[player.index()].iter().any(|card| {
-            let identities =
-                IdentitySet::from_mask(context.after.facts[card.index()].identity_mask());
+            let identities = IdentitySet::from_bits(
+                context.after.facts[card.index()].identity_mask_in(&view.variant),
+            );
             !identities.is_empty()
                 && identities
-                    .iter()
-                    .all(|identity| is_playable_at(stack_heights, identity))
+                    .iter_in(view.variant.identities())
+                    .all(|identity| connection_playable(view, stack_heights, identity))
         })
     };
     let first = ordered_players
@@ -283,7 +293,7 @@ pub(in crate::h_group) fn apply_ignition_effects(
         let is_playable = context
             .historical
             .identity(card)
-            .is_some_and(|identity| is_playable_at(stack_heights, identity));
+            .is_some_and(|identity| connection_playable(view, stack_heights, identity));
         (is_playable || player == view.observer).then_some((player, card))
     });
     let (Some(first_card), Some((_, second_card))) = (first_card, second) else {
@@ -296,7 +306,7 @@ pub(in crate::h_group) fn apply_ignition_effects(
     if context
         .historical
         .identity(first_card)
-        .is_some_and(|identity| is_trash_at(stack_heights, identity))
+        .is_some_and(|identity| connection_trash(view, stack_heights, identity))
     {
         return;
     }
@@ -345,7 +355,7 @@ pub(in crate::h_group) fn apply_phantom_effects(
         return;
     };
     let hands = context.after.hands;
-    let stack_heights = context.before.stack_heights;
+    let stack_heights = &context.before.dynamic_stack_heights;
     let gotten = protected_cards(
         effects.explicitly_clued,
         effects.invisibly_clued,
@@ -353,16 +363,17 @@ pub(in crate::h_group) fn apply_phantom_effects(
     );
     let safe_action = |actor: PlayerId| {
         hands[actor.index()].iter().any(|candidate| {
-            let identities =
-                IdentitySet::from_mask(context.after.facts[candidate.index()].identity_mask());
+            let identities = IdentitySet::from_bits(
+                context.after.facts[candidate.index()].identity_mask_in(&view.variant),
+            );
             !identities.is_empty()
                 && (identities
-                    .iter()
-                    .all(|candidate| is_playable_at(stack_heights, candidate))
+                    .iter_in(view.variant.identities())
+                    .all(|candidate| connection_playable(view, stack_heights, candidate))
                     || (effects.explicitly_clued.contains(candidate)
                         && identities
-                            .iter()
-                            .all(|candidate| is_trash_at(stack_heights, candidate))))
+                            .iter_in(view.variant.identities())
+                            .all(|candidate| connection_trash(view, stack_heights, candidate))))
         })
     };
     let important = |candidate: CardId| {
@@ -370,7 +381,7 @@ pub(in crate::h_group) fn apply_phantom_effects(
             .historical
             .identity(candidate)
             .is_none_or(|candidate| {
-                if is_playable_at(stack_heights, candidate) {
+                if connection_playable(view, stack_heights, candidate) {
                     return true;
                 }
                 let removed = view
@@ -389,23 +400,29 @@ pub(in crate::h_group) fn apply_phantom_effects(
                         )
                     })
                     .count();
-                removed + 1 == usize::from(candidate.rank.copies()) || candidate.rank == Rank::Two
+                removed + 1
+                    == view
+                        .variant
+                        .standard_identity_id(candidate)
+                        .and_then(|id| view.variant.copies(id))
+                        .map_or(0, usize::from)
+                    || candidate.rank == Rank::Two
             })
     };
     let phantom = |candidate: CardId| {
         let Some(candidate_identity) = context.historical.identity(candidate) else {
             return false;
         };
-        let height = stack_heights[candidate_identity.suit.index()];
-        if candidate_identity.rank.number() <= height + 1 {
+        let predecessors = crate::h_group::identity::connection_predecessors(
+            view,
+            stack_heights,
+            candidate_identity,
+        );
+        if predecessors.is_empty() {
             return false;
         }
         let mut has_unaccounted_connector = false;
-        for rank_number in (height + 1)..candidate_identity.rank.number() {
-            let connector = Card::new(
-                candidate_identity.suit,
-                Rank::ALL[usize::from(rank_number - 1)],
-            );
+        for connector in predecessors {
             let Some((owner, connector_card)) =
                 hands.iter().enumerate().find_map(|(owner, hand)| {
                     hand.iter()
@@ -550,7 +567,12 @@ pub(in crate::h_group) fn apply_phantom_effects(
             )
         })
         .count();
-    let non_critical = removed_before + 1 < usize::from(identity.rank.copies());
+    let non_critical = removed_before + 1
+        < view
+            .variant
+            .standard_identity_id(*identity)
+            .and_then(|id| view.variant.copies(id))
+            .map_or(0, usize::from);
     let not_generation = !effects.signals.iter().any(|signal| {
         signal.turn == entry.turn && signal.kind == HGroupMoveKind::GenerationDiscard
     });
@@ -561,11 +583,11 @@ pub(in crate::h_group) fn apply_phantom_effects(
     let known_playable = context
         .actor_before
         .discarded_identity
-        .is_some_and(|known| is_playable_at(stack_heights, known));
+        .is_some_and(|known| connection_playable(view, stack_heights, known));
     if locked
         && discarded_was_clued
         && non_critical
-        && !is_trash_at(stack_heights, *identity)
+        && !connection_trash(view, stack_heights, *identity)
         && not_generation
         && !known_playable
     {

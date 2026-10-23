@@ -200,9 +200,61 @@ IDs, physical clue touching, variant predecessor/successor traversal, and dynami
 historical stack heights. Connection lifecycle identities remain Card-valued and
 are mapped through the V2 identity helpers.
 
-M4-V5 retains Context, Duplication, Elimination, Five-Tech, Out-of-Order, Ignition,
-Phantom, Charm, Unnecessary Moves, and remaining Extras. Shared physical adapters
-do not claim migration of these families' convention meanings.
+M4-V5 is partially implemented. The 2026-10-23 batches migrated production
+recognizers and direct consumers for Context, Duplication, Elimination, Five
+Tech, Out-of-Order, Ignition, and Phantom. Both historical and prospective
+execution retain the shared `rule_engine::apply_rule` dispatch and existing
+`POST_EVENT_RULES` precedence. These are bounded production-code migrations,
+not closure of complete variant replay or M4-V5 acceptance.
+
+| Boundary | Implemented behavior | Implementation checkpoint |
+| --- | --- | --- |
+| Context | Active physical clue/fact domains, pre-event dynamic stacks and predecessors, historical identities; Fix and existing connection suppression retained | `c61960f` |
+| Context owner consumer | Exact reinterpretation claims reach active owner knowledge; literal exclusions still win | `4119cba` |
+| Duplication | Active duplicate proof, pre-event trash tests and reconstructed origin-turn stacks; previous secured-copy proof and connection cancellation retained | `5745da8` |
+| Elimination | Active copies, dated visibility, before/after playability, literal candidate exclusion/retraction; direct Elimination Finesse and OneOf constraint consumers | `5b3db1d` |
+| Five Tech | Active saved-2 masks, dated facts, predecessor distance and connector scheduling; 5 Stall/Save precedence and rank-5 meaning retained | `8eb2e6d` |
+| Out-of-Order | Active unplayed predecessors and historical identities; existing connector and exact Fix actor/target retained | `de5e47a` |
+| Ignition | Dated dynamic playability/trash and active known-playable actor domains; actor selection and deck-empty guard retained | `994ff61` |
+| Phantom | Active safe-action domains, dated predecessors and variant copy counts; visible missing-connector negative proof and owner-belief guard retained | `6ce94f9` |
+
+**PARTIAL / concrete remaining barriers:** sixth-suit historical discards still
+reach `history_reducer::ReplayReducer::apply_discard` and its retained
+`public_removed[identity.index()]` 25-element array (observed index 25 panic).
+`h_group_phase` still reads exactly five stacks (observed index 2 panic for a
+two-stack physical test variant). The Elimination consumer contract therefore
+seeds replay without historical variant discards and supplies empty inferred
+inputs directly to the constraint graph; it does not establish complete variant
+replay. These unchanged boundaries require a separate sized migration before
+variant enablement. All migrated families remain PARTIAL at the complete
+variant-capability level until the shared barriers and remaining consumers close.
+
+Charms, Unnecessary Moves, remaining Extras/Max special effects, Special Finesse
+discard evidence, and the public-layer/inverse-planning historical clue adapters
+are untouched. The optional adapter inventory was not started: its prerequisite
+of coherent earlier queues without outstanding blockers is not met. No unknown
+H-Group ruling was invented and no reviewed fixture/assertion was changed.
+
+Each implementation checkpoint passed its focused
+`bash scripts/check-scoped.sh hanabi-search <filter> --lib` invocation, Rust
+formatting, production-config crate check, and `git diff --check`. Filters:
+`contract_v5_context` (3 contracts after consumer closure),
+`contract_v5_duplication` (2), `contract_v5_elimination` (2),
+`contract_v5_five_tech` (1), `contract_v5_out_of_order` (1),
+`contract_v5_ignition` (2), and `contract_v5_phantom` (2). The physical/epistemic
+contracts cover No Variant plus reordered sixth-suit domains/ranks and negative
+evidence; they are not new convention or optimal-move authorities. The named
+planner-dependent Out-of-Order replay and full local suites were not run.
+The final combined `check-scoped.sh hanabi-search --test-only contract_v5_ --lib`
+run passed all 13 contracts and formatting; the equivalent production-config
+check passed at the final Phantom boundary. One independent read-only review
+of `bd96055..6ce94f9` found no actionable material regression or critical missing
+regression preventing integration. Integration is tracked in [PR #49](https://github.com/BarsukovSergey/hanab-engine/pull/49).
+Its first CI run found `clippy::nonminimal_bool` in the Out-of-Order empty-stack
+guard; the follow-up uses the equivalent `is_none_or` form. Live PR checks
+record the final integration result; focused local success alone is not a
+full-validation claim. Detailed local
+commands/logs and checkpoint notes are in ignored `target/workflow/m4-v5-*`.
 
 Legacy reducer stack/count arrays, V5 `Rank::ALL`/`Suit::ALL` loops, remaining
 legacy identity claim masks, and `standard_h_group_clue` remain outside the

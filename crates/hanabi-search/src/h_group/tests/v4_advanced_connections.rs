@@ -876,3 +876,824 @@ fn contract_hidden_finesse_after_prompt_uses_reordered_successor_domain() {
         ))
     );
 }
+
+// V5 contracts reuse these physical snapshots; they establish no variant
+// convention pack. Context's documented precedence is unchanged.
+#[test]
+fn contract_v5_context_dated_active_connector_and_observer_negative() {
+    for (variant, suit, next) in [
+        (VariantSpec::no_variant(), Suit::Red, Rank::Two),
+        (reordered(), Suit::new(5), Rank::Three),
+    ] {
+        let mut view = snapshot(variant, 3);
+        let focus = view.hands[1][0].id;
+        let identity = Card::new(suit, next);
+        view.hands[1][0].identity = Some(identity);
+        // Current stacks are later than the event being interpreted.
+        view.play_stacks[0] = vec![(CardId::new(50), Card::new(suit, Rank::One))];
+        let entry = clue_entry(1, Clue::Rank(next), focus);
+        let hands = layout(&view);
+        let facts = facts(&view);
+        let mut context = context(&view, &entry);
+        context.before.dynamic_stack_heights.fill(0);
+        context.after.hands = &hands;
+        context.after.facts = &facts;
+        let mut effects = Effects::default();
+        crate::h_group::recognition::apply_context_effects(
+            &context,
+            &view,
+            &mut effects.borrow(&[]),
+        );
+        let signal = effects
+            .signals
+            .iter()
+            .find(|s| s.kind == HGroupMoveKind::Context)
+            .unwrap();
+        assert_eq!(signal.identity, Some(identity));
+        let mut claims = ConventionFacts::default();
+        claims.apply_identity_effect(signal);
+        assert_eq!(claims.known_identity(focus), Some(identity));
+
+        // A future reveal of the observer's own card must not establish Context.
+        let hidden = view.hands[0][0].id;
+        view.hands[0][0].identity = Some(identity);
+        let hidden_entry = clue_entry(0, Clue::Rank(next), hidden);
+        let mut context = self::context(&view, &hidden_entry);
+        context.after.hands = &hands;
+        let mut effects = Effects::default();
+        crate::h_group::recognition::apply_context_effects(
+            &context,
+            &view,
+            &mut effects.borrow(&[]),
+        );
+        assert!(effects.signals.iter().next().is_none());
+    }
+}
+
+#[test]
+fn contract_v5_context_active_focus_inversion_preserves_existing_connection_and_fix() {
+    for variant in [VariantSpec::no_variant(), reordered()] {
+        let mut view = snapshot(variant, 3);
+        let old = view.hands[1][0].id;
+        let new = view.hands[1][1].id;
+        view.hands[1].truncate(2);
+        // Rank 1 is playable in both universes; rank 5 is not.
+        view.hands[1][0].clues = ClueFacts::default();
+        let mut entry = clue_entry(1, Clue::Suit(Suit::Red), new);
+        if let ObservedEvent::Clued { touched, .. } = &mut entry.event {
+            *touched = vec![old, new];
+        }
+        let mut context = context(&view, &entry);
+        // Active-ID fact masks deliberately exclude a directly playable old focus.
+        let five = Card::new(Suit::Red, Rank::Five);
+        context.before.facts[old.index()].add_positive_clue(Clue::Rank(Rank::Five));
+        for guard in [0, 1, 2] {
+            let mut effects = Effects::default();
+            let clues = vec![interpretation(&view, old, five, 1, Clue::Suit(Suit::Red))];
+            if guard == 1 {
+                effects.pending.start(
+                    entry.turn,
+                    obligation(
+                        2,
+                        vec![view.hands[2][0].id],
+                        Card::new(Suit::Red, Rank::One),
+                        old,
+                        five,
+                        HGroupConnectionKind::Finesse,
+                    ),
+                );
+            }
+            if guard == 2 {
+                push_signal(
+                    &mut effects.signals,
+                    &entry,
+                    PlayerId::new(0),
+                    Some(PlayerId::new(1)),
+                    HGroupMoveKind::FixClue,
+                    vec![old],
+                    None,
+                );
+            }
+            crate::h_group::recognition::apply_context_effects(
+                &context,
+                &view,
+                &mut effects.borrow(&clues),
+            );
+            assert_eq!(
+                effects
+                    .signals
+                    .has_at_turn(entry.turn, HGroupMoveKind::FocusInversion),
+                guard == 0
+            );
+            assert_eq!(effects.forced.contains(&new), guard == 0);
+        }
+    }
+}
+
+#[test]
+fn contract_v5_duplication_active_old_duplicate_proof_and_cancellation() {
+    for (variant, suit) in [
+        (VariantSpec::no_variant(), Suit::Red),
+        (reordered(), Suit::new(5)),
+    ] {
+        let mut view = snapshot(variant, 3);
+        let played = view.hands[1][0].id;
+        let duplicate = view.hands[0][0].id;
+        let cover = view.hands[2][0].id;
+        let identity = Card::new(suit, Rank::One);
+        view.hands[0][0]
+            .clues
+            .add_positive_clue(Clue::Rank(Rank::One));
+        if suit == Suit::Red {
+            view.hands[0][0]
+                .clues
+                .add_positive_clue(Clue::Suit(Suit::Red));
+        }
+        view.hands[2][0].identity = Some(Card::new(Suit::Red, Rank::One));
+        let entry = ObservedHistoryEntry {
+            turn: 4,
+            event: ObservedEvent::Played {
+                player: PlayerId::new(1),
+                card: played,
+                identity,
+                successful: true,
+            },
+        };
+        let mut hands = layout(&view);
+        hands[1].retain(|card| *card != played);
+        let facts = facts(&view);
+        let mut context = context(&view, &entry);
+        context.after.hands = &hands;
+        context.after.facts = &facts;
+        for old in [false, true] {
+            let mut origin = interpretation(&view, played, identity, 1, Clue::Rank(Rank::One));
+            origin.turn = 2;
+            if old {
+                origin.previously_gotten.push(duplicate);
+            }
+            let mut trash = interpretation(&view, duplicate, identity, 0, Clue::Rank(Rank::One));
+            trash.turn = 1;
+            let clues = vec![trash, origin];
+            let mut effects = Effects::default();
+            effects.explicit.extend([duplicate, cover]);
+            effects.playing.insert(played);
+            effects.pending.start(
+                2,
+                obligation(
+                    1,
+                    vec![played],
+                    identity,
+                    played,
+                    identity,
+                    HGroupConnectionKind::Finesse,
+                ),
+            );
+            let mut trash_entry = entry.clone();
+            trash_entry.turn = 1;
+            push_signal(
+                &mut effects.signals,
+                &trash_entry,
+                PlayerId::new(2),
+                Some(PlayerId::new(0)),
+                HGroupMoveKind::TrashChopMove,
+                vec![duplicate],
+                None,
+            );
+            crate::h_group::recognition::apply_duplication_effects(
+                &context,
+                &view,
+                &mut effects.borrow(&clues),
+            );
+            assert_eq!(
+                effects
+                    .signals
+                    .has_at_turn(4, HGroupMoveKind::TimeTravelChopMove),
+                old
+            );
+            assert_eq!(effects.playing.contains(&played), !old);
+            assert_eq!(
+                effects.pending.iter().any(|c| effects.pending.is_active(c)),
+                !old
+            );
+        }
+    }
+}
+
+#[test]
+fn contract_v5_duplication_extra_value_uses_origin_heights() {
+    for (variant, suit) in [
+        (VariantSpec::no_variant(), Suit::Red),
+        (reordered(), Suit::new(5)),
+    ] {
+        let mut view = snapshot(variant, 3);
+        let played = view.hands[1][0].id;
+        let duplicate = view.hands[2][0].id;
+        let extra = view.hands[2][1].id;
+        let identity = Card::new(suit, Rank::One);
+        view.hands[2][0].identity = Some(identity);
+        view.hands[2][1].identity = Some(identity);
+        // This later public play makes all remaining copies trash now, but
+        // they were live at the originating clue. This is a dating invariant.
+        view.history.push(ObservedHistoryEntry {
+            turn: 3,
+            event: ObservedEvent::Played {
+                player: PlayerId::new(2),
+                card: CardId::new(40),
+                identity,
+                successful: true,
+            },
+        });
+        let entry = ObservedHistoryEntry {
+            turn: 4,
+            event: ObservedEvent::Played {
+                player: PlayerId::new(1),
+                card: played,
+                identity,
+                successful: true,
+            },
+        };
+        let mut hands = layout(&view);
+        hands[1].retain(|card| *card != played);
+        let facts = facts(&view);
+        let mut context = context(&view, &entry);
+        context.after.hands = &hands;
+        context.after.facts = &facts;
+        let mut origin = interpretation(&view, played, identity, 1, Clue::Rank(Rank::One));
+        origin.turn = 2;
+        origin.previously_gotten.push(duplicate);
+        origin.new_non_focus.push(extra);
+        // The retained standard stack field cannot describe the sixth suit;
+        // dynamic historical reconstruction must be the source of truth.
+        origin.stack_heights = [5; 5];
+        let mut effects = Effects::default();
+        effects.explicit.insert(duplicate);
+        crate::h_group::recognition::apply_duplication_effects(
+            &context,
+            &view,
+            &mut effects.borrow(&[origin]),
+        );
+        assert!(
+            effects
+                .signals
+                .has_at_turn(4, HGroupMoveKind::DuplicitousValue)
+        );
+        assert!(
+            !effects
+                .signals
+                .has_at_turn(4, HGroupMoveKind::TimeTravelChopMove)
+        );
+    }
+}
+
+#[test]
+fn contract_v5_elimination_active_copy_count_resolution_and_constraints() {
+    for (variant, suit, copies) in [
+        (VariantSpec::no_variant(), Suit::Red, 3),
+        (reordered(), Suit::new(5), 4),
+    ] {
+        let mut view = snapshot(variant, 3);
+        let identity = Card::new(suit, Rank::One);
+        let discarded = view.hands[0][0].id;
+        let candidate = view.hands[0][1].id;
+        view.hands[0].truncate(2);
+        // Leave exactly one physical copy after this discard. Reordered
+        // variants deliberately disagree with Rank::copies().
+        for turn in 0..copies - 2 {
+            view.history.push(ObservedHistoryEntry {
+                turn,
+                event: ObservedEvent::Discarded {
+                    player: PlayerId::new(2),
+                    card: CardId::new(40 + turn as usize),
+                    identity,
+                },
+            });
+        }
+        let entry = ObservedHistoryEntry {
+            turn: 4,
+            event: ObservedEvent::Discarded {
+                player: PlayerId::new(0),
+                card: discarded,
+                identity,
+            },
+        };
+        let mut hands = layout(&view);
+        hands[0].retain(|card| *card != discarded);
+        let facts = facts(&view);
+        let mut context = context(&view, &entry);
+        context.after.hands = &hands;
+        context.after.facts = &facts;
+        let mut effects = Effects::default();
+        crate::h_group::recognition::apply_elimination_effects(
+            &entry,
+            &view,
+            &hands,
+            &context.after.dynamic_stack_heights,
+            1,
+            &mut effects.signals,
+        );
+        crate::h_group::recognition::apply_elimination_resolution_effects(
+            &context,
+            &view,
+            &mut effects.borrow(&[]),
+        );
+        assert!(effects.signals.has_at_turn(4, HGroupMoveKind::Elimination));
+        assert!(effects.moved.contains(&candidate));
+        assert!(effects.forced.contains(&candidate));
+        // Build only the consumer seed through the No Variant-era reducer.
+        // Sixth-suit historical discards still hit its retained public_removed
+        // array; the production migration does not claim that boundary closed.
+        let mut seed = view.clone();
+        seed.history.clear();
+        let deductions = LogicalDeductions::new(seed).unwrap();
+        let mut replay = replay_h_group(&deductions, HGroupProfile::Level(HGroupLevel::Level1));
+        replay.cards.facts = effects.signals.facts().clone();
+        let inferred = HGroupInferences::default();
+        let constraints = crate::h_group::constraint_graph::ConventionConstraintGraph::from_replay(
+            &deductions,
+            &replay,
+            &inferred,
+        )
+        .into_belief_constraints();
+        assert!(
+            constraints
+                .factors
+                .iter()
+                .flatten()
+                .any(|branch| branch.contains(&(candidate, connection_domain(&view, identity))))
+        );
+
+        // A literal exclusion retracts the claim instead of forcing an
+        // impossible constraint, even in the reordered active universe.
+        context.before.facts[candidate.index()].add_negative_clue(Clue::Rank(Rank::One));
+        context.after.facts = &context.before.facts;
+        crate::h_group::recognition::apply_elimination_resolution_effects(
+            &context,
+            &view,
+            &mut effects.borrow(&[]),
+        );
+        assert!(effects.signals.facts().identity_claims().is_empty());
+    }
+}
+
+#[test]
+fn contract_v5_elimination_visibility_and_exhausted_copy_negative() {
+    for (variant, suit, copies) in [
+        (VariantSpec::no_variant(), Suit::Red, 3),
+        (reordered(), Suit::new(5), 4),
+    ] {
+        for visible in [false, true] {
+            let mut view = snapshot(variant.clone(), 3);
+            let identity = Card::new(suit, Rank::One);
+            let discarded = view.hands[1][0].id;
+            // Opponent visible copy blocks Elimination. The observer's own
+            // current identity, even if injected, cannot be earlier evidence.
+            view.hands[if visible { 2 } else { 0 }][0].identity = Some(identity);
+            let entry = ObservedHistoryEntry {
+                turn: 4,
+                event: ObservedEvent::Discarded {
+                    player: PlayerId::new(1),
+                    card: discarded,
+                    identity,
+                },
+            };
+            let mut hands = layout(&view);
+            hands[1].retain(|card| *card != discarded);
+            let heights = vec![0; view.variant.stack_suits().len()];
+            let mut signals = ConventionJournal::default();
+            crate::h_group::recognition::apply_elimination_effects(
+                &entry,
+                &view,
+                &hands,
+                &heights,
+                1,
+                &mut signals,
+            );
+            assert_eq!(
+                signals.has_at_turn(4, HGroupMoveKind::Elimination),
+                !visible
+            );
+            for turn in 0..copies - 1 {
+                view.history.push(ObservedHistoryEntry {
+                    turn,
+                    event: ObservedEvent::Discarded {
+                        player: PlayerId::new(2),
+                        card: CardId::new(40 + turn as usize),
+                        identity,
+                    },
+                });
+            }
+            let mut signals = ConventionJournal::default();
+            crate::h_group::recognition::apply_elimination_effects(
+                &entry,
+                &view,
+                &hands,
+                &heights,
+                1,
+                &mut signals,
+            );
+            assert!(!signals.has_at_turn(4, HGroupMoveKind::Elimination));
+        }
+    }
+}
+
+#[test]
+fn contract_v5_context_exact_claim_reaches_owner_active_knowledge() {
+    for (variant, suit) in [
+        (VariantSpec::no_variant(), Suit::Red),
+        (reordered(), Suit::new(5)),
+    ] {
+        for excluded in [false, true] {
+            let mut view = snapshot(variant.clone(), 3);
+            let card = view.hands[0][0].id;
+            let identity = Card::new(suit, Rank::Three);
+            view.hands[0][0]
+                .clues
+                .add_positive_clue(Clue::Rank(if excluded { Rank::Five } else { Rank::Three }));
+            let deductions = LogicalDeductions::new(view.clone()).unwrap();
+            let mut replay = replay_h_group(&deductions, HGroupProfile::Level(HGroupLevel::Level1));
+            let entry = clue_entry(0, Clue::Rank(Rank::Three), card);
+            let mut journal = ConventionJournal::default();
+            push_signal(
+                &mut journal,
+                &entry,
+                PlayerId::new(1),
+                Some(PlayerId::new(0)),
+                HGroupMoveKind::Context,
+                vec![card],
+                Some(identity),
+            );
+            replay.cards.facts = journal.facts().clone();
+            replay.knowledge = build_convention_knowledge(&deductions, &replay);
+            let notes = convention_card_inferences(&deductions, &replay);
+            let note = notes.iter().find(|note| note.card == card).unwrap();
+            if excluded {
+                assert!(
+                    note.identities
+                        .intersection(connection_domain(&view, identity))
+                        .is_empty()
+                );
+            } else {
+                assert_eq!(note.identities, connection_domain(&view, identity));
+            }
+        }
+    }
+}
+
+#[test]
+fn contract_v5_five_tech_active_connector_save_stall_and_visibility() {
+    for (variant, suit, rank) in [
+        (VariantSpec::no_variant(), Suit::Red, Rank::Two),
+        (reordered(), Suit::new(5), Rank::Three),
+    ] {
+        for guard in 0..4 {
+            let mut view = snapshot(variant.clone(), 3);
+            let pulled = view.hands[2][0].id;
+            let five = view.hands[2][1].id;
+            let connector = view.hands[1].last().unwrap().id;
+            let identity = Card::new(suit, rank);
+            view.hands[2][0].identity = Some(identity);
+            view.hands[2][1].identity = Some(Card::new(suit, Rank::Five));
+            view.hands[1].last_mut().unwrap().identity = Some(Card::new(suit, Rank::One));
+            if guard == 3 {
+                view.observer = PlayerId::new(2);
+            }
+            let entry = clue_entry(2, Clue::Rank(Rank::Five), five);
+            let hands = layout(&view);
+            let facts = facts(&view);
+            let mut context = context(&view, &entry);
+            context.after.hands = &hands;
+            context.after.facts = &facts;
+            let mut clue = interpretation(
+                &view,
+                five,
+                Card::new(suit, Rank::Five),
+                2,
+                Clue::Rank(Rank::Five),
+            );
+            if guard == 1 {
+                clue.save_identities = connection_domain(&view, Card::new(suit, Rank::Five));
+            }
+            let mut effects = Effects::default();
+            if guard == 2 {
+                push_signal(
+                    &mut effects.signals,
+                    &entry,
+                    PlayerId::new(0),
+                    Some(PlayerId::new(2)),
+                    HGroupMoveKind::FiveStall,
+                    vec![five],
+                    None,
+                );
+            }
+            crate::h_group::recognition::apply_five_tech_effects(
+                &context,
+                &view,
+                &hands,
+                &[clue],
+                &context.after.dynamic_stack_heights,
+                &effects.explicit,
+                &effects.invisible,
+                &mut effects.moved,
+                &mut effects.pending,
+                &mut effects.forced,
+                &mut effects.saves,
+                &mut effects.signals,
+            );
+            assert_eq!(
+                effects.signals.has_at_turn(4, HGroupMoveKind::FivePull),
+                guard == 0
+            );
+            assert_eq!(
+                effects.pending.iter().count(),
+                if guard == 0 { 2 } else { 0 }
+            );
+            if guard == 0 {
+                assert_eq!(effects.pending.active().count(), 1);
+                assert!(effects.pending.active().any(|c| c.cards == [connector] && c.expected == Card::new(suit, Rank::One)));
+                assert!(
+                    effects
+                        .pending
+                        .iter()
+                        .any(|c| c.focus == pulled && c.expected == identity)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn contract_v5_out_of_order_active_lower_card_keeps_connector_and_fix_owner() {
+    for (variant, suit) in [
+        (VariantSpec::no_variant(), Suit::Red),
+        (reordered(), Suit::new(5)),
+    ] {
+        for guard in 0..3 {
+            let mut view = snapshot(variant.clone(), 3);
+            let focus = view.hands[2][0].id;
+            let lower = view.hands[2][1].id;
+            let connector = view.hands[1].last().unwrap().id;
+            let five = Card::new(suit, Rank::Five);
+            view.hands[2][0].identity = Some(five);
+            view.hands[2][1].identity = Some(Card::new(suit, Rank::Three));
+            if guard == 2 {
+                view.observer = PlayerId::new(2);
+            }
+            let mut entry = clue_entry(2, Clue::Suit(Suit::Red), focus);
+            if let ObservedEvent::Clued { touched, .. } = &mut entry.event {
+                *touched = vec![lower, focus];
+            }
+            let hands = layout(&view);
+            let mut heights = vec![0; view.variant.stack_suits().len()];
+            if guard == 1 {
+                connection_advance(&view, &mut heights, Card::new(suit, Rank::Three));
+            }
+            let meaning = interpretation(&view, focus, five, 2, Clue::Suit(Suit::Red));
+            let mut effects = Effects::default();
+            effects.pending.start(
+                2,
+                obligation(
+                    1,
+                    vec![connector],
+                    Card::new(suit, Rank::One),
+                    focus,
+                    five,
+                    HGroupConnectionKind::Finesse,
+                ),
+            );
+            crate::h_group::recognition::apply_out_of_order_effects(
+                &entry,
+                &view,
+                &hands,
+                &[meaning],
+                &heights,
+                &effects.explicit,
+                &effects.invisible,
+                &effects.moved,
+                &mut effects.pending,
+                &mut effects.forced,
+                &mut effects.fixes,
+                &mut effects.signals,
+            );
+            assert_eq!(
+                effects
+                    .signals
+                    .has_at_turn(4, HGroupMoveKind::OutOfOrderFinesse),
+                guard == 0
+            );
+            assert_eq!(effects.fixes.iter().count(), usize::from(guard == 0));
+            if guard == 0 {
+                let fix = effects.fixes.iter().next().unwrap().required;
+                assert_eq!(fix.actor, PlayerId::new(1));
+                assert_eq!(fix.target, PlayerId::new(2));
+                assert_eq!(fix.focus, focus);
+                assert_eq!(fix.identity, five);
+            }
+            // Physical migration must preserve the existing connector chain.
+            assert_eq!(effects.pending.iter().count(), 1);
+            assert!(
+                effects
+                    .pending
+                    .active()
+                    .any(|c| c.cards == [connector] && c.expected == Card::new(suit, Rank::One))
+            );
+        }
+    }
+}
+
+#[test]
+fn contract_v5_ignition_bomb_uses_dated_active_playability() {
+    for (variant, suit, rank) in [
+        (VariantSpec::no_variant(), Suit::Red, Rank::Two),
+        (reordered(), Suit::new(5), Rank::Three),
+    ] {
+        for empty_deck in [false, true] {
+            let mut view = snapshot(variant.clone(), 3);
+            let bomb = view.hands[0][0].id;
+            let first = view.hands[1].last().unwrap().id;
+            let second = view.hands[2].last().unwrap().id;
+            view.hands[1].last_mut().unwrap().identity = Some(Card::new(suit, rank));
+            view.hands[2].last_mut().unwrap().identity = Some(Card::new(suit, rank));
+            let entry = ObservedHistoryEntry {
+                turn: 4,
+                event: ObservedEvent::Played {
+                    player: PlayerId::new(0),
+                    card: bomb,
+                    identity: Card::new(suit, Rank::One),
+                    successful: false,
+                },
+            };
+            let mut hands = layout(&view);
+            hands[0].retain(|card| *card != bomb);
+            let mut context = context(&view, &entry);
+            context.before.dynamic_stack_heights.fill(1);
+            context.before.deck_size = if empty_deck { 0 } else { 30 };
+            context.after.hands = &hands;
+            let mut effects = Effects::default();
+            effects.explicit.insert(bomb);
+            crate::h_group::recognition::apply_ignition_effects(
+                &context,
+                &view,
+                &mut effects.borrow(&[]),
+            );
+            assert_eq!(
+                effects
+                    .signals
+                    .has_at_turn(4, HGroupMoveKind::BombDoubleIgnition),
+                !empty_deck
+            );
+            assert_eq!(effects.forced.contains(&first), !empty_deck);
+            assert_eq!(effects.forced.contains(&second), !empty_deck);
+        }
+    }
+}
+
+#[test]
+fn contract_v5_ignition_active_known_playable_actor_is_skipped() {
+    for (variant, suit, rank) in [
+        (VariantSpec::no_variant(), Suit::Red, Rank::Two),
+        (reordered(), Suit::new(5), Rank::Three),
+    ] {
+        let mut view = snapshot(variant, 4);
+        let touched = view.hands[3][0].id;
+        let skipped = view.hands[1].last().unwrap().id;
+        let first = view.hands[2].last().unwrap().id;
+        let second = view.hands[3].last().unwrap().id;
+        view.hands[1][0].clues.add_positive_clue(Clue::Rank(rank));
+        view.hands[3][0].identity = Some(Card::new(suit, rank));
+        view.hands[3].last_mut().unwrap().identity = Some(Card::new(suit, rank));
+        let mut prior = clue_entry(3, Clue::Rank(rank), touched);
+        prior.turn = 2;
+        view.history.push(prior);
+        let entry = clue_entry(3, Clue::Rank(rank), touched);
+        let hands = layout(&view);
+        let facts = facts(&view);
+        let mut context = context(&view, &entry);
+        context.before.dynamic_stack_heights.fill(1);
+        context.after.hands = &hands;
+        context.after.facts = &facts;
+        let mut effects = Effects::default();
+        crate::h_group::recognition::apply_ignition_effects(
+            &context,
+            &view,
+            &mut effects.borrow(&[]),
+        );
+        assert!(
+            effects
+                .signals
+                .has_at_turn(4, HGroupMoveKind::ReplayDoubleIgnition)
+        );
+        assert!(!effects.forced.contains(&skipped));
+        assert!(effects.forced.contains(&first));
+        assert!(effects.forced.contains(&second));
+    }
+}
+
+#[test]
+fn contract_v5_phantom_active_predecessors_require_visible_unaccounted_connector() {
+    for (variant, suit, middle, rank) in [
+        (VariantSpec::no_variant(), Suit::Red, Rank::Two, Rank::Three),
+        (reordered(), Suit::new(5), Rank::Three, Rank::Five),
+    ] {
+        for guard in 0..3 {
+            let mut view = snapshot(variant.clone(), 3);
+            let discarded = view.hands[0][0].id;
+            let focus = view.hands[2][0].id;
+            let first = view.hands[1][0].id;
+            let second = view.hands[1][1].id;
+            view.hands[2][0].identity = Some(Card::new(suit, rank));
+            view.hands[1][0].identity = Some(Card::new(suit, Rank::One));
+            if guard != 1 {
+                view.hands[1][1].identity = Some(Card::new(suit, middle));
+            }
+            let entry = ObservedHistoryEntry {
+                turn: 4,
+                event: ObservedEvent::Discarded {
+                    player: PlayerId::new(0),
+                    card: discarded,
+                    identity: Card::new(suit, rank),
+                },
+            };
+            let mut hands = layout(&view);
+            hands[0].retain(|card| *card != discarded);
+            let facts = facts(&view);
+            let mut context = context(&view, &entry);
+            context.after.hands = &hands;
+            context.after.facts = &facts;
+            let mut effects = Effects::default();
+            if guard == 2 {
+                effects.explicit.extend([first, second]);
+            }
+            push_signal(
+                &mut effects.signals,
+                &entry,
+                PlayerId::new(0),
+                Some(PlayerId::new(2)),
+                HGroupMoveKind::ScreamDiscard,
+                vec![focus],
+                None,
+            );
+            crate::h_group::recognition::apply_phantom_effects(
+                &context,
+                &view,
+                &mut effects.borrow(&[]),
+            );
+            assert_eq!(
+                effects
+                    .signals
+                    .has_at_turn(4, HGroupMoveKind::PhantomPlayable),
+                guard == 0
+            );
+        }
+    }
+}
+
+#[test]
+fn contract_v5_phantom_sacrifice_uses_active_copies_and_prior_owner_knowledge() {
+    let mut view = snapshot(reordered(), 3);
+    let identity = Card::new(Suit::new(5), Rank::Five);
+    let discarded = view.hands[1][0].id;
+    let entry = ObservedHistoryEntry {
+        turn: 4,
+        event: ObservedEvent::Discarded {
+            player: PlayerId::new(1),
+            card: discarded,
+            identity,
+        },
+    };
+    for exhausted in [false, true] {
+        view.history.clear();
+        for turn in 0..if exhausted { 3 } else { 2 } {
+            view.history.push(ObservedHistoryEntry {
+                turn,
+                event: ObservedEvent::Discarded {
+                    player: PlayerId::new(2),
+                    card: CardId::new(40 + turn as usize),
+                    identity,
+                },
+            });
+        }
+        let mut hands = layout(&view);
+        hands[1].retain(|card| *card != discarded);
+        let facts = facts(&view);
+        let mut context = context(&view, &entry);
+        context
+            .before
+            .protected
+            .extend(context.before.hands[1].iter().copied());
+        context.after.hands = &hands;
+        context.after.facts = &facts;
+        let mut effects = Effects::default();
+        effects.explicit.insert(discarded);
+        crate::h_group::recognition::apply_phantom_effects(
+            &context,
+            &view,
+            &mut effects.borrow(&[]),
+        );
+        assert_eq!(
+            effects
+                .signals
+                .has_at_turn(4, HGroupMoveKind::SacrificeDiscard),
+            !exhausted
+        );
+    }
+}

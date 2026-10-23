@@ -216,6 +216,7 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
     /// likewise replace the old provisional identity in the owner's read model.
     /// <https://hanabi.github.io/level-23/#the-4-charm>
     fn apply_exact_reinterpretations(&mut self) {
+        let view = self.deductions.view();
         for claim in self
             .replay
             .cards
@@ -239,14 +240,18 @@ impl<'a> ConventionKnowledgeCompiler<'a> {
                 if self
                     .deductions
                     .possible_identities(card)
-                    .is_none_or(|logical| !logical.contains(claim.identity))
+                    .is_none_or(|logical| {
+                        logical
+                            .intersection(connection_domain(view, claim.identity))
+                            .is_empty()
+                    })
                 {
                     continue;
                 }
                 self.knowledge.update(
                     card,
                     KnowledgeSource::Reinterpretation(claim.turn),
-                    |card| card.identities = IdentitySet::singleton(claim.identity),
+                    |card| card.identities = connection_domain(view, claim.identity),
                 );
             }
         }

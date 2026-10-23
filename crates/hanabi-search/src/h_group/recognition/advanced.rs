@@ -3,16 +3,17 @@ use super::{
     ConnectionTransitionReason, ConventionJournal, HGroupClueInterpretation, HGroupClueKind,
     HGroupConnectionKind, HGroupMoveKind, HGroupRuleEffects, HGroupTurnContext, IdentitySet,
     ObservedEvent, ObservedHistoryEntry, PlayerView, PromiseId, Rank, RequiredFix, chop,
-    finesse_position_id, five_pulled_card, identity_of, is_playable_at, is_trash_at, next_player,
-    protected_cards, push_signal, same_turn_signal, unassigned_finesse_ranks, was_clued_before,
+    finesse_position_id, five_pulled_card, next_player, protected_cards, push_signal,
+    same_turn_signal, unassigned_finesse_ranks_in, was_clued_before,
 };
+use crate::h_group::identity::{connection_allows, connection_playable, connection_trash};
 use crate::h_group::model::FixObligations;
 
 pub(in crate::h_group) fn apply_elimination_effects(
     entry: &ObservedHistoryEntry,
     view: &PlayerView,
     hands: &[Vec<CardId>],
-    stack_heights: [u8; 5],
+    stack_heights: &[usize],
     clue_tokens: u8,
     signals: &mut ConventionJournal,
 ) {
@@ -20,19 +21,21 @@ pub(in crate::h_group) fn apply_elimination_effects(
     // https://hanabi.github.io/level-18/#the-elimination-blind-play
     // https://hanabi.github.io/level-18/#the-elimination-play-clue
     // https://hanabi.github.io/level-18/#the-elimination-finesse
+    let historical = crate::h_group::HistoricalView::new(view, entry.turn);
     match &entry.event {
         ObservedEvent::Discarded {
             player,
             card,
             identity,
         } if clue_tokens > 0
-            && !is_trash_at(stack_heights, *identity)
-            && (identity.rank == Rank::Two || is_playable_at(stack_heights, *identity))
+            && !connection_trash(view, stack_heights, *identity)
+            && (identity.rank == Rank::Two
+                || connection_playable(view, stack_heights, *identity))
             && another_copy_survives_discard(view, entry.turn, *identity)
             && !hands.iter().enumerate().any(|(owner, hand)| {
                 owner != player.index()
                     && hand.iter().any(|candidate| {
-                        identity_of(view, *candidate).or_else(|| {
+                        historical.identity(*candidate).or_else(|| {
                             signals
                                 .facts()
                                 .known_identity_before(*candidate, entry.turn)
@@ -90,8 +93,9 @@ pub(in crate::h_group) fn apply_elimination_effects(
                     *giver,
                     Some(*target),
                     if touched.iter().all(|card| {
-                        identity_of(view, *card)
-                            .is_some_and(|identity| is_trash_at(stack_heights, identity))
+                        historical
+                            .identity(*card)
+                            .is_some_and(|identity| connection_trash(view, stack_heights, identity))
                     }) {
                         HGroupMoveKind::TrashTouchElimination
                     } else {
@@ -120,7 +124,11 @@ fn another_copy_survives_discard(view: &PlayerView, turn: u32, identity: Card) -
         })
         .count()
         + 1
-        < usize::from(identity.rank.copies())
+        < view
+            .variant
+            .standard_identity_id(identity)
+            .and_then(|id| view.variant.copies(id))
+            .map_or(0, usize::from)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -170,7 +178,7 @@ pub(in crate::h_group) fn apply_elimination_resolution_effects(
             );
             continue;
         }
-        if is_trash_at(context.after.stack_heights, claim.identity) {
+        if connection_trash(view, &context.after.dynamic_stack_heights, claim.identity) {
             for card in &claim.cards {
                 effects.forced_playable.remove(card);
                 effects.chop_moved.remove(card);
@@ -187,7 +195,7 @@ pub(in crate::h_group) fn apply_elimination_resolution_effects(
         {
             let card = candidates_after[0];
             effects.chop_moved.insert(card);
-            if is_playable_at(context.after.stack_heights, claim.identity) {
+            if connection_playable(view, &context.after.dynamic_stack_heights, claim.identity) {
                 effects.forced_playable.insert(card);
             }
             push_signal(
@@ -214,6 +222,7 @@ pub(in crate::h_group) fn apply_elimination_resolution_effects(
             continue;
         }
         let candidates_before = compatible_elimination_candidates(
+            view,
             &context.before.hands[target.index()],
             &context.before.facts,
             &claim.cards,
@@ -250,11 +259,16 @@ fn remaining_elimination_candidates(
     identity: Card,
 ) -> Vec<CardId> {
     if known_copies_outside_hand(context, view, identity, target)
-        >= usize::from(identity.rank.copies())
+        >= view
+            .variant
+            .standard_identity_id(identity)
+            .and_then(|id| view.variant.copies(id))
+            .map_or(0, usize::from)
     {
         return Vec::new();
     }
     compatible_elimination_candidates(
+        view,
         &context.after.hands[target.index()],
         context.after.facts,
         cards,
@@ -263,6 +277,7 @@ fn remaining_elimination_candidates(
 }
 
 fn compatible_elimination_candidates(
+    view: &PlayerView,
     hand: &[CardId],
     facts: &[hanabi_core::ClueFacts],
     cards: &[CardId],
@@ -270,7 +285,9 @@ fn compatible_elimination_candidates(
 ) -> Vec<CardId> {
     hand.iter()
         .copied()
-        .filter(|card| cards.contains(card) && facts[card.index()].allows(identity))
+        .filter(|card| {
+            cards.contains(card) && connection_allows(view, facts[card.index()], identity)
+        })
         .collect()
 }
 
@@ -298,11 +315,11 @@ fn known_copies_outside_hand(
 }
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(in crate::h_group) fn apply_five_tech_effects(
-    entry: &ObservedHistoryEntry,
+    context: &HGroupTurnContext<'_>,
     view: &PlayerView,
     hands: &[Vec<CardId>],
     clues: &[HGroupClueInterpretation],
-    stack_heights: [u8; 5],
+    stack_heights: &[usize],
     explicitly_clued: &CardSet,
     invisibly_clued: &CardSet,
     chop_moved: &mut CardSet,
@@ -315,6 +332,8 @@ pub(in crate::h_group) fn apply_five_tech_effects(
     // https://hanabi.github.io/level-19/#the-5-pull
     // https://hanabi.github.io/level-19/#the-5-number-ejection-5ne
     // https://hanabi.github.io/level-19/#the-5-number-discharge-5nd
+    let entry = context.entry;
+    let historical = context.historical;
     let ObservedEvent::Clued {
         giver,
         target,
@@ -340,12 +359,14 @@ pub(in crate::h_group) fn apply_five_tech_effects(
         .filter(|interpretation| interpretation.target != *target)
         .filter(|interpretation| !interpretation.save_identities.is_empty())
         .find_map(|interpretation| {
-            let twos = IdentitySet::from_mask(
+            let twos = IdentitySet::from_bits(
                 interpretation
                     .save_identities
-                    .iter()
+                    .iter_in(view.variant.identities())
                     .filter(|identity| identity.rank == Rank::Two)
-                    .fold(0, |mask, identity| mask | (1 << identity.index())),
+                    .fold(0, |mask, identity| {
+                        mask | crate::h_group::identity::connection_bit(view, identity)
+                    }),
             );
             (!twos.is_empty()).then_some(twos)
         });
@@ -358,17 +379,23 @@ pub(in crate::h_group) fn apply_five_tech_effects(
             // their chop (the giver could have saved it directly) and writes
             // elimination notes on every otherwise-unclued off-chop card.
             // Source: https://hanabi.github.io/level-19/#interaction-between-2-saves--5-stalls
-            let candidates = view.hands[target.index()]
+            let candidates = hands[target.index()]
                 .iter()
                 .filter(|card| {
-                    card.id != chop
-                        && !touched.contains(&card.id)
-                        && !explicitly_clued.contains(&card.id)
+                    **card != chop
+                        && !touched.contains(card)
+                        && !explicitly_clued.contains(card)
                         && identities
-                            .iter()
-                            .any(|identity| card.clues.allows(identity))
+                            .iter_in(view.variant.identities())
+                            .any(|identity| {
+                                connection_allows(
+                                    view,
+                                    context.before.facts[card.index()],
+                                    identity,
+                                )
+                            })
                 })
-                .map(|card| card.id)
+                .copied()
                 .collect::<Vec<_>>();
             if !candidates.is_empty() {
                 implicit_saves.extend(candidates.iter().copied().map(|card| (card, identities)));
@@ -401,29 +428,31 @@ pub(in crate::h_group) fn apply_five_tech_effects(
     let Some(pulled) = five_pulled_card(&hands[target.index()], touched, &gotten) else {
         return;
     };
-    let Some(identity) = identity_of(view, pulled) else {
+    let Some(identity) = historical.identity(pulled) else {
         return;
     };
-    let height = stack_heights[identity.suit.index()];
+    let predecessors =
+        crate::h_group::identity::connection_predecessors(view, stack_heights, identity);
     let actor = next_player(*giver, hands.len());
-    let (kind, forced) = if identity.rank.number() <= height {
+    let (kind, forced) = if connection_trash(view, stack_heights, identity) {
         let Some(card) = finesse_position_id(&hands[actor.index()], &gotten, 2).filter(|card| {
-            identity_of(view, *card)
-                .is_some_and(|candidate| is_playable_at(stack_heights, candidate))
+            historical
+                .identity(*card)
+                .is_some_and(|candidate| connection_playable(view, stack_heights, candidate))
         }) else {
             return;
         };
         chop_moved.insert(pulled);
         (HGroupMoveKind::FiveNumberDischarge, Some(card))
-    } else if identity.rank.number() == height + 1 {
+    } else if connection_playable(view, stack_heights, identity) {
         (HGroupMoveKind::FivePull, Some(pulled))
-    } else if identity.rank.number() == height + 2 {
+    } else if predecessors.len() == 1 {
         if actor == *target {
             return;
         }
-        let connector = Card::new(identity.suit, Rank::ALL[usize::from(height)]);
+        let connector = predecessors[0];
         let Some(card) = finesse_position_id(&hands[actor.index()], &gotten, 0)
-            .filter(|card| identity_of(view, *card) == Some(connector))
+            .filter(|card| historical.identity(*card) == Some(connector))
         else {
             return;
         };
@@ -461,8 +490,9 @@ pub(in crate::h_group) fn apply_five_tech_effects(
         (HGroupMoveKind::FivePull, None)
     } else {
         let Some(card) = finesse_position_id(&hands[actor.index()], &gotten, 1).filter(|card| {
-            identity_of(view, *card)
-                .is_some_and(|candidate| is_playable_at(stack_heights, candidate))
+            historical
+                .identity(*card)
+                .is_some_and(|candidate| connection_playable(view, stack_heights, candidate))
         }) else {
             return;
         };
@@ -484,7 +514,7 @@ pub(in crate::h_group) fn apply_five_tech_effects(
         Some(*target),
         kind,
         touched.clone(),
-        touched.iter().find_map(|card| identity_of(view, *card)),
+        touched.iter().find_map(|card| historical.identity(*card)),
     );
     if matches!(
         kind,
@@ -501,7 +531,7 @@ pub(in crate::h_group) fn apply_five_tech_effects(
                 HGroupMoveKind::Discharge
             },
             touched.clone(),
-            touched.iter().find_map(|card| identity_of(view, *card)),
+            touched.iter().find_map(|card| historical.identity(*card)),
         );
     }
 }
@@ -512,7 +542,7 @@ pub(in crate::h_group) fn apply_out_of_order_effects(
     view: &PlayerView,
     hands: &[Vec<CardId>],
     clues: &[HGroupClueInterpretation],
-    stack_heights: [u8; 5],
+    stack_heights: &[usize],
     explicitly_clued: &CardSet,
     invisibly_clued: &CardSet,
     chop_moved: &CardSet,
@@ -527,6 +557,7 @@ pub(in crate::h_group) fn apply_out_of_order_effects(
     // https://hanabi.github.io/level-20/#the-suboptimal-prompt--the-suboptimal-finesse--the-suboptimal-bluff
     // https://hanabi.github.io/level-20/#the-no-information-finesse
     // https://hanabi.github.io/level-20/#the-no-information-double-bluff-nidb
+    let historical = crate::h_group::HistoricalView::new(view, entry.turn);
     let ObservedEvent::Clued {
         giver,
         target,
@@ -561,10 +592,17 @@ pub(in crate::h_group) fn apply_out_of_order_effects(
         {
             return false;
         }
-        let Some(focus_identity) = identity_of(view, meaning.focus) else {
+        let Some(focus_identity) = historical.identity(meaning.focus) else {
             return false;
         };
-        if focus_identity.rank != Rank::Four || stack_heights[focus_identity.suit.index()] != 0 {
+        if focus_identity.rank != Rank::Four
+            || view
+                .variant
+                .stack_suits()
+                .iter()
+                .position(|suit| *suit == focus_identity.suit)
+                .is_none_or(|suit| stack_heights[suit] != 0)
+        {
             return false;
         }
         if same_turn_signal(signals, entry.turn, HGroupMoveKind::CriticalColorBluff)
@@ -573,7 +611,7 @@ pub(in crate::h_group) fn apply_out_of_order_effects(
             return false;
         }
         let actor = next_player(*giver, hands.len());
-        if unassigned_finesse_ranks(
+        if unassigned_finesse_ranks_in(
             view,
             *giver,
             actor,
@@ -587,15 +625,17 @@ pub(in crate::h_group) fn apply_out_of_order_effects(
         }
         let gotten = protected_cards(explicitly_clued, invisibly_clued, chop_moved);
         let charmed = finesse_position_id(&hands[actor.index()], &gotten, 3).is_some_and(|card| {
-            identity_of(view, card).map_or(actor == view.observer, |identity| {
-                is_playable_at(stack_heights, identity)
-            })
+            historical
+                .identity(card)
+                .map_or(actor == view.observer, |identity| {
+                    connection_playable(view, stack_heights, identity)
+                })
         });
         let double_bluff_actor = next_player(actor, hands.len());
         let double_bluff_available =
             finesse_position_id(&hands[double_bluff_actor.index()], &gotten, 0)
-                .and_then(|card| identity_of(view, card))
-                .is_some_and(|identity| is_playable_at(stack_heights, identity));
+                .and_then(|card| historical.identity(card))
+                .is_some_and(|identity| connection_playable(view, stack_heights, identity));
         charmed && !double_bluff_available
     });
     if four_charm {
@@ -605,22 +645,22 @@ pub(in crate::h_group) fn apply_out_of_order_effects(
         return;
     }
     if let Some(card) = interpretation.map(|clue| clue.focus).filter(|card| {
-        identity_of(view, *card).is_some_and(|identity| {
-            identity.rank.number() > stack_heights[identity.suit.index()] + 1
+        historical.identity(*card).is_some_and(|identity| {
+            let predecessors =
+                crate::h_group::identity::connection_predecessors(view, stack_heights, identity);
+            !predecessors.is_empty()
                 && touched.iter().any(|candidate| {
                     candidate != card
                         && interpretation
                             .is_some_and(|clue| !clue.previously_gotten.contains(candidate))
-                        && identity_of(view, *candidate).is_some_and(|lower| {
-                            lower.suit == identity.suit
-                                && lower.rank.number() < identity.rank.number()
-                                && lower.rank.number() > stack_heights[identity.suit.index()]
-                        })
+                        && historical
+                            .identity(*candidate)
+                            .is_some_and(|lower| predecessors.contains(&lower))
                 })
         })
     }) {
         let focus = card;
-        let focus_identity = identity_of(view, focus);
+        let focus_identity = historical.identity(focus);
         if let Some(identity) = focus_identity {
             required_fixes.insert_unconditional(RequiredFix {
                 actor: next_player(*giver, view.hands.len()),
