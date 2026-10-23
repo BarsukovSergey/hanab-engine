@@ -1945,7 +1945,7 @@ pub(in crate::h_group) fn snapshot_save_identities(
     gotten: &CardSet,
     _play_identities: IdentitySet,
     stack_heights: [u8; 5],
-    discarded: [u8; 25],
+    discarded: &[u8],
 ) -> IdentitySet {
     if !focus_was_chop && !eight_clue_save {
         return IdentitySet::default();
@@ -1973,7 +1973,7 @@ pub(in crate::h_group) fn snapshot_save_identities(
             .identities()
             .id_for(identity.suit, identity.rank)
             .unwrap();
-        discarded_counts[id.index()] = usize::from(discarded[identity.index()]);
+        discarded_counts[id.index()] = usize::from(discarded[id.index()]);
     }
     let chops = hands
         .iter()
