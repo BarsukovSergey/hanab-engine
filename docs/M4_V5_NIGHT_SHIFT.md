@@ -31,8 +31,10 @@ vertical has coherent coverage and the adapter can be migrated without
 inventing H-Group semantics or changing unrelated architecture.
 
 This is one V5 implementation branch, **not** one unbounded chat and **not**
-authorization to declare M4-V5 complete. Do not open or merge a PR, change
-production/live/CLI variant gates, or implement M4-V6 variant convention packs.
+authorization to declare M4-V5 complete. Do not open a PR during source
+implementation; open **one PR at the final review/CI stage** if there are
+coherent code changes. Never merge it or change production/live/CLI variant
+gates or implement M4-V6 variant convention packs.
 
 ## Autonomous work budget
 
@@ -42,6 +44,9 @@ far as evidence permits; do **not** try to spend all available time.
 - Maximum **eight coherent implementation checkpoints** plus **one independent
   final read-only review**. A checkpoint should finish a recognizer family
   including its direct production path, rather than just an isolated helper.
+  Reserve the last approximately 20% of the available Goal budget for
+  final review, PR creation, CI feedback, and a bounded CI cleanup; stop
+  taking new implementation tasks when that reserve is reached.
 - Default approximately 10–20 active minutes **per continuation/batch**, not
   a 20-minute limit on the entire Goal. Do one feature at a time. At around
   60–65% context use, compact/refresh if the active Codex Goal supports a safe
@@ -248,7 +253,8 @@ For each completed phase:
    concrete regression risk, not a broad replay suite.
 3. Commit a **compile-safe, coherent production + validation checkpoint**
    and push if the current sandbox/permissions allow it without
-   privilege escalation. Don't open PRs or merge. If a partial diff
+   privilege escalation. Do not open a PR **yet**: repeated PR pushes
+   restart CI and waste runner time. Never merge. If a partial diff
    cannot be made coherent, stop rather than committing broken code or
    discarding somebody else's work.
 4. Record the outcome in the ignored progress note. Do not repeat
@@ -267,8 +273,49 @@ mass-review all history, or change reviewed replay expectations.
 
 Update `docs/WORKING_STATE.md` with what is genuinely completed/partial,
 remaining active standard-only consumers and actual check status. Remove
-this temporary packet from the eventual V5 PR, but keep the night
-checkpoint available on the branch until the morning human review.
+this temporary packet with `git rm docs/M4_V5_NIGHT_SHIFT.md` in the final
+branch commit after recording outcomes in `WORKING_STATE.md`; its content
+remains recoverable in Git history. The live run instructions already
+loaded from this packet remain applicable.
+
+## Final PR + CI stage — mandatory when code was changed
+
+This stage is a **required part of the overnight task**, not an optional
+morning chore. Complete it once the implementation/review window ends,
+including when some independent families were skipped. The Goal's
+implementation limit does not prohibit PR/CI cleanup.
+
+1. If there are substantive, compile-safe source changes, a clean
+   worktree, and at least one focused validation passing, push the final
+   checkpoint and open **exactly one PR** from
+   `m4-v5-high-level-refinements` into `main`. Use **draft** when V5
+   remains partial, unreviewed, or blocked; otherwise a normal PR is
+   acceptable. In the PR body list completed capabilities, explicit
+   PARTIAL/BLOCKED areas, evidence/tests, and known validation gaps.
+   An open draft PR still runs PR CI. Do not create a docs-only/empty PR.
+2. Check the actual PR CI statuses and job logs. This explicit Goal
+   requirement overrides the usual instruction not to wait for CI inside
+   implementation batches. Do not claim CI green from local checks.
+3. For deterministic, clearly in-scope format, Clippy, compilation, or
+   test failures, attempt at most **two focused CI cleanup pushes** in
+   total, each followed by the relevant new CI result. Fix only proven
+   problems; do not change reviewed fixtures, weaken tests, or widen
+   semantic scope to make CI green. Avoid rerunning all local checks.
+4. If CI exposes a new semantic decision, a pre-existing/non-local
+   failure, or an unexpected broad regression, stop editing that
+   failure: record the exact job/test/error in the PR and handoff.
+   Do not endlessly compare baselines or retry flaky planner tests.
+5. If CI remains queued/running without useful feedback, or GitHub
+   access requires permissions/approval unavailable to the session,
+   leave the committed branch and any created PR in a truthful
+   pending/blocked state. Do not wait indefinitely.
+6. **Never merge, force-push, mark CI green without evidence, or remove
+   the V6 production gate.** The morning reviewer decides whether
+   to approve or continue implementation.
+
+If there were no coherent code changes, or the working tree is knowingly
+unbuildable, do **not** open a misleading PR; report why the final
+PR/CI stage was impossible instead.
 
 ## Exit / morning handoff
 
@@ -280,7 +327,7 @@ item, record it and continue only with a truly independent item.
 
 End with a compact report: completed families/SHAs, PARTIAL/BLOCKED
 families, direct production paths migrated, tests/check commands and
-results, review findings, branch HEAD/dirty status and the exact
-next morning decision. Do not claim V5/M4 completion, PR CI green,
-independent convention correctness, or variant production enablement
-from focused local tests.
+results, review findings, branch HEAD/dirty status, PR URL/state,
+actual CI run/status, and the exact next morning decision. Do not
+claim V5/M4 completion, CI green, independent convention correctness,
+or variant production enablement without the corresponding evidence.
