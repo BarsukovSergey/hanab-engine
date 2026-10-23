@@ -305,3 +305,51 @@ M4-V6 work, along with production enablement and resolution of the retained
 legacy action/clue-label boundary. No Brown/Omni/Null/Pink-specific convention
 meanings are introduced by V4. M4-V6 still owns variant-specific convention packs
 and production enablement; the No Variant production gate is unchanged.
+
+**R2A historical clue/discard boundary (2026-10-23):** supersedes the R1
+clue-adapter blocker above for the specified Level1 trace. The permanent
+`contract_v5_r2_legal_rainbow_clue_discard` constructs the catalog's exact
+three-player Rainbow6Suits deck in active universe/copy-count order, gives
+player 1 the rank of their first card at eight tokens, then legally discards
+that card. An independent FullState reconstruction repeats the same actions;
+all three physical observer projections match. No history is blanked or edited:
+clue, discard and redacted replacement draw retain their turns and labels.
+
+`history_reducer::reduce_clue` consumes the already checked historical `Clue`
+label without invoking the separate No Variant semantic adapter. Physical
+collateral Good Touch/trash domains use active identity masks; completion uses
+dated dynamic heights. The adjacent Elimination connector loop is gated before
+physical access and uses active predecessor/domain evidence. Literal rank-2/5
+convention meanings, focus/Save/Play precedence and production policy gates are
+unchanged. No `HGroupClueInterpretation` storage field was added.
+
+The contract runs LogicalDeductions and genuine Level1 replay before and after
+the discard for every observer, verifies unchanged clue-time interpretation,
+materialized ExplicitlyClued journal changes, final hands and public discard
+counts, active sixth-suit literal/collateral domains, and pre-reveal owner
+ignorance. Synthetic physical history is infrastructure evidence only, not an
+optimal-move or Rainbow convention ruling. Existing No Variant vocabulary
+parity and explicit semantic-adapter rejection tests remain unchanged.
+
+**R2B blockers / bounded read-only next-boundary inspection:** successful
+sixth-suit play still reaches `history_reducer::reduce_play`'s retained
+`self.stack_heights[identity.suit.index()]` write into `[u8; 5]`. A sixth suit
+indexes slot 5, outside that array. Migrate that storage and its direct snapshot
+consumers coherently; no successful-play replay is claimed here. Full physical
+clue vocabulary remains a separate boundary: `PlayerView<GenericClue>::try_standard`
+explicitly rejects labels outside `Clue` before mapping events. R2A does not
+extend `Clue`/`Action`, alias a sixth color, or drop unrepresentable events.
+Higher-level historical semantic adapter callers (`public_layers`,
+`inverse_planning`, late-game recognition), other retained advanced legacy masks
+and stack snapshots, and Five Tech's threshold remain unclosed. Charms, Extras,
+V6 packs and production enablement remain outside this result.
+
+R2A validation: scoped `contract_v5_r2_ --lib` passed (1 test); final scoped
+`clue_vocabulary --lib` passed (6 tests, including the real Rainbow trace,
+reviewed No Variant replay parity and both unchanged semantic rejection tests).
+The six `contract_v5_replay_` and two `contract_v5_elimination_` focused tests
+also passed. Formatting, production-config `cargo check -p hanabi-search
+--locked` and `git diff --check` passed. Independent read-only diff review
+against `c18202c` found no material issues. These are focused results; neither
+full successful-play replay nor the full local suite was run. PR/main CI is
+reported by the integration record, independently of local checks.
