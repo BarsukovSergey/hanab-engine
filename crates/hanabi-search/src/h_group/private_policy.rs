@@ -60,15 +60,16 @@ pub(super) fn threatened_chop(
             {
                 continue;
             }
+            let literal = IdentitySet::from_bits(held.clues.identity_mask_in(&public.variant));
             let domain = notes
                 .iter()
                 .find(|n| n.card == held.id)
-                .map_or_else(
-                    || IdentitySet::from_mask(held.clues.identity_mask()),
-                    |n| n.identities,
-                )
-                .intersection(IdentitySet::from_mask(held.clues.identity_mask()));
-            if domain.contains(identity) {
+                .map_or(literal, |n| n.identities)
+                .intersection(literal);
+            if !domain
+                .intersection(super::identity::connection_domain(public, identity))
+                .is_empty()
+            {
                 domains.push((held.id, domain));
             }
         }
@@ -114,12 +115,13 @@ fn enumerate(
             pairs
         })
         .collect();
-    let mut counts = [0_u8; 25];
-    for suit in hanabi_core::Suit::ALL {
-        for rank in hanabi_core::Rank::ALL {
-            counts[Card::new(suit, rank).index()] = rank.copies();
-        }
-    }
+    let mut counts = public
+        .variant
+        .identities()
+        .identities()
+        .iter()
+        .map(|identity| identity.copies)
+        .collect::<Vec<_>>();
     for id in public
         .hands
         .iter()
@@ -128,15 +130,20 @@ fn enumerate(
         .chain(public.play_stacks.iter().flatten().map(|(_, c)| *c))
         .chain(public.discard_pile.iter().map(|(_, c)| *c))
     {
-        counts[id.index()] = counts[id.index()].saturating_sub(1);
+        let active = public
+            .variant
+            .standard_identity_id(id)
+            .expect("visible active identity");
+        counts[active.index()] = counts[active.index()].saturating_sub(1);
     }
     let mut worlds = vec![Vec::new()];
     for (id, domain) in domains {
         let mut next = Vec::new();
         for world in worlds {
-            for identity in domain.iter() {
+            for active in domain.iter_ids() {
+                let identity = super::identity::connection_card(public, active);
                 if world.iter().filter(|(_, c)| *c == identity).count()
-                    >= usize::from(counts[identity.index()])
+                    >= usize::from(counts[active.index()])
                 {
                     continue;
                 }
@@ -176,6 +183,54 @@ fn enumerate(
 mod tests {
     use super::*;
     use hanabi_core::{Action, Clue, PlayerId, Rank, Suit};
+
+    // Artificial domains test physical copy accounting, not strategic meanings.
+    #[test]
+    fn contract_private_world_enumeration_uses_active_multiplicities() {
+        use hanabi_core::{FullState, VariantId, VariantSpec};
+        for id in [VariantId::NoVariant, VariantId::White6Suits] {
+            let variant = VariantSpec::from_catalog(id);
+            let suit = *variant.stack_suits().last().unwrap();
+            let deck = variant
+                .identities()
+                .identities()
+                .iter()
+                .flat_map(|identity| {
+                    std::iter::repeat_n(
+                        Card::new(identity.suit, identity.rank),
+                        usize::from(identity.copies),
+                    )
+                })
+                .collect();
+            let state = FullState::new_variant(3, variant, deck).unwrap();
+            let view = state
+                .physical_view_for(PlayerId::new(0))
+                .unwrap()
+                .try_standard()
+                .unwrap();
+            let d = LogicalDeductions::new(view.clone()).unwrap();
+            let r =
+                super::super::replay_h_group(&d, HGroupProfile::Level(crate::HGroupLevel::Level1));
+            let one = Card::new(suit, Rank::One);
+            let five = Card::new(suit, Rank::Five);
+            let one_domain = super::super::identity::connection_domain(&view, one);
+            let five_domain = super::super::identity::connection_domain(&view, five);
+            let Split::Worlds(worlds) = enumerate(
+                &view,
+                &r,
+                vec![
+                    (CardId::new(0), one_domain.union(five_domain)),
+                    (CardId::new(1), five_domain),
+                ],
+            ) else {
+                panic!("one copy-consistent world expected");
+            };
+            assert_eq!(worlds.len(), 1);
+            assert!(worlds[0].contains(&(CardId::new(0), one)));
+            assert!(worlds[0].contains(&(CardId::new(1), five)));
+            assert!(view.hands[0].iter().all(|card| card.identity.is_none()));
+        }
+    }
 
     fn reviewed_window() -> (PlayerView, PlayerView) {
         let fixture = hanabi_protocol::HanabiLiveReplay::from_json(include_str!(

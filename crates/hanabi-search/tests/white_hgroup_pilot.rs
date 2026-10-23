@@ -54,7 +54,7 @@ fn config() -> PlannerConfig {
         objective: PlanningObjective::ExpectedScore,
         exact_world_limit: 16,
         exact_node_limit: 256,
-        move_time_limit: Duration::from_secs(5),
+        move_time_limit: Duration::from_secs(15),
     }
 }
 
