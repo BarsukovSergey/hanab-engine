@@ -1499,3 +1499,91 @@ fn contract_v5_out_of_order_active_lower_card_keeps_connector_and_fix_owner() {
         }
     }
 }
+
+#[test]
+fn contract_v5_ignition_bomb_uses_dated_active_playability() {
+    for (variant, suit, rank) in [
+        (VariantSpec::no_variant(), Suit::Red, Rank::Two),
+        (reordered(), Suit::new(5), Rank::Three),
+    ] {
+        for empty_deck in [false, true] {
+            let mut view = snapshot(variant.clone(), 3);
+            let bomb = view.hands[0][0].id;
+            let first = view.hands[1].last().unwrap().id;
+            let second = view.hands[2].last().unwrap().id;
+            view.hands[1].last_mut().unwrap().identity = Some(Card::new(suit, rank));
+            view.hands[2].last_mut().unwrap().identity = Some(Card::new(suit, rank));
+            let entry = ObservedHistoryEntry {
+                turn: 4,
+                event: ObservedEvent::Played {
+                    player: PlayerId::new(0),
+                    card: bomb,
+                    identity: Card::new(suit, Rank::One),
+                    successful: false,
+                },
+            };
+            let mut hands = layout(&view);
+            hands[0].retain(|card| *card != bomb);
+            let mut context = context(&view, &entry);
+            context.before.dynamic_stack_heights.fill(1);
+            context.before.deck_size = if empty_deck { 0 } else { 30 };
+            context.after.hands = &hands;
+            let mut effects = Effects::default();
+            effects.explicit.insert(bomb);
+            crate::h_group::recognition::apply_ignition_effects(
+                &context,
+                &view,
+                &mut effects.borrow(&[]),
+            );
+            assert_eq!(
+                effects
+                    .signals
+                    .has_at_turn(4, HGroupMoveKind::BombDoubleIgnition),
+                !empty_deck
+            );
+            assert_eq!(effects.forced.contains(&first), !empty_deck);
+            assert_eq!(effects.forced.contains(&second), !empty_deck);
+        }
+    }
+}
+
+#[test]
+fn contract_v5_ignition_active_known_playable_actor_is_skipped() {
+    for (variant, suit, rank) in [
+        (VariantSpec::no_variant(), Suit::Red, Rank::Two),
+        (reordered(), Suit::new(5), Rank::Three),
+    ] {
+        let mut view = snapshot(variant, 4);
+        let touched = view.hands[3][0].id;
+        let skipped = view.hands[1].last().unwrap().id;
+        let first = view.hands[2].last().unwrap().id;
+        let second = view.hands[3].last().unwrap().id;
+        view.hands[1][0].clues.add_positive_clue(Clue::Rank(rank));
+        view.hands[3][0].identity = Some(Card::new(suit, rank));
+        view.hands[3].last_mut().unwrap().identity = Some(Card::new(suit, rank));
+        let mut prior = clue_entry(3, Clue::Rank(rank), touched);
+        prior.turn = 2;
+        view.history.push(prior);
+        let entry = clue_entry(3, Clue::Rank(rank), touched);
+        let hands = layout(&view);
+        let facts = facts(&view);
+        let mut context = context(&view, &entry);
+        context.before.dynamic_stack_heights.fill(1);
+        context.after.hands = &hands;
+        context.after.facts = &facts;
+        let mut effects = Effects::default();
+        crate::h_group::recognition::apply_ignition_effects(
+            &context,
+            &view,
+            &mut effects.borrow(&[]),
+        );
+        assert!(
+            effects
+                .signals
+                .has_at_turn(4, HGroupMoveKind::ReplayDoubleIgnition)
+        );
+        assert!(!effects.forced.contains(&skipped));
+        assert!(effects.forced.contains(&first));
+        assert!(effects.forced.contains(&second));
+    }
+}
