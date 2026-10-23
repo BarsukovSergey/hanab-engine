@@ -29,14 +29,14 @@ pub(super) struct ConventionIdentityClaim {
 /// `HGroupSignal` answers "why did we infer this?"; this type answers "what is
 /// true now?" Rules should query this index rather than searching old signals
 /// and accidentally treating a cancelled interpretation as live state.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq)]
 pub(super) struct ConventionFacts {
     fixed_cards: CardSet,
-    known_identities: [Option<Card>; 50],
-    known_conflicts: [bool; 50],
-    excluded_identities: [IdentitySet; 50],
-    demonstrated_layers: [Option<Card>; 50],
-    layer_conflicts: [bool; 50],
+    known_identities: Vec<Option<Card>>,
+    known_conflicts: Vec<bool>,
+    excluded_identities: Vec<IdentitySet>,
+    demonstrated_layers: Vec<Option<Card>>,
+    layer_conflicts: Vec<bool>,
     active_priority: CardSet,
     /// Exact owner knowledge transferred by a Gentleman's Discard. This is a
     /// live semantic fact, not something consumers should reconstruct from
@@ -45,15 +45,37 @@ pub(super) struct ConventionFacts {
     identity_claims: Vec<ConventionIdentityClaim>,
 }
 
+impl PartialEq for ConventionFacts {
+    fn eq(&self, other: &Self) -> bool {
+        // Unallocated card slots carry exactly the same unknown/empty facts
+        // as allocated default slots. Growth must not turn a no-op into a change.
+        fn slots_equal<T: Default + PartialEq>(left: &[T], right: &[T]) -> bool {
+            let empty = T::default();
+            (0..left.len().max(right.len())).all(|index| {
+                left.get(index).unwrap_or(&empty) == right.get(index).unwrap_or(&empty)
+            })
+        }
+        self.fixed_cards == other.fixed_cards
+            && slots_equal(&self.known_identities, &other.known_identities)
+            && slots_equal(&self.known_conflicts, &other.known_conflicts)
+            && slots_equal(&self.excluded_identities, &other.excluded_identities)
+            && slots_equal(&self.demonstrated_layers, &other.demonstrated_layers)
+            && slots_equal(&self.layer_conflicts, &other.layer_conflicts)
+            && self.active_priority == other.active_priority
+            && self.exact_transfers == other.exact_transfers
+            && self.identity_claims == other.identity_claims
+    }
+}
+
 impl Default for ConventionFacts {
     fn default() -> Self {
         Self {
             fixed_cards: CardSet::default(),
-            known_identities: [None; 50],
-            known_conflicts: [false; 50],
-            excluded_identities: [IdentitySet::default(); 50],
-            demonstrated_layers: [None; 50],
-            layer_conflicts: [false; 50],
+            known_identities: vec![None; 50],
+            known_conflicts: vec![false; 50],
+            excluded_identities: vec![IdentitySet::default(); 50],
+            demonstrated_layers: vec![None; 50],
+            layer_conflicts: vec![false; 50],
             active_priority: CardSet::default(),
             exact_transfers: Vec::new(),
             identity_claims: Vec::new(),
@@ -136,6 +158,7 @@ impl ConventionFacts {
     }
 
     pub(super) fn apply_identity_effect(&mut self, signal: &HGroupSignal) {
+        self.ensure_cards(&signal.cards);
         // A Bluff signal records the blind-played identity, not the identity
         // of its final focus card. Resolving it also supersedes any earlier
         // provisional direct Play claim on that focus.
@@ -262,7 +285,7 @@ impl ConventionFacts {
     }
 
     pub(super) fn known_identity(&self, card: CardId) -> Option<Card> {
-        self.known_identities[card.index()]
+        self.known_identities.get(card.index()).copied().flatten()
     }
 
     /// A currently retained claim that predates the clue being interpreted.
@@ -280,12 +303,18 @@ impl ConventionFacts {
         identity
     }
 
-    pub(super) const fn excluded_identities(&self, card: CardId) -> IdentitySet {
-        self.excluded_identities[card.index()]
+    pub(super) fn excluded_identities(&self, card: CardId) -> IdentitySet {
+        self.excluded_identities
+            .get(card.index())
+            .copied()
+            .unwrap_or_default()
     }
 
     pub(super) fn demonstrated_layer(&self, card: CardId) -> Option<Card> {
-        self.demonstrated_layers[card.index()]
+        self.demonstrated_layers
+            .get(card.index())
+            .copied()
+            .flatten()
     }
 
     pub(super) const fn active_priority(&self) -> &CardSet {
@@ -311,7 +340,23 @@ impl ConventionFacts {
         Ok(())
     }
 
+    fn ensure_cards(&mut self, cards: &[CardId]) {
+        for card in cards {
+            self.ensure_card(*card);
+        }
+    }
+
+    fn ensure_card(&mut self, card: CardId) {
+        let len = (card.index() + 1).max(self.known_identities.len());
+        self.known_identities.resize(len, None);
+        self.known_conflicts.resize(len, false);
+        self.excluded_identities.resize(len, IdentitySet::default());
+        self.demonstrated_layers.resize(len, None);
+        self.layer_conflicts.resize(len, false);
+    }
+
     fn rebuild_known_identity(&mut self, card: CardId) {
+        self.ensure_card(card);
         self.known_identities[card.index()] = None;
         self.known_conflicts[card.index()] = false;
         for claim in self.identity_claims.iter().filter(|claim| {
@@ -345,6 +390,52 @@ mod tests {
     use hanabi_core::{PlayerId, Rank, Suit};
 
     use super::*;
+
+    #[test]
+    fn contract_v5_replay_card_instance_facts_grow_and_retract() {
+        let card = CardId::new(59);
+        let identity = Card::new(Suit::Green, Rank::Two);
+        let other = Card::new(Suit::Blue, Rank::Four);
+        let mut facts = ConventionFacts::default();
+        assert_eq!(facts.known_identity(card), None);
+        assert_eq!(facts.demonstrated_layer(card), None);
+        assert_eq!(facts.excluded_identities(card), IdentitySet::default());
+        facts.apply_signal(&signal(HGroupMoveKind::Priority, card, Some(identity)));
+        assert_eq!(facts.known_identity(card), Some(identity));
+        assert_eq!(facts.known_identity_before(card, 1), None);
+        assert_eq!(facts.known_identity_before(card, 2), Some(identity));
+        facts.apply_signal(&signal(HGroupMoveKind::Prompt, card, Some(other)));
+        assert_eq!(facts.known_identity(card), None);
+        facts.set_priority(&[card], false);
+        assert_eq!(facts.known_identity(card), Some(other));
+        facts.apply_signal(&signal(HGroupMoveKind::Retraction, card, Some(other)));
+        assert_eq!(facts.known_identity(card), None);
+        assert_eq!(
+            facts.excluded_identities(card),
+            IdentitySet::singleton(other)
+        );
+        let mut layered = signal(
+            HGroupMoveKind::LayeredFinesse,
+            CardId::new(50),
+            Some(identity),
+        );
+        layered.cards.push(card);
+        facts.apply_signal(&layered);
+        assert_eq!(facts.demonstrated_layer(card), Some(identity));
+        assert_eq!(facts.known_identity(card), None);
+        assert_eq!(facts.known_identity(CardId::new(60)), None);
+        assert_eq!(facts.demonstrated_layer(CardId::new(60)), None);
+        assert_eq!(
+            facts.excluded_identities(CardId::new(60)),
+            IdentitySet::default()
+        );
+        let mut empty = ConventionFacts::default();
+        empty.set_priority(&[CardId::new(59)], false);
+        assert_eq!(empty, ConventionFacts::default());
+        assert_eq!(ConventionFacts::default(), empty);
+        assert_ne!(empty, facts);
+        facts.validate().unwrap();
+    }
 
     #[test]
     fn priority_retraction_removes_only_priority_identity_claims() {

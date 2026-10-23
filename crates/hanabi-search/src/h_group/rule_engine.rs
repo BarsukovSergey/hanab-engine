@@ -211,7 +211,8 @@ fn apply_rule(
                 view.hands.len(),
                 context.before.early_game,
                 context.before.deck_size,
-                context.before.stack_heights,
+                &context.before.dynamic_stack_heights,
+                view.variant.max_score(),
             ) != HGroupPhase::EndGame
             {
                 apply_priority_effects(
@@ -243,7 +244,8 @@ fn apply_rule(
                     view.hands.len(),
                     context.after.early_game,
                     context.after.deck_size,
-                    context.after.stack_heights,
+                    &context.after.dynamic_stack_heights,
+                    view.variant.max_score(),
                 ) != HGroupPhase::EndGame
             {
                 apply_order_chop_move_effects(

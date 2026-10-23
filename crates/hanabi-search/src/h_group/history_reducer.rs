@@ -32,7 +32,7 @@ struct ReplayReducer {
     explicitly_clued: ProvenancedCardSet,
     invisibly_clued: ProvenancedCardSet,
     clues: Vec<HGroupClueInterpretation>,
-    public_removed: [u8; 25],
+    public_removed: Vec<u8>,
     facts: Vec<ClueFacts>,
     stack_heights: [u8; 5],
     historical_deck_size: usize,
@@ -94,8 +94,8 @@ pub(super) fn replay_h_group_inner_uncached(
     let explicitly_clued = ProvenancedCardSet::default();
     let invisibly_clued = ProvenancedCardSet::default();
     let clues = Vec::<HGroupClueInterpretation>::new();
-    let public_removed = [0_u8; 25];
-    let facts = vec![ClueFacts::default(); 50];
+    let public_removed = vec![0_u8; view.variant.identities().identities().len()];
+    let facts = vec![ClueFacts::default(); view.variant.identities().deck_size()];
     let stack_heights = [0_u8; 5];
     let historical_deck_size = view.deck_size
         + view
@@ -646,7 +646,12 @@ impl ReplayReducer {
         // Basic connection and primary semantics share the public dynamic stack
         // snapshot; advanced recognizers retain their legacy reducer storage.
         let basic_heights = connection_heights(view, Some(entry.turn));
-        let basic_discarded = self.public_removed.map(usize::from);
+        let basic_discarded = self
+            .public_removed
+            .iter()
+            .copied()
+            .map(usize::from)
+            .collect::<Vec<_>>();
         let public_clue = GenericClue::from(*clue);
         let clue = &standard_h_group_clue(&view.variant, public_clue);
 
@@ -1321,7 +1326,7 @@ impl ReplayReducer {
                 } else {
                     focus_identities
                 },
-                *clue,
+                public_clue,
                 *giver,
                 focus,
                 focus_was_chop,
@@ -1330,8 +1335,8 @@ impl ReplayReducer {
                 &self.hands,
                 &gotten,
                 play_identities,
-                self.stack_heights,
-                self.public_removed,
+                &basic_heights,
+                &basic_discarded,
             );
             let score = self
                 .stack_heights
@@ -2363,7 +2368,7 @@ impl ReplayReducer {
                 }
             }
         } else {
-            self.public_removed[identity.index()] += 1;
+            record_removed_copy(view, &mut self.public_removed, *identity);
         }
         self.must_clue.remove(player);
     }
@@ -2463,7 +2468,7 @@ impl ReplayReducer {
         self.required_fixes.remove_card(*card);
         self.invisibly_clued.remove(card);
         self.already_playing.remove(card);
-        self.public_removed[identity.index()] += 1;
+        record_removed_copy(view, &mut self.public_removed, *identity);
         self.must_clue.remove(player);
         self.historical_clue_tokens = self
             .historical_clue_tokens
@@ -2479,5 +2484,67 @@ impl ReplayReducer {
 
         self.hands[player.index()].push(*card);
         self.historical_deck_size = self.historical_deck_size.saturating_sub(1);
+    }
+}
+
+// Counts follow active identity order and are updated only by removal events.
+fn record_removed_copy(view: &PlayerView, removed: &mut [u8], card: Card) {
+    let id = view
+        .variant
+        .standard_identity_id(card)
+        .expect("revealed active identity");
+    removed[id.index()] += 1;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hanabi_core::{FullState, VariantId, VariantSpec, standard_deck};
+
+    #[test]
+    fn contract_v5_replay_removed_counts_are_active_and_event_dated() {
+        for variant in [
+            VariantSpec::no_variant(),
+            VariantSpec::from_catalog(VariantId::Rainbow6Suits),
+        ] {
+            let mut view = FullState::new_standard(3, standard_deck())
+                .unwrap()
+                .view_for(PlayerId::new(0))
+                .unwrap();
+            view.play_stacks = vec![vec![]; variant.stack_suits().len()];
+            view.variant = variant;
+            let suit = *view.variant.stack_suits().last().unwrap();
+            let lower = Card::new(suit, Rank::One);
+            let higher = Card::new(suit, Rank::Two);
+            let id = view.variant.standard_identity_id(lower).unwrap();
+            if view.variant.stack_suits().len() == 6 {
+                assert!(id.index() >= 25);
+            }
+            let mut removed = vec![0; view.variant.identities().identities().len()];
+            let copies = view.variant.copies(id).unwrap();
+            for _ in 0..copies - 1 {
+                record_removed_copy(&view, &mut removed, lower);
+            }
+            let before = removed.clone();
+            record_removed_copy(&view, &mut removed, lower);
+            assert_eq!(before[id.index()], copies - 1);
+            assert_eq!(removed[id.index()], copies);
+            assert_eq!(removed.iter().copied().sum::<u8>(), copies);
+            let heights = vec![0; view.variant.stack_suits().len()];
+            let domain = connection_domain(&view, higher);
+            let good = |counts: &[u8]| {
+                snapshot_good_touch_identities(
+                    CardId::new(0),
+                    domain,
+                    &view,
+                    &[],
+                    &CardSet::default(),
+                    &heights,
+                    &counts.iter().copied().map(usize::from).collect::<Vec<_>>(),
+                )
+            };
+            assert_eq!(good(&before), domain);
+            assert!(good(&removed).is_empty());
+        }
     }
 }

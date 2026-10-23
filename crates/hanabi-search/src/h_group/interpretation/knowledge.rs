@@ -1935,7 +1935,7 @@ pub(in crate::h_group) fn snapshot_accounted(
 #[allow(clippy::too_many_arguments)]
 pub(in crate::h_group) fn snapshot_save_identities(
     identities: IdentitySet,
-    clue: Clue,
+    clue: hanabi_core::GenericClue,
     giver: PlayerId,
     focus: CardId,
     focus_was_chop: bool,
@@ -1944,8 +1944,8 @@ pub(in crate::h_group) fn snapshot_save_identities(
     hands: &[Vec<CardId>],
     gotten: &CardSet,
     _play_identities: IdentitySet,
-    stack_heights: [u8; 5],
-    discarded: [u8; 25],
+    stack_heights: &[usize],
+    discarded_counts: &[usize],
 ) -> IdentitySet {
     if !focus_was_chop && !eight_clue_save {
         return IdentitySet::default();
@@ -1953,28 +1953,30 @@ pub(in crate::h_group) fn snapshot_save_identities(
     if eight_clue_save {
         // The event compiler has already removed secured identities using its
         // historical perspective. Keep Eight Clue Save separate from Level 1.
-        return IdentitySet::from_mask(
-            identities
-                .iter()
-                .filter(|identity| identity.rank.number() > stack_heights[identity.suit.index()])
-                .fold(0, |mask, identity| mask | (1 << identity.index())),
-        );
+        return identities
+            .iter_ids()
+            .filter(|id| {
+                let identity = view.variant.identities().get(*id).expect("active identity");
+                let suit = view
+                    .variant
+                    .stack_suits()
+                    .iter()
+                    .position(|suit| *suit == identity.suit)
+                    .expect("active suit");
+                let rank = view
+                    .variant
+                    .card_ranks()
+                    .iter()
+                    .position(|rank| *rank == identity.rank)
+                    .expect("active rank");
+                rank >= stack_heights[suit]
+            })
+            .fold(IdentitySet::default(), |set, id| {
+                set.union(IdentitySet::singleton_id(id))
+            });
     }
     let variant = &view.variant;
-    let stack_heights = variant
-        .stack_suits()
-        .iter()
-        .map(|suit| usize::from(stack_heights[suit.index()]))
-        .collect::<Vec<_>>();
-    let identity_count = variant.stack_suits().len() * variant.card_ranks().len();
-    let mut discarded_counts = vec![0; identity_count];
-    for identity in IdentitySet::from_mask((1 << 25) - 1).iter() {
-        let id = variant
-            .identities()
-            .id_for(identity.suit, identity.rank)
-            .unwrap();
-        discarded_counts[id.index()] = usize::from(discarded[identity.index()]);
-    }
+    let identity_count = variant.identities().identities().len();
     let chops = hands
         .iter()
         .map(|hand| chop(hand, gotten))
@@ -2002,12 +2004,12 @@ pub(in crate::h_group) fn snapshot_save_identities(
         }
     }
     ClueInterpretationPlan::direct_save(SaveClueInputs {
-        clue: hanabi_core::GenericClue::from(clue),
+        clue,
         variant,
         focus_identities: identities,
         focus_was_chop,
-        stack_heights: &stack_heights,
-        discarded_counts: &discarded_counts,
+        stack_heights,
+        discarded_counts,
         two_save_visible_other_counts: &two_save_visible_other_counts,
         two_save_visible_other_chop_counts: &two_save_visible_other_chop_counts,
         critical_visible_other_counts: &critical_visible_other_counts,

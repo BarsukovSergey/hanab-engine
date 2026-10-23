@@ -1088,23 +1088,25 @@ fn record_declined_direct_plays(
 }
 
 fn h_group_phase(view: &PlayerView, early_game: bool) -> HGroupPhase {
-    let stack_heights = std::array::from_fn(|suit| {
-        u8::try_from(view.play_stacks[suit].len()).expect("a Hanabi stack has at most five cards")
-    });
-    h_group_phase_at(view.hands.len(), early_game, view.deck_size, stack_heights)
+    let stack_heights = view.play_stacks.iter().map(Vec::len).collect::<Vec<_>>();
+    h_group_phase_at(
+        view.hands.len(),
+        early_game,
+        view.deck_size,
+        &stack_heights,
+        view.variant.max_score(),
+    )
 }
 
 fn h_group_phase_at(
     player_count: usize,
     early_game: bool,
     deck_size: usize,
-    stack_heights: [u8; 5],
+    stack_heights: &[usize],
+    max_score: usize,
 ) -> HGroupPhase {
-    let score = stack_heights
-        .iter()
-        .map(|height| usize::from(*height))
-        .sum::<usize>();
-    let remaining_plays = 25_usize.saturating_sub(score);
+    let score = stack_heights.iter().sum::<usize>();
+    let remaining_plays = max_score.saturating_sub(score);
     let remaining_turns = deck_size.saturating_add(player_count);
     let pace = isize::try_from(remaining_turns).unwrap_or(isize::MAX)
         - isize::try_from(remaining_plays).unwrap_or(isize::MAX);
