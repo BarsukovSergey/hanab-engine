@@ -1,165 +1,286 @@
-# M4-V5 overnight execution packet
+# M4-V5 overnight execution goal
 
-Base: `bd960555c5b0df35865d8c42617b016a1094fe49`
-Branch: `m4-v5-high-level-refinements`
+Base: `bd960555c5b0df35865d8c42617b016a1094fe49`  
+Branch: `m4-v5-high-level-refinements`  
 Prepared: 2026-10-23
 
-This is a temporary, branch-local **bounded implementation queue**; remove
-this night-only packet from the eventual V5 PR once its useful outcomes are
-recorded in `WORKING_STATE.md`. It is not permission to complete all of M4-V5
-or invent H-Group conventions overnight. The actual slice definition is
-in [M4_VERTICAL_EXECUTION_PLAN.md](M4_VERTICAL_EXECUTION_PLAN.md). Follow
-`AGENTS.md` and [codex-workflow.md](codex-workflow.md). One V5 branch/PR may
-contain many short batches; this overnight run must not open or merge the PR.
+This temporary, branch-local packet should be removed from the eventual V5
+PR once the results are recorded in `docs/WORKING_STATE.md`. The authoritative
+V5 boundary is [M4_VERTICAL_EXECUTION_PLAN.md](M4_VERTICAL_EXECUTION_PLAN.md).
+Also follow `AGENTS.md` and [codex-workflow.md](codex-workflow.md).
 
-## Outcome and budget
+## Actual goal: close production capabilities, not check off functions
 
-Implement, verify, and checkpoint as many of the **four named migrations below,
-in order**, as are possible without changing their established convention
-meaning. A phase is complete only if its narrow production path is migrated,
-the relevant focused tests pass, the change is reviewed for the invariants
-below, and it is committed.
+Make substantial, safe progress toward **variant-aware H-Group high-level
+interpretation for 3–6 players**. An implemented recognizer does not count as
+finished if the historical/prospective producer, registered execution, its
+claim/obligation consumer, or physical identity operations still require
+five-suit assumptions. Conversely, do not refactor an already generic path
+merely to claim work.
 
-Hard scope limit: **four phases**, no extra families, no "while here" fixes,
-at most **two new focused contract tests per phase**, and **one final read-only
-review pass**. Target approximately 10–20 minutes of active agent work per
-phase; at approximately 60–65% thread context usage or an exhausted Goal
-budget, checkpoint and stop rather than continuing the loop. Do not start
-another phase if a prior one has an unbuildable/dirty partial edit. It is
-correct to finish early.
+The main deliverable is the **high-level recognition/refinement vertical**:
+Context, Duplication, Elimination, Five Tech, Out-of-Order Play, and, if ready,
+Ignition / Phantom / Charms / Unnecessary Moves. Existing historical and
+prospective paths both enter the shared `rule_engine.rs` registry. Migrate
+the production implementation and minimal direct caller/consumer per family.
 
-Treat one implementation phase as one Goal continuation turn where practical;
-do not reload the whole repository or repeat architectural research between
-phases. Write one-line progress entries to ignored
-`target/workflow/m4-v5-night.md`: phase, commit SHA, files, check result,
-review findings, blocker. Existing Git commits are the durable checkpoint.
+The optional stretch deliverable is **legacy evidence/adapter closure** in
+`public_layers.rs`, `inverse_planning.rs`, and the narrow unconverted Extras
+and special Finesse discard paths. Do this only when the main recognizer
+vertical has coherent coverage and the adapter can be migrated without
+inventing H-Group semantics or changing unrelated architecture.
 
-## Preflight
+This is one V5 implementation branch, **not** one unbounded chat and **not**
+authorization to declare M4-V5 complete. Do not open or merge a PR, change
+production/live/CLI variant gates, or implement M4-V6 variant convention packs.
 
-1. Confirm the branch and expected starting commit (later phases may have new
-   in-branch commits). Stop on unexpected dirty state or branch mismatch.
-2. Read only this packet, `AGENTS.md`, the named functions, and any direct
-   call sites. Existing source comments cite the relevant H-Group rules;
-   only investigate outside them if a *specific* semantic contradiction arises.
-3. No automatic installation, toolchain repair, wide baseline archaeology,
-   network research, broad replay scans, or whole-repository refactors.
+## Autonomous work budget
 
-## Ordered phases
+The queue below is intentionally larger than one overnight run. Advance as
+far as evidence permits; do **not** try to spend all available time.
 
-### A — Duplication (first)
+- Maximum **eight coherent implementation checkpoints** plus **one independent
+  final read-only review**. A checkpoint should finish a recognizer family
+  including its direct production path, rather than just an isolated helper.
+- Default approximately 10–20 active minutes **per continuation/batch**, not
+  a 20-minute limit on the entire Goal. Do one feature at a time. At around
+  60–65% context use, compact/refresh if the active Codex Goal supports a safe
+  transition, using the short on-disk checkpoint as context; never pay for
+  repeated repository archaeology. If the environment cannot safely refresh,
+  stop cleanly.
+- Never exceed the **Goal's actual configured budget**. The text instructions
+  are not a hard token cap. No unlimited model/subagent loops.
+- Normally at most **two new focused tests per checkpoint**. No big synthetic
+  replay harness, no modifying approved fixtures. Keep test names
+  `contract_v5_<family>_...` so CI runs them.
+- At most one targeted expansion after a concrete compiler/focused-test
+  failure. No full suites, profiler work, base archaeology, or infinite retries.
+- Write terse checkpoints to ignored `target/workflow/m4-v5-night.md`;
+  each entry: family, outcome, commit SHA, commands/result, reviewer findings,
+  blockers, next batch. The Git commits are the durable state.
+- Independent families may be **skipped**, not endlessly debugged. Log
+  `BLOCKED: <specific missing semantic evidence or concrete failure>` and
+  move to the next independent task only after restoring a coherent,
+  compiling, clean state. If that cannot be done without losing unrelated work,
+  stop the Goal.
 
-- Production function:
-  `crates/hanabi-search/src/h_group/recognition/advanced_bluffs.rs::apply_duplication_effects`
-  (currently near line 642).
-- Convert the two legacy `identity_mask()` / `IdentitySet::from_mask`
-  reads in its duplication proof into **active-universe domains** using
-  `ClueFacts::identity_mask_in(&view.variant)` and appropriate active-ID
-  operations. Do not combine active bits with legacy `Card::index()` bits.
-- Replace `is_trash_at` calls in that function with physical trash checks
-  using `connection_trash(view, heights, card)`. Use
-  `context.before.dynamic_stack_heights` for the before-event state and
-  `connection_heights(view, Some(origin.turn))` for an older originating
-  clue. Preserve the distinction between the two historical times.
-- Preserve the distinctions between Duplicitous Value, Blind-Play, Tempo,
-  Assisted Trash Chop Move and Time Travel Chop Move, and the
-  `previously_gotten` requirement. Do not touch the adjacent Context or
-  Bluff family.
-- Validate with one narrow `contract_v5_duplication_` test if a suitable
-  existing test helper permits an invariant without fabricating H-Group
-  convention authority. Check No Variant behavior and a sixth-suit/domain
-  case; prefer existing reviewed facts.
+## Shared invariants — check every meaningful diff
 
-### B — Elimination
+1. Action selection and historical interpretation see only player-safe and
+   public facts at the relevant turn. Never infer an earlier convention from
+   a future card reveal, opponent private card, or simulator truth.
+2. Physical behavior is from `VariantSpec`, not `Card::index()`,
+   `Rank::ALL`, fixed five-stack arrays, or `Rank::copies()`. Active
+   domain operations use `identity_mask_in(&view.variant)`, active IDs,
+   and `connection_* (view, heights, ...)` adapters in
+   `h_group/identity.rs`.
+3. `Card` can be a valid retained physical promise; do **not** globally
+   replace it with `IdentityId`. Do not mix legacy 25-bit
+   `IdentitySet::from_mask` with active-universe masks.
+4. Preserve No Variant H-Group meanings and execution precedence:
+   Save > false Play, old connection > speculative new one, Fix/retraction,
+   Context/Elimination refinements, 5 Stall > 5 Tech, and established
+   event-turn ownership.
+5. Separate rank-specific **convention meanings** from physical rank
+   ordering. Do not deduce Pink/Black/Brown/Omni/Null rule semantics from
+   their physical clue behavior. Global No Variant gate remains until V6.
+6. A direct physical `playable` check does not replace the full
+   H-Group delayed Play/Finesse/Prompt domain. Keep lifecycle/provenance.
+7. Legacy `ReplayReducer` `[u8; 5]`/`[u8; 25]` storage may remain behind
+   the No Variant compatibility boundary. Change it only when a named
+   production path directly requires migration.
 
-- Functions in
-  `crates/hanabi-search/src/h_group/recognition/advanced.rs`:
-  `apply_elimination_effects`, `another_copy_survives_discard`,
-  `apply_elimination_resolution_effects`,
-  `remaining_elimination_candidates`,
-  `compatible_elimination_candidates`, and
-  `known_copies_outside_hand`.
-  Adjust only the direct caller in `rule_engine.rs` when needed.
-- Replace legacy five-stack playability/trash, `identity.rank.copies()`,
-  and standard `ClueFacts::allows` with active physical
-  `VariantSpec` copies, `connection_playable` /
-  `connection_trash`, and `connection_allows`.
-  Use the already available dynamic before/after stacks, not fixed reducer
-  arrays. Keep `Card` as a promise identity at the boundary; map to active
-  `IdentityId` when performing identity-set or physical operations.
-- Preserve the established rank-2 H-Group exception, count evidence at its
-  historical turn, claim retraction, Self Chop Move, Riding, and Blind Play
-  precedence. Do not add future hidden reveals to historical deductions.
-- Add at most two focused `contract_v5_elimination_` tests for physical
-  copies/domain/variant behavior and preserved No Variant behavior.
+## Preflight, then work the ordered capability queue
 
-### C — Five Tech (only after A and B are coherent)
+Preflight: verify correct branch, expected base ancestry, and no unexpected
+dirty worktree. Read `AGENTS.md`, this packet, named functions and *direct*
+callers. `rule_engine.rs::apply_rule` and `rules.rs::POST_EVENT_RULES`
+are the shared dispatch boundary; change their semantics only when strictly
+required. Existing inline source links provide H-Group semantic provenance.
+No full repo inventory.
 
-- Function:
-  `crates/hanabi-search/src/h_group/recognition/advanced.rs::apply_five_tech_effects`;
-  only adjust its direct caller in `rule_engine.rs` if required.
-- Migrate the legacy five-stack lookup, `Rank::ALL` connector
-  construction, `identity.index()` mask, and ordinary clue-fact matching
-  to active identity/rank/stack traversal through existing
-  `identity.rs` connection adapters and `VariantSpec`.
-- Preserve **5 Stall > 5 Tech**, Save precedence, 5 Pull, 5NE, 5ND,
-  and 2-Save interaction. Rank 5 remains a *convention meaning*, not an
-  arbitrary `VariantSpec` rank. If physically touched fives remain
-  ambiguous, do not assert a false exact identity.
-- At most two narrow `contract_v5_five_tech_` tests, plus a scoped check.
-  If the semantic meaning cannot be preserved without new rulings,
-  **stop the whole Goal**; do not improvise.
+### Queue 1 — Context / Duplication interpretation (priority)
 
-### D — Out-of-Order Play (only if time/context remain)
+**A1 Context** — `recognition/advanced_bluffs.rs::apply_context_effects`
+(currently starts around line 14).
 
-- Function:
-  `crates/hanabi-search/src/h_group/recognition/advanced.rs::apply_out_of_order_effects`;
-  adjust direct caller in `rule_engine.rs` only if needed.
-- Migrate only standard physical assumptions in active identity/stack/rank
-  traversal. Preserve historical action/connection order and the distinction
-  between a genuine Out-of-Order repair and an ordinary Finesse.
-- At most two `contract_v5_out_of_order_` tests. A reviewed No Variant
-  check already exists:
-  `reviewed_yellow_out_of_order_fix_uses_bobs_connector`; do not rewrite
-  its fixture/expectation or run broader replays by default.
+- Migrate `IdentitySet::all()`, `clue.matches`,
+  `ClueFacts::allows`, `is_playable_at` and `is_trash_at`,
+  `view.play_stacks[identity.suit.index()]`, and `Rank::ALL[height]`
+  at this **specific** recognizer's physical boundaries.
+- Use `physical_clue_matches`, active clue domains,
+  `connection_allows`, `connection_playable`/`connection_trash`,
+  `connection_heights`/`connection_successor` as appropriate.
+  Use **pre-event dynamic heights** for preceding-evidence conditions,
+  not current stacks; don't substitute a current-knowledge identity for
+  `context.historical.identity`.
+- Preserve Fix suppression, Stale Ones, focus inversion vs a viable existing
+  Prompt/Finesse, Selfish Clue/Finesse, and ordinary Context precedence.
+- Direct producer/consumer test: at least one focused No Variant regression
+  or deterministic invariant and one sixth-suit/active-order assertion when
+  feasible. No invented convention meaning.
 
-Context, Ignition, Phantom Playable, Charms, Unnecessary Moves, Extras,
-public-layer and inverse-planning migrations are **not authorized tonight**.
-They remain V5 work for an independently prepared patch map. V6 convention
-packs, production enablement, and the global No Variant gate are forbidden.
+**A2 Duplication** — `recognition/advanced_bluffs.rs::apply_duplication_effects`
+(currently around line 642).
 
-## Check, review, checkpoint: once per phase
+- Convert two legacy fact-domain `identity_mask()` uses and fixed-stack
+  `is_trash_at` uses to active domains with the **correct dated stack**
+  (before event vs `origin.turn`).
+- Preserve `previously_gotten`, direct vs blind focus, old duplicate
+  proof, Duplicitous Value / Blind-Play / Tempo, Assisted Trash Chop Move,
+  and Time Travel Chop Move.
+- A1 and A2 are separate compile-safe checkpoints, but together close
+  the Context/Duplication interpretation layer. Inspect direct
+  `rule_engine` and resulting signal/connection consumers.
 
-1. Inspect `git diff --stat` and only changed-file diffs. Check historical
-   knowledge vs hidden simulator truth, dated vs current stacks, active
-   identity masks, physical touching/copies, priority, and No Variant parity.
-2. Run `cargo fmt --all` once if needed. Run the new phase's exact focused
-   `contract_v5_...` test if one was added, then
-   `bash scripts/check-scoped.sh hanabi-search --check-only` once; avoid a
-   duplicate `cargo test` via the helper. Run `git diff --check`.
-   If no suitable new test is justified, reuse a named existing focused
-   contract instead of generating a large synthetic fixture. Record exactly
-   what was *not* tested.
-3. One targeted repair attempt for a concrete compile/focused-test failure.
-   If the fix requires an unplanned subsystem, semantic choice, old-fixture
-   rewrite, or a second broad exploration, **stop**, report it, and preserve
-   the coherent checkpoint (or report exact dirty in-scope edits).
-4. Commit each coherent passing phase with a descriptive message. Push to
-   the existing feature branch if the configured credentials/sandbox permit
-   it without an approval prompt; otherwise preserve local commits and
-   report that the remote is behind. Never force push or merge.
-5. After the final completed phase, do **one** read-only review of the
-   night diff against the starting commit. Prefer a single independent
-   reviewer/subagent if available; otherwise label it a self-review. Review
-   hidden-information leakage, semantic drift, legacy active-ID mixing,
-   historical evidence, and missing critical tests. Fix only concrete
-   in-scope high-severity findings and re-run the affected focused check
-   once. Do not keep spawning reviewers or chasing style suggestions.
+### Queue 2 — Remaining advanced refinements (priority)
 
-## Final report and stop
+**B1 Elimination** — `recognition/advanced.rs`:
+`apply_elimination_effects`, `another_copy_survives_discard`,
+`apply_elimination_resolution_effects`,
+`remaining_elimination_candidates`,
+`compatible_elimination_candidates`,
+`known_copies_outside_hand`. Adapt only direct `rule_engine.rs` call.
 
-Report: completed phases and SHAs, branch/head/dirty status, exact checks,
-review findings and repairs, skipped phases, blockers, and unverified
-semantics. **Do not claim full V5 completion, CI green, or independently
-verified convention correctness** from local focused checks. Leave the V5
-branch for human/orchestrator review in the morning. No PR, merge, release,
-or live gate change.
+- Replace physical five-stack, fixed copy counts,
+  `ClueFacts::allows`, legacy clue mask/domain uses with active
+  `VariantSpec` copies, `connection_playable`/`connection_trash`,
+  `connection_allows`, and dynamic **before/after** stacks.
+- Keep rank-2 convention exception, claim creation/retraction,
+  Elimination Self Chop Move, Riding/Blind Play precedence, and
+  historical count evidence.
+- Check active sixth-suit copies and No Variant/observer-visible negative
+  cases; never rely on hidden current or future identities.
+
+**B2 Five Tech** — `recognition/advanced.rs::apply_five_tech_effects`;
+only direct `rule_engine.rs` caller if required.
+
+- Migrate standard `Rank::ALL` connector, index/mask construction,
+  `stack_heights[identity.suit.index()]`, and physical identity
+  assertions; use active variant stack/rank traversal.
+- Preserve 5 Stall/Save precedence, 5 Pull, 5NE, 5ND, and 2-Save
+  interaction. A `Rank::Five` condition remains an H-Group convention
+  condition, not arbitrary numeric physical playability.
+
+**B3 Out-of-Order** — `recognition/advanced.rs::apply_out_of_order_effects`;
+only its direct `rule_engine.rs` caller if needed.
+
+- Migrate active stack/identity/rank reasoning while preserving the
+  ordering and exact cancellation/scheduling of existing connections.
+- Reviewed No Variant regression:
+  `reviewed_yellow_out_of_order_fix_uses_bobs_connector`
+  in `h_group/tests/replay.rs`. Do not rewrite it or run it routinely
+  if planner wall-clock variability makes it unsuitable as a focused
+  semantic gate; add a narrow deterministic assertion where possible.
+
+B1/B2/B3 are separate checkpoints. Keep the existing production rule
+registry precedence intact.
+
+### Queue 3 — High-level and late-game completion (stretch)
+
+Run this queue only if earlier work is compiling/committed and the Goal
+budget is still healthy. These families are independent **unless** a
+specific direct dependency is discovered; skip a blocked family.
+
+**C1 Ignition** — `recognition/late_game.rs::apply_ignition_effects`
+(line ~13). Migrate remaining legacy `identity_mask()` knowledge
+read and dated stack/rank assumptions. Preserve actor eligibility,
+old versus new Finesse obligations, and clue history.
+
+**C2 Phantom** — `recognition/late_game.rs::apply_phantom_effects`
+(line ~326). Replace remaining legacy fact masks and fixed successor
+construction with active variant predecessors/successors and dynamic
+stacks. Preserve negative proof, connection timing, and Phantom vs
+ordinary Play/Finesse precedence.
+
+**C3 Charms** — `recognition/late_game.rs::apply_charm_effects`
+(line ~585). Target the `standard_h_group_clue` on an old clue,
+`Rank::ALL` connectors, fixed five-stack checks, and legacy identity
+set operations. Recover the original physical clue and *dated*
+stack state safely. If the recorded clue adapter cannot preserve
+variant-specific touching semantics, log BLOCKED instead of treating
+an unmatched clue as No Variant.
+
+**C4 Unnecessary Moves** — `recognition/late_game.rs::
+apply_unnecessary_trash_push_at_clue` and
+`apply_unnecessary_move_effects` (lines ~1031 and ~1176).
+Migrate their active fact-domain/physical conditions while keeping
+trash push and clue-context precedence.
+
+Do **not** rewrite the whole 1,673-line `late_game.rs` file or touch
+`apply_priority_effects` (already migrated in V4) merely because
+they share the file.
+
+### Queue 4 — Evidence adapters and Extras (diagnostic stretch only)
+
+If the previous queues have no outstanding blockers, perform **one**
+targeted read-only inventory of the following legacy boundaries:
+
+- `h_group/public_layers.rs::demonstrated_hidden_layer`:
+  `standard_h_group_clue`, `Rank::ALL`, fixed historical heights.
+- `h_group/inverse_planning.rs::deduce`: a historical
+  `standard_h_group_clue` conversion into legacy `Action`.
+- `recognition/extras.rs::apply_extra_effects`,
+  `apply_max_special_effects`: remaining large physical assumptions.
+- `recognition/special_discards.rs`: Special Finesse discard evidence.
+
+Record an exact file/function/blocker/required API boundary map. Do not start
+an unsized whole-file or cross-subsystem rewrite. If **one** seam is already
+self-contained, has a reviewed source, and is not dependent on a V6
+convention pack, you may implement **one** additional tiny checkpoint,
+subject to the overall eight-checkpoint limit. Otherwise hand its map to
+the morning review.
+
+## Checkpoint protocol — no fake green claims
+
+For each completed phase:
+
+1. Review `git diff --stat`, named file diffs, and any direct
+   consumer changes for hidden-truth leakage, dated vs current facts,
+   active-mask mixing, connection/priority regressions, and variant
+   physical behavior. No more than one bounded repair loop.
+2. Add 0–2 focused tests using existing helpers.
+   Use `contract_v5_<family>_...` names for new semantic contracts.
+   Run the **single** focused `bash scripts/check-scoped.sh
+   hanabi-search <filter> --lib` when available; otherwise
+   `bash scripts/check-scoped.sh hanabi-search --check-only`.
+   Run `git diff --check`; only run a separately named replay on a
+   concrete regression risk, not a broad replay suite.
+3. Commit a **compile-safe, coherent production + validation checkpoint**
+   and push if the current sandbox/permissions allow it without
+   privilege escalation. Don't open PRs or merge. If a partial diff
+   cannot be made coherent, stop rather than committing broken code or
+   discarding somebody else's work.
+4. Record the outcome in the ignored progress note. Do not repeat
+   completed-family investigation in the next Goal continuation turn.
+5. A family is DONE only if its actual production path, relevant
+   signal/connection consumer, negative evidence, No Variant behavior
+   and a representative physical variant case have been addressed.
+   Otherwise label `PARTIAL` with exact remaining consumers.
+
+After the final checkpoint, do **one** separate read-only review of the
+night diff against the stated base (independent reviewer/subagent if
+available; otherwise explicitly self-review). Review only material bugs
+and missing tests. Fix an in-scope high-severity finding at most once,
+rerun its scoped checks, and commit. Do not spawn recursive reviewers,
+mass-review all history, or change reviewed replay expectations.
+
+Update `docs/WORKING_STATE.md` with what is genuinely completed/partial,
+remaining active standard-only consumers and actual check status. Remove
+this temporary packet from the eventual V5 PR, but keep the night
+checkpoint available on the branch until the morning human review.
+
+## Exit / morning handoff
+
+Stop on an exhausted Goal budget, inability to maintain a coherent
+worktree, non-local semantic question, repeated cross-subsystem fallout,
+security/permission prompt, unsafe hidden-information premise, or
+completion of the permitted queue. For a localized semantic BLOCKED
+item, record it and continue only with a truly independent item.
+
+End with a compact report: completed families/SHAs, PARTIAL/BLOCKED
+families, direct production paths migrated, tests/check commands and
+results, review findings, branch HEAD/dirty status and the exact
+next morning decision. Do not claim V5/M4 completion, PR CI green,
+independent convention correctness, or variant production enablement
+from focused local tests.
