@@ -1295,3 +1295,46 @@ fn contract_v5_elimination_visibility_and_exhausted_copy_negative() {
         }
     }
 }
+
+#[test]
+fn contract_v5_context_exact_claim_reaches_owner_active_knowledge() {
+    for (variant, suit) in [
+        (VariantSpec::no_variant(), Suit::Red),
+        (reordered(), Suit::new(5)),
+    ] {
+        for excluded in [false, true] {
+            let mut view = snapshot(variant.clone(), 3);
+            let card = view.hands[0][0].id;
+            let identity = Card::new(suit, Rank::Three);
+            view.hands[0][0]
+                .clues
+                .add_positive_clue(Clue::Rank(if excluded { Rank::Five } else { Rank::Three }));
+            let deductions = LogicalDeductions::new(view.clone()).unwrap();
+            let mut replay = replay_h_group(&deductions, HGroupProfile::Level(HGroupLevel::Level1));
+            let entry = clue_entry(0, Clue::Rank(Rank::Three), card);
+            let mut journal = ConventionJournal::default();
+            push_signal(
+                &mut journal,
+                &entry,
+                PlayerId::new(1),
+                Some(PlayerId::new(0)),
+                HGroupMoveKind::Context,
+                vec![card],
+                Some(identity),
+            );
+            replay.cards.facts = journal.facts().clone();
+            replay.knowledge = build_convention_knowledge(&deductions, &replay);
+            let notes = convention_card_inferences(&deductions, &replay);
+            let note = notes.iter().find(|note| note.card == card).unwrap();
+            if excluded {
+                assert!(
+                    note.identities
+                        .intersection(connection_domain(&view, identity))
+                        .is_empty()
+                );
+            } else {
+                assert_eq!(note.identities, connection_domain(&view, identity));
+            }
+        }
+    }
+}
