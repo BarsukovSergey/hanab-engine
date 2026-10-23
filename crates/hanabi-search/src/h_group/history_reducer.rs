@@ -95,7 +95,7 @@ pub(super) fn replay_h_group_inner_uncached(
     let invisibly_clued = ProvenancedCardSet::default();
     let clues = Vec::<HGroupClueInterpretation>::new();
     let public_removed = [0_u8; 25];
-    let facts = vec![ClueFacts::default(); 50];
+    let facts = vec![ClueFacts::default(); view.variant.identities().deck_size()];
     let stack_heights = [0_u8; 5];
     let historical_deck_size = view.deck_size
         + view
