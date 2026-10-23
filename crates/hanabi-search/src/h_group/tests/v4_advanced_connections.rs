@@ -1697,3 +1697,95 @@ fn contract_v5_phantom_sacrifice_uses_active_copies_and_prior_owner_knowledge() 
         );
     }
 }
+
+#[test]
+fn contract_v5_replay_save_active_counts_sparse_heights_and_eight_save() {
+    for (variant, suit) in [
+        (VariantSpec::no_variant(), Suit::Red),
+        (
+            VariantSpec::from_catalog(VariantId::Rainbow6Suits),
+            Suit::new(5),
+        ),
+        (reordered(), Suit::new(5)),
+    ] {
+        let view = snapshot(variant, 3);
+        let focus = view.hands[1][0].id;
+        let hands = layout(&view);
+        let gotten = CardSet::default();
+        let mut heights = vec![0; view.variant.stack_suits().len()];
+        let suit_index = view
+            .variant
+            .stack_suits()
+            .iter()
+            .position(|active| *active == suit)
+            .unwrap();
+        let mut removed = vec![0; view.variant.identities().identities().len()];
+        for rank in [Rank::Three, Rank::Five] {
+            let identity = Card::new(suit, rank);
+            let domain = connection_domain(&view, identity);
+            let id = view.variant.standard_identity_id(identity).unwrap();
+            removed[id.index()] = usize::from(view.variant.copies(id).unwrap()) - 1;
+            let save = |heights: &[usize], eight, chop| {
+                snapshot_save_identities(
+                    domain,
+                    GenericClue::Rank(ClueRank::new(rank.number())),
+                    PlayerId::new(0),
+                    focus,
+                    chop,
+                    eight,
+                    &view,
+                    &hands,
+                    &gotten,
+                    domain,
+                    heights,
+                    &removed,
+                )
+            };
+            assert_eq!(save(&heights, false, true), domain);
+            assert!(save(&heights, false, false).is_empty());
+            assert_eq!(save(&heights, true, false), domain);
+            // A sparse rank's position, rather than printed number, is its height.
+            heights[suit_index] = view
+                .variant
+                .card_ranks()
+                .iter()
+                .position(|active| *active == rank)
+                .unwrap()
+                + 1;
+            assert!(save(&heights, true, false).is_empty());
+            assert!(save(&heights, false, true).is_empty());
+            heights[suit_index] = 0;
+        }
+    }
+}
+
+#[test]
+fn contract_v5_replay_save_preserves_historical_giver_relative_visibility() {
+    let mut view = snapshot(VariantSpec::no_variant(), 3);
+    let focus = view.hands[1][0].id;
+    let visible = view.hands[0][1].id;
+    let identity = Card::new(Suit::Red, Rank::Two);
+    view.hands[0][1].identity = Some(identity);
+    let domain = connection_domain(&view, identity);
+    let hands = layout(&view);
+    let gotten = CardSet::default();
+    let save = |giver| {
+        snapshot_save_identities(
+            domain,
+            GenericClue::Rank(ClueRank::new(2)),
+            PlayerId::new(giver),
+            focus,
+            true,
+            false,
+            &view,
+            &hands,
+            &gotten,
+            domain,
+            &[0; 5],
+            &[0; 25],
+        )
+    };
+    assert_eq!(save(0), domain); // Giver's own simulator card is excluded.
+    assert!(save(2).is_empty()); // Same card is visible off chop to another giver.
+    assert_ne!(hands[0].first(), Some(&visible));
+}

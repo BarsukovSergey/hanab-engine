@@ -1326,7 +1326,7 @@ impl ReplayReducer {
                 } else {
                     focus_identities
                 },
-                *clue,
+                public_clue,
                 *giver,
                 focus,
                 focus_was_chop,
@@ -1335,8 +1335,8 @@ impl ReplayReducer {
                 &self.hands,
                 &gotten,
                 play_identities,
-                self.stack_heights,
-                &self.public_removed,
+                &basic_heights,
+                &basic_discarded,
             );
             let score = self
                 .stack_heights
