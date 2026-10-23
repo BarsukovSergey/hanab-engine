@@ -124,6 +124,8 @@ fn deterministic_deck_and_reconstruction() {
 
 #[test]
 #[ignore = "offline full-game product pilot; explicit release invocation only"]
+// Keep checkpoint writes, decision isolation and failure reporting together for review.
+#[allow(clippy::too_many_lines)]
 fn rainbow_physical_pilot() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let output = root.join(
