@@ -1789,3 +1789,56 @@ fn contract_v5_replay_save_preserves_historical_giver_relative_visibility() {
     assert!(save(2).is_empty()); // Same card is visible off chop to another giver.
     assert_ne!(hands[0].first(), Some(&visible));
 }
+
+#[test]
+fn contract_v5_replay_phase_no_variant_parity_and_physical_maximum() {
+    // Preserve the existing 25-point classifier exactly, including its <5 threshold.
+    for players in 2..=6 {
+        for score in 0_usize..=25 {
+            let heights = (0..5)
+                .map(|suit| (score.saturating_sub(suit * 5)).min(5))
+                .collect::<Vec<usize>>();
+            for deck in [0, 1, 5, 24, 25, 30] {
+                for early in [false, true] {
+                    let expected = if deck < 25 - score {
+                        HGroupPhase::EndGame
+                    } else if early {
+                        HGroupPhase::EarlyGame
+                    } else if score < 5 {
+                        HGroupPhase::LowScore
+                    } else {
+                        HGroupPhase::Normal
+                    };
+                    assert_eq!(
+                        h_group_phase_at(players, early, deck, &heights, 25),
+                        expected
+                    );
+                }
+            }
+        }
+    }
+    for variant in [
+        reordered(),
+        VariantSpec::from_catalog(VariantId::Rainbow6Suits),
+    ] {
+        let mut view = snapshot(variant, 3);
+        let maximum = view.variant.max_score();
+        let heights = vec![0; view.variant.stack_suits().len()];
+        assert_eq!(
+            h_group_phase_at(3, false, maximum - 1, &heights, maximum),
+            HGroupPhase::EndGame
+        );
+        view.deck_size = maximum;
+        assert_eq!(h_group_phase(&view, false), HGroupPhase::LowScore);
+        assert_eq!(h_group_phase(&view, true), HGroupPhase::EarlyGame);
+        // Only stack lengths matter; these IDs never serve as card identities.
+        view.play_stacks[0] = vec![
+            (
+                CardId::new(0),
+                Card::new(view.variant.stack_suits()[0], Rank::One)
+            );
+            2
+        ];
+        assert_eq!(h_group_phase(&view, false), HGroupPhase::LowScore);
+    }
+}
