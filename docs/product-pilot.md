@@ -1,6 +1,55 @@
 # No Variant, Rainbow and White product pilots
 
-## White H-Group checkpoint: INCOMPLETE
+## White prospective draw checkpoint: INCOMPLETE
+
+Clean source `4d0ba162c1dabeae2b69e5c75e7aa3085b96105d`, measured 2026-10-23,
+same seed/deck/profile budgets as the initial checkpoint below. The earlier
+owner-domain widening was caused by `ProspectiveTransition::card_action`
+allocating draws with `50 - deck_size`: White's initial 45-card draw pile
+produced card ID 5, duplicating a live card, instead of the actual ID 15. It now
+uses the catalog deck size and the variant score ceiling (30 for White, 25 for
+No Variant). The original knowledge-validation assertion is unchanged; temporary
+diagnostics were removed. No convention interpretation changed.
+
+The new deterministic physical invariant test compares the entire projected
+successful-play view against `FullState` for both No Variant and White,
+including unique live IDs and a blank own draw. It passes, as does the existing
+No Variant transition-parity test through the final round. Commands:
+
+```sh
+cargo test --locked -p hanabi-search --lib contract_prospective_card_action_keeps_variant_draw_ids_unique
+cargo test --locked -p hanabi-search --lib prospective_transitions_match_the_simulator_through_the_final_round
+bash scripts/check-scoped.sh hanabi-search --check-only
+git diff --check
+```
+
+The source was committed before rerunning the already-built debug integration
+binary with `--include-ignored --test-threads=1`. The physical-label/deck
+contract passes; both opt-in planner tests still exit 101:
+
+| Profile       | Completed | Play / Discard / Clue | Official final score | Stack score / strikes | Failed decision |
+| ------------- | --------- | --------------------- | -------------------- | --------------------- | --------------- |
+| Level1 smoke  | No        | 0 / 0 / 0             | Unavailable          | 0 / 0                 | 0.4820 s        |
+| Level4 seed 1 | No        | 0 / 0 / 0             | Unavailable          | 0 / 0                 | 0.1823 s        |
+
+Level4 elapsed time is 0.1825 s; reconstruction matches. No planner result,
+symbolic/exact phase or budget-fallback status is returned before the panic. The
+current first blocker is `history_reducer::reduce_discard` at the
+`known_playable` check: it calls `identity::is_playable_at` with five historical
+stack heights and a sixth-suit identity. The exact backtrace is retained in
+`target/white-draw-fix-backtrace.log`. The next minimal capability is using
+active, event-time stack state in that historical discard check.
+
+Latest evidence: `target/product-pilot/white-hgroup-first.json`,
+`white-hgroup.json` and `white-hgroup.ndjson`, all labeled with source SHA
+`4d0ba16`. Command results: `target/white-draw-fix-checkpoint.log`,
+`white-draw-contract.log`, `white-transition-parity.log`,
+`white-draw-scoped.log`. The original Level4 failure report/trace is archived as
+`target/product-pilot/white-hgroup-owner-widening.json` and `.ndjson`.
+Acceptance remains unmet; White 3/4 Loaded semantics remain absent and all
+production gates remain unchanged. PR #53 stays draft.
+
+## Initial White H-Group checkpoint: INCOMPLETE (historical)
 
 Measured 2026-10-23 on Windows native Rust at clean source commit
 `269949174753b50bbf5d6cf14cfece371d9efe14`. This is an offline diagnostic, not
@@ -33,9 +82,9 @@ initial Level4 decision fails before returning a symbolic/exact result or budget
 status; no timeout fallback or replacement action is applied. Its empty applied
 prefix reconstructs identically. It is not a completed zero-score game.
 
-**First authoritative blocker:** `h_group/history_reducer.rs::finish` rejects an
-ordinary owner-knowledge domain widening while computing prospective
-continuations of real turn 0:
+**Historical blocker (resolved by the draw-ID fix above):**
+`h_group/history_reducer.rs::finish` rejects an ordinary owner-knowledge domain
+widening while computing prospective continuations of real turn 0:
 
 ```text
 ReplaceDomain { card: CardId(5), identities: IdentitySet(1073217503), source: Clue(3) }
@@ -43,10 +92,8 @@ ReplaceDomain { card: CardId(5), identities: IdentitySet(1073217503), source: Cl
 
 `Clue(3)` is an internal prospective history turn, not a fourth applied game
 action. The invariant is preserved; its error now includes the offending effect.
-The next narrowly scoped capability is correct monotone White owner-knowledge
-compilation in that prospective path. Further cross-subsystem investigation was
-stopped under repository checkpoint/scope rules; no convention rule was
-invented.
+The later checkpoint traced this invariant failure to duplicate prospective card
+IDs, rather than a missing convention rule. No convention rule was invented.
 
 Earlier dirty-worktree release diagnostics first reproduced a Good Touch panic:
 a sixth-suit singleton was decoded with the No Variant iterator. This checkpoint
@@ -66,11 +113,11 @@ base Save resolver explicitly omits Loaded conventions. Physical touching parity
 does not certify these semantics. No White convention release or supported
 recipient-play acceptance claim is made.
 
-Evidence retained locally under ignored `target/product-pilot/`:
-`white-hgroup-first.json`, `white-hgroup.json`, `white-hgroup.ndjson` contain
-the clean SHA, ordered deck, config, failure, latency and exact applied prefix.
-The trace flushes before each decision, on failure, and at the result. Compiler
-and test logs are `target/white-checkpoint.log`, `target/white-unit-final.log`,
+Historical Level4 evidence under ignored `target/product-pilot/` is archived as
+`white-hgroup-owner-widening.json` and `.ndjson`; the ordinary `white-hgroup*`
+report names now contain the latest checkpoint above. The trace flushes before
+each decision, on failure, and at the result. Compiler and test logs are
+`target/white-checkpoint.log`, `target/white-unit-final.log`,
 `target/white-no-variant-final.log`, `target/white-gates-final.log`, and
 `target/white-scoped.log`. The historical release diagnostics remain in
 `target/white-first.log`, `target/white-first-after.log`, and
