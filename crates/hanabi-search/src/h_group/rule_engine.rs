@@ -324,11 +324,11 @@ fn apply_rule(
         ),
         HGroupRuleId::Duplication => apply_duplication_effects(context, view, effects),
         HGroupRuleId::FiveTech => apply_five_tech_effects(
-            context.entry,
+            context,
             view,
             context.after.hands,
             effects.clues,
-            context.after.stack_heights,
+            &context.after.dynamic_stack_heights,
             effects.explicitly_clued,
             effects.invisibly_clued,
             effects.chop_moved,

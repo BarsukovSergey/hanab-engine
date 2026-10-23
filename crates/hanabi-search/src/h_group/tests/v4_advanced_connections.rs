@@ -1338,3 +1338,85 @@ fn contract_v5_context_exact_claim_reaches_owner_active_knowledge() {
         }
     }
 }
+
+#[test]
+fn contract_v5_five_tech_active_connector_save_stall_and_visibility() {
+    for (variant, suit, rank) in [
+        (VariantSpec::no_variant(), Suit::Red, Rank::Two),
+        (reordered(), Suit::new(5), Rank::Three),
+    ] {
+        for guard in 0..4 {
+            let mut view = snapshot(variant.clone(), 3);
+            let pulled = view.hands[2][0].id;
+            let five = view.hands[2][1].id;
+            let connector = view.hands[1].last().unwrap().id;
+            let identity = Card::new(suit, rank);
+            view.hands[2][0].identity = Some(identity);
+            view.hands[2][1].identity = Some(Card::new(suit, Rank::Five));
+            view.hands[1].last_mut().unwrap().identity = Some(Card::new(suit, Rank::One));
+            if guard == 3 {
+                view.observer = PlayerId::new(2);
+            }
+            let entry = clue_entry(2, Clue::Rank(Rank::Five), five);
+            let hands = layout(&view);
+            let facts = facts(&view);
+            let mut context = context(&view, &entry);
+            context.after.hands = &hands;
+            context.after.facts = &facts;
+            let mut clue = interpretation(
+                &view,
+                five,
+                Card::new(suit, Rank::Five),
+                2,
+                Clue::Rank(Rank::Five),
+            );
+            if guard == 1 {
+                clue.save_identities = connection_domain(&view, Card::new(suit, Rank::Five));
+            }
+            let mut effects = Effects::default();
+            if guard == 2 {
+                push_signal(
+                    &mut effects.signals,
+                    &entry,
+                    PlayerId::new(0),
+                    Some(PlayerId::new(2)),
+                    HGroupMoveKind::FiveStall,
+                    vec![five],
+                    None,
+                );
+            }
+            crate::h_group::recognition::apply_five_tech_effects(
+                &context,
+                &view,
+                &hands,
+                &[clue],
+                &context.after.dynamic_stack_heights,
+                &effects.explicit,
+                &effects.invisible,
+                &mut effects.moved,
+                &mut effects.pending,
+                &mut effects.forced,
+                &mut effects.saves,
+                &mut effects.signals,
+            );
+            assert_eq!(
+                effects.signals.has_at_turn(4, HGroupMoveKind::FivePull),
+                guard == 0
+            );
+            assert_eq!(
+                effects.pending.iter().count(),
+                if guard == 0 { 2 } else { 0 }
+            );
+            if guard == 0 {
+                assert_eq!(effects.pending.active().count(), 1);
+                assert!(effects.pending.active().any(|c| c.cards == [connector] && c.expected == Card::new(suit, Rank::One)));
+                assert!(
+                    effects
+                        .pending
+                        .iter()
+                        .any(|c| c.focus == pulled && c.expected == identity)
+                );
+            }
+        }
+    }
+}
