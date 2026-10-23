@@ -1,6 +1,67 @@
 # No Variant, Rainbow and White product pilots
 
-## White prospective draw checkpoint: INCOMPLETE
+## White active historical stacks checkpoint: INCOMPLETE
+
+Clean source `94a20714efc40c89f3c4a1723a1a9cb11d26fcd3`, measured 2026-10-23,
+same three-player White deck, seed 1 and bounded ExpectedScore config described
+below. The existing H-Group bot now applies **13 real actions** before an
+unsupported semantic boundary stops it. This is not a completed game.
+
+| Profile                   | Completed                | Play / Discard / Clue | Official final score | Stack score / strikes | Elapsed           |
+| ------------------------- | ------------------------ | --------------------- | -------------------- | --------------------- | ----------------- |
+| Level1 first-action smoke | One legal action applied | 0 / 0 / 1             | Unavailable          | 0 / 0                 | 0.3157 s decision |
+| Level4 seed 1             | No                       | 2 / 4 / 7             | Unavailable          | 2 / 0                 | 3.0582 s          |
+
+All 13 returned Level4 choices used Symbolic/WorldLimit planning; none exhausted
+the move budget. Successful decision times total 3.0462 s, maximum 0.4542 s. The
+failed decision at zero-based real turn 13 took 0.0071 s. The exact applied
+prefix reconstructs identically. The first real clue is rank 1 to player 1; that
+recipient plays card ID 7 next, when every stack is empty. Its rank-1 literal
+knowledge justifies that play regardless of which active suit it is. This
+observation is not an assertion of optimal play or comprehensive White
+convention correctness.
+
+**Current first blocker:** `inverse_planning::deduce` calls
+`standard_h_group_clue` at its choice-observation boundary; that adapter still
+asserts `H-Group semantics require No Variant`. No global rejection was relaxed,
+no action was substituted, and no error was treated as a budget fallback. The
+next minimal capability is a proven White-compatible boundary at this specific
+inverse-planning caller. White rank-3/4 Loaded Play Clue Assumption remains
+unimplemented; production/CLI/live variant gates remain intact. PR #53 is draft.
+
+This checkpoint fixes the directly reached historical stack producers and
+consumers: reducer storage is a vector in active suit order, successful plays
+advance every active stack, and basic known-playable checks use dynamic
+historical state. The retained five-suit metadata is an explicitly named
+standard-suit projection, not canonical storage. Dynamic before/after snapshots
+now follow individual events, including a draw after a same-turn successful
+play. Subjective historical views also allocate/map every active stack. A
+separate CI cleanup removed the unused fixed-score transition wrapper after its
+last caller switched to the variant-aware function; no gate was weakened.
+
+Focused checks passed: the new legal-prefix replay/subjective-stack contract for
+No Variant and White; the existing future-reveal/draw redaction test; the
+reviewed No Variant duplicate-fours regression; both unchanged semantic
+rejection tests; scoped formatting/production checks for search and the core
+cleanup; and `git diff --check`. The opt-in integration invocation returns 101:
+physical-label/deck and Level1 tests pass, while the Level4 game fails at the
+semantic boundary above. No full suite or green CI is claimed. Independent
+read-only review found no blocking issue; the new replay regression catches the
+prior sixth-suit panic and checks physical hand/reconstructed stack parity, but
+does not independently expose the reducer's private canonical vector.
+
+Immutable local evidence is archived under ignored `target/product-pilot/` as
+`white-hgroup-94a2071.json`, `.ndjson` and `white-hgroup-94a2071-first.json`.
+The unversioned `white-hgroup*` report names are overwritten by later runs.
+Command logs: `target/white-active-history-checkpoint.log`,
+`white-active-stack-contract-final.log`,
+`white-active-history-knowledge-final.log`,
+`white-active-history-no-variant-final.log`, `white-active-history-gates.log`,
+`white-active-history-scoped.log` and `white-transition-cleanup.log`. The caller
+backtrace from the same source changes before commit is in
+`target/white-active-history-projection.log`.
+
+## White prospective draw checkpoint: INCOMPLETE (historical)
 
 Clean source `4d0ba162c1dabeae2b69e5c75e7aa3085b96105d`, measured 2026-10-23,
 same seed/deck/profile budgets as the initial checkpoint below. The earlier
