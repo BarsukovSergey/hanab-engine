@@ -45,6 +45,34 @@ Focused harness validation:
 bash scripts/check-scoped.sh hanabi-search -- --test self_play mvp_smoke_configuration_and_action_codec
 ```
 
+## Bounded No Variant profile reachability
+
+```sh
+bash scripts/check-scoped.sh hanabi-search contract_no_variant_mvp_profile_reachability --lib -- --ignored
+```
+
+This opt-in contract initializes cumulative Levels 1–25 and Max on three
+positions from the reviewed manifest: `p4v0s9` turns 1 and 2, and `p4v0s2` turn
+1, always from the acting observer. Each position has a 2-second inference
+deadline, with a 60-second checkpoint guard checked before each position. It
+stops at the first failure and writes `target/no-variant-profiles.json`,
+including PASS/FAIL/UNTESTED per profile, elapsed time and the first failing
+seed, one-based turn, observer and error.
+
+Assertions cover nonempty admitted actions, physical action legality and no
+strike from a required action. On the opening positions, different simulator
+identities are swapped within the observer's own hidden hand; the legal views
+and complete convention analyses must remain equal. Simulator truth is used only
+by the test oracle, never supplied to inference.
+
+This small opening checkpoint does not exercise every rule, every mandatory
+response, later-game behavior or planner strength. It does not replace the
+separate exhaustive profile matrix or the required release review.
+
+The [recorded checkpoint](no-variant-profile-result.json) passed all 26 profiles
+on these three positions (78 checks) in 30.79 seconds. This does not change the
+failed gameplay smoke above or establish later-game readiness.
+
 ## H-Group max self-play benchmark
 
 `h_group_max_self_play_200` plays seeds `p4v0s1` through `p4v0s200`, with four
