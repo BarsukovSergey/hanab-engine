@@ -1,0 +1,79 @@
+name: PR64 No Variant turn15 normal budget (one shot)
+
+on:
+  push:
+    branches:
+      - verification/pr64-turn15-normal-budget
+    paths:
+      - .github/workflows/verify-no-variant-turn15.yml
+
+permissions:
+  contents: read
+
+jobs:
+  turn15:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact test branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - name: Extract exact failed seed and action prefix
+        run: |
+          mkdir -p target/no-variant-turn15
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path("docs/no-variant-smoke-result.json").read_text())
+          prefix = data["firstFailurePrefix"]
+          assert prefix["seed"] == "p4v0s1" and prefix["nextTurn"] == 15
+          assert prefix["observer"] == 2 and len(prefix["actions"]) == 14
+          Path("target/no-variant-turn15/replay.json").write_text(
+              json.dumps({"seed": prefix["seed"], "actions": prefix["actions"]}) + "\n"
+          )
+          print("Exact saved position: p4v0s1, turn 15, actor Cathy, Level4; 14 recorded actions")
+          PY
+      - name: Build release Rust CLI
+        run: cargo build --release --locked -p hanabi-cli --bin hanabi-engine
+      - name: Re-run ONLY this decision with ordinary 120s move budget
+        shell: bash
+        run: |
+          set +e
+          /usr/bin/timeout 140s target/release/hanabi-engine analyze \
+            target/no-variant-turn15/replay.json --turn 14 \
+            --convention h-group --h-group-level 4 \
+            --objective perfect-score --move-time-ms 120000 \
+            --format json > target/no-variant-turn15/decision.json \
+            2> target/no-variant-turn15/stderr.log
+          status=$?
+          echo "$status" > target/no-variant-turn15/exit-code.txt
+          echo "decision_exit=$status"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("target/no-variant-turn15/decision.json")
+          print(f"output_bytes={p.stat().st_size if p.exists() else 0}")
+          if p.exists() and p.stat().st_size:
+              try:
+                  z=json.loads(p.read_text())
+                  print("result_json_keys:", list(z)[:24])
+                  print("planning:", str(z.get("planning", {}))[:1800])
+              except (ValueError, OSError) as e:
+                  print("JSON parse error:", str(e))
+          err=Path("target/no-variant-turn15/stderr.log")
+          if err.exists(): print("stderr_tail:", err.read_text(errors="replace")[-1600:])
+          PY
+          exit "$status"
+      - name: Attach exact replay and result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr64-no-variant-turn15-120s
+          path: target/no-variant-turn15
+          if-no-files-found: warn
+          retention-days: 7
