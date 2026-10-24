@@ -6,7 +6,7 @@ import subprocess
 import time
 
 
-def main():
+def main() -> int:
     root = Path(__file__).resolve().parent.parent
     output = root / "target" / "no-variant-smoke"
     output.mkdir(parents=True, exist_ok=True)

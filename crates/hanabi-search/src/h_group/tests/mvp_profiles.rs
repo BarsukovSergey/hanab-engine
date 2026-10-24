@@ -37,49 +37,7 @@ fn contract_no_variant_mvp_profile_reachability() {
                 let control = crate::AnalysisControl::default();
                 let _budget = crate::budget::Scope::enter(Duration::from_secs(2), &control);
                 crate::budget::run(|| {
-                    let view = state.view_for(observer).unwrap();
-                    assert!(
-                        view.hands[observer.index()]
-                            .iter()
-                            .all(|card| card.identity.is_none())
-                    );
-                    let deductions = LogicalDeductions::new(view.clone()).unwrap();
-                    let analysis = crate::SupportedConvention::HGroup(profile).analyze(&deductions);
-                    assert!(!analysis.actions.is_empty(), "no admitted actions");
-                    for candidate in &analysis.actions {
-                        state
-                            .clone()
-                            .apply(candidate.action)
-                            .expect("admitted action is legal");
-                    }
-                    if let Some(action) = analysis.forced_action {
-                        assert!(
-                            analysis
-                                .actions
-                                .iter()
-                                .any(|candidate| candidate.action == action)
-                        );
-                        let mut after = state.clone();
-                        after.apply(action).expect("required action is legal");
-                        assert_eq!(after.strikes(), state.strikes(), "false required play");
-                    }
-                    // At the opening, permute only the observer's own hidden
-                    // cards. Compare the complete analysis of equal legal views.
-                    if *turn == 0 {
-                        let mut deck = (0..50)
-                            .map(|index| state.card(CardId::new(index)).unwrap())
-                            .collect::<Vec<_>>();
-                        let other_slot = (1..4).find(|&slot| deck[slot] != deck[0]).unwrap();
-                        deck.swap(0, other_slot);
-                        let alternative = FullState::new_standard(4, deck).unwrap();
-                        let other_view = alternative.view_for(observer).unwrap();
-                        assert_eq!(view, other_view);
-                        let other = LogicalDeductions::new(other_view).unwrap();
-                        assert_eq!(
-                            analysis,
-                            crate::SupportedConvention::HGroup(profile).analyze(&other)
-                        );
-                    }
+                    check_position(&state, observer, *turn, profile);
                 })
                 .expect("case deadline reached");
             }));
@@ -128,4 +86,50 @@ fn contract_no_variant_mvp_profile_reachability() {
         "profile checkpoint failed; inspect {}",
         output.display()
     );
+}
+
+fn check_position(state: &FullState, observer: PlayerId, turn: u32, profile: HGroupProfile) {
+    let view = state.view_for(observer).unwrap();
+    assert!(
+        view.hands[observer.index()]
+            .iter()
+            .all(|card| card.identity.is_none())
+    );
+    let deductions = LogicalDeductions::new(view.clone()).unwrap();
+    let analysis = crate::SupportedConvention::HGroup(profile).analyze(&deductions);
+    assert!(!analysis.actions.is_empty(), "no admitted actions");
+    for candidate in &analysis.actions {
+        state
+            .clone()
+            .apply(candidate.action)
+            .expect("admitted action is legal");
+    }
+    if let Some(action) = analysis.forced_action {
+        assert!(
+            analysis
+                .actions
+                .iter()
+                .any(|candidate| candidate.action == action)
+        );
+        let mut after = state.clone();
+        after.apply(action).expect("required action is legal");
+        assert_eq!(after.strikes(), state.strikes(), "false required play");
+    }
+    // At the opening, permute only the observer's own hidden
+    // cards. Compare the complete analysis of equal legal views.
+    if turn == 0 {
+        let mut deck = (0..50)
+            .map(|index| state.card(CardId::new(index)).unwrap())
+            .collect::<Vec<_>>();
+        let other_slot = (1..4).find(|&slot| deck[slot] != deck[0]).unwrap();
+        deck.swap(0, other_slot);
+        let alternative = FullState::new_standard(4, deck).unwrap();
+        let other_view = alternative.view_for(observer).unwrap();
+        assert_eq!(view, other_view);
+        let other = LogicalDeductions::new(other_view).unwrap();
+        assert_eq!(
+            analysis,
+            crate::SupportedConvention::HGroup(profile).analyze(&other)
+        );
+    }
 }
