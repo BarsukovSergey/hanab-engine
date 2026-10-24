@@ -508,3 +508,62 @@ fn mvp_smoke_configuration_and_action_codec() {
         );
     }
 }
+
+
+/// Read-only validation branch only: a real complete game with the normal
+/// production planner configuration. The hard CI time limit is external.
+#[test]
+#[ignore = "explicit full-game offline validation on the verification branch"]
+fn offline_full_game_level4_p4v0s1() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let output = root.join("target/offline-full-games");
+    fs::create_dir_all(&output).unwrap();
+    let result = play_case(
+        "p4v0s1",
+        HGroupProfile::Level(hanabi_search::HGroupLevel::Level4),
+        config(),
+        &output,
+        None,
+    );
+    fs::write(
+        output.join("level4-result.json"),
+        serde_json::to_string_pretty(&result).unwrap() + "\n",
+    )
+    .unwrap();
+    eprintln!(
+        "LEVEL4 offline: turns={} stack_score={} official_score={} strikes={} error={:?} elapsed={:.2}s",
+        result.turns, result.stack_score, result.score,
+        result.strikes, result.error, result.elapsed_seconds,
+    );
+    assert!(result.legal_replay_parity, "replayed game diverged");
+    assert!(result.error.is_none(), "game failed: {:?}", result.error);
+    assert!(result.turns > 0, "no gameplay");
+}
+
+#[test]
+#[ignore = "explicit full-game offline validation on the verification branch"]
+fn offline_full_game_max_p4v0s2() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let output = root.join("target/offline-full-games");
+    fs::create_dir_all(&output).unwrap();
+    let result = play_case(
+        "p4v0s2",
+        HGroupProfile::Max,
+        config(),
+        &output,
+        None,
+    );
+    fs::write(
+        output.join("max-result.json"),
+        serde_json::to_string_pretty(&result).unwrap() + "\n",
+    )
+    .unwrap();
+    eprintln!(
+        "MAX offline: turns={} stack_score={} official_score={} strikes={} error={:?} elapsed={:.2}s",
+        result.turns, result.stack_score, result.score,
+        result.strikes, result.error, result.elapsed_seconds,
+    );
+    assert!(result.legal_replay_parity, "replayed game diverged");
+    assert!(result.error.is_none(), "game failed: {:?}", result.error);
+    assert!(result.turns > 0, "no gameplay");
+}
