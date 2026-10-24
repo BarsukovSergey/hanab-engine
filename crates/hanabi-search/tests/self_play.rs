@@ -8,7 +8,7 @@ use std::{
         mpsc,
     },
     thread,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use hanabi_core::{Action, Clue};
@@ -32,6 +32,14 @@ struct GameResult {
     elapsed_seconds: f64,
     error: Option<String>,
     actions: Vec<serde_json::Value>,
+    #[serde(default)]
+    deadline_turns: Vec<u32>,
+    #[serde(default)]
+    failed_stage: Option<String>,
+    #[serde(default)]
+    failed_observer: Option<usize>,
+    #[serde(default)]
+    legal_replay_parity: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -75,15 +83,33 @@ fn action_json(action: Action) -> serde_json::Value {
 }
 
 fn play(seed: usize, active: &std::path::Path) -> GameResult {
+    play_case(
+        &format!("p4v0s{seed}"),
+        HGroupProfile::Max,
+        config(),
+        active,
+        None,
+    )
+}
+
+fn play_case(
+    seed: &str,
+    profile: HGroupProfile,
+    planner: PlannerConfig,
+    active: &std::path::Path,
+    deadline: Option<Instant>,
+) -> GameResult {
     let started = Instant::now();
-    let seed = format!("p4v0s{seed}");
-    let json = serde_json::json!({"seed": seed, "players": ["Alice", "Bob", "Cathy", "Donald"], "actions": []});
+    let json = serde_json::json!({"seed": seed, "actions": []});
     let mut state = HanabiLiveReplay::from_json(&json.to_string())
         .unwrap()
         .state_at_turn(0)
         .unwrap();
     let mut actions = Vec::new();
     let mut error = None;
+    let mut failed_stage = None;
+    let mut failed_observer = None;
+    let mut deadline_turns = Vec::new();
     // Only the simulator has the seed and FullState. Decisions receive the
     // acting player's permitted observation and deterministic search budgets.
     while !state.is_terminal() {
@@ -92,41 +118,64 @@ fn play(seed: usize, active: &std::path::Path) -> GameResult {
         fs::write(
             active.join(format!("{seed}.json")),
             serde_json::json!({
-                "seed": seed, "players": ["Alice", "Bob", "Cathy", "Donald"], "actions": actions,
+                "seed": seed, "actions": actions,
+                "profile": format!("{profile:?}"), "moveTimeMs": planner.move_time_limit.as_millis(),
+                "nextTurn": state.turn() + 1, "observer": state.current_player().index(),
+                "stage": "plan_move",
             })
             .to_string(),
         )
         .unwrap();
+        failed_observer = Some(state.current_player().index());
+        if deadline.is_some_and(|limit| Instant::now() >= limit) {
+            failed_stage = Some("total_deadline".to_owned());
+            error = Some("smoke total deadline reached".to_owned());
+            break;
+        }
         if state.turn() >= 200 {
+            failed_stage = Some("turn_bound".to_owned());
             error = Some("game exceeded 200 turns without reaching a terminal state".to_owned());
             break;
         }
         let view = state.view_for(state.current_player()).unwrap();
         let decision = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let convention = SupportedConvention::HGroup(HGroupProfile::Max);
+            let convention = SupportedConvention::HGroup(profile);
             let information = InformationSet::new(&view).map_err(|error| error.to_string())?;
-            plan_move(&information, convention, config()).map_err(|error| error.to_string())
+            plan_move(&information, convention, planner).map_err(|error| error.to_string())
         }));
         match decision {
             Ok(Ok(result)) => {
-                actions.push(action_json(result.best_action));
+                if result.budget_exhausted {
+                    deadline_turns.push(state.turn() + 1);
+                }
                 if let Err(cause) = state.apply(result.best_action) {
+                    failed_stage = Some("apply".to_owned());
                     error = Some(format!("illegal engine action: {cause}"));
                     break;
                 }
+                actions.push(action_json(result.best_action));
             }
             Ok(Err(cause)) => {
+                failed_stage = Some("plan_move".to_owned());
                 error = Some(cause);
                 break;
             }
             Err(_) => {
+                failed_stage = Some("plan_move_panic".to_owned());
                 error = Some("engine panicked (see test stderr)".to_owned());
                 break;
             }
         }
     }
+    let replay = serde_json::json!({"seed": seed, "actions": actions});
+    let legal_replay_parity = HanabiLiveReplay::from_json(&replay.to_string())
+        .and_then(|replay| replay.replay())
+        .is_ok_and(|replayed| replayed == state);
+    if error.is_none() {
+        failed_observer = None;
+    }
     GameResult {
-        seed,
+        seed: seed.to_owned(),
         score: state.final_score().unwrap_or(0),
         stack_score: state.score(),
         strikes: state.strikes(),
@@ -134,6 +183,10 @@ fn play(seed: usize, active: &std::path::Path) -> GameResult {
         elapsed_seconds: started.elapsed().as_secs_f64(),
         error,
         actions,
+        deadline_turns,
+        failed_stage,
+        failed_observer,
+        legal_replay_parity,
     }
 }
 
@@ -374,4 +427,84 @@ fn benchmark_rejects_score_and_perfect_game_decreases() {
     measured.perfect_games = 3;
     measured.exact_node_limit = 1;
     assert!(std::panic::catch_unwind(|| assert_no_regression(&previous, &measured)).is_err());
+}
+
+const MVP_CASES: [(&str, HGroupProfile); 3] = [
+    (
+        "p3v0s1",
+        HGroupProfile::Level(hanabi_search::HGroupLevel::Level1),
+    ),
+    (
+        "p4v0s1",
+        HGroupProfile::Level(hanabi_search::HGroupLevel::Level4),
+    ),
+    ("p4v0s2", HGroupProfile::Max),
+];
+const MVP_MOVE_TIME: Duration = Duration::from_secs(2);
+const MVP_TOTAL_TIME: Duration = Duration::from_secs(180);
+
+#[test]
+#[ignore = "bounded No Variant diagnostic; run scripts/check-no-variant-smoke.py"]
+fn no_variant_mvp_smoke() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let output = root.join("target/no-variant-smoke");
+    fs::create_dir_all(&output).unwrap();
+    let mut report = fs::File::create(output.join("games.ndjson")).unwrap();
+    let deadline = Instant::now() + MVP_TOTAL_TIME;
+    for (seed, profile) in MVP_CASES {
+        let planner = PlannerConfig {
+            move_time_limit: MVP_MOVE_TIME,
+            ..config()
+        };
+        let result = play_case(seed, profile, planner, &output, Some(deadline));
+        serde_json::to_writer(
+            &mut report,
+            &serde_json::json!({
+                "profile": format!("{profile:?}"), "moveTimeMs": MVP_MOVE_TIME.as_millis(),
+                "totalTimeSeconds": MVP_TOTAL_TIME.as_secs(), "game": result,
+            }),
+        )
+        .unwrap();
+        writeln!(report).unwrap();
+        report.flush().unwrap();
+        assert!(result.legal_replay_parity, "illegal prefix: {seed}");
+        assert!(
+            result.error.is_none(),
+            "first error: {seed}, turn {}, observer {:?}, stage {:?}: {:?}",
+            result.turns + 1,
+            result.failed_observer,
+            result.failed_stage,
+            result.error
+        );
+    }
+}
+
+#[test]
+fn mvp_smoke_configuration_and_action_codec() {
+    assert_eq!(MVP_CASES.len(), 3);
+    for (seed, _) in MVP_CASES {
+        let replay = HanabiLiveReplay::from_json(
+            &serde_json::json!({"seed": seed, "actions": []}).to_string(),
+        )
+        .unwrap();
+        let mut state = replay.state_at_turn(0).unwrap();
+        assert!((3..=4).contains(&state.hands().len()));
+        // Choose a legal clue from visible faces, independent of strategy.
+        let face = state.view_for(state.current_player()).unwrap().hands[1][0]
+            .identity
+            .unwrap();
+        let action = Action::Clue {
+            target: hanabi_core::PlayerId::new(1),
+            clue: Clue::Rank(face.rank),
+        };
+        state.apply(action).unwrap();
+        let encoded = serde_json::json!({"seed": seed, "actions": [action_json(action)]});
+        assert_eq!(
+            HanabiLiveReplay::from_json(&encoded.to_string())
+                .unwrap()
+                .replay()
+                .unwrap(),
+            state
+        );
+    }
 }
