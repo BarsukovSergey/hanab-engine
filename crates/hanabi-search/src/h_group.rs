@@ -2121,7 +2121,21 @@ fn schedule_connection(
                         .into_iter()
                         .collect()
                 } else {
-                    unclued.first().copied().into_iter().collect()
+                    unclued
+                        .first()
+                        .copied()
+                        // A blind actor may not know their own card, but an
+                        // observer cannot route the promise through a teammate's
+                        // visibly incompatible Finesse Position. Check at clue
+                        // time so later reveals cannot rewrite the old chain.
+                        // https://hanabi.github.io/beginner/finesse/
+                        .filter(|card| {
+                            HistoricalView::new(view, turn)
+                                .identity(*card)
+                                .is_none_or(|visible| visible == expected)
+                        })
+                        .into_iter()
+                        .collect()
                 };
                 if !cards.is_empty() {
                     if ambiguous_visible_actor.is_some_and(|chosen| chosen != candidate_index)
