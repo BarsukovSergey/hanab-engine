@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "checked": 2,
+  "matched": 2,
+  "mismatches": [],
+  "errors": [],
+  "origin": "offline recorded opening",
+  "liveSignOff": "PENDING",
+  "elapsedSeconds": 102.69642339996062,
+  "moveTimeMs": 120000,
+  "runtimeSourceCommit": "e62226f6e8a0001399dceaeab6cd9559c44b57b5",
+  "scope": "Recorded 3-player opening only; no network or live action submission",
+  "protocolVersion": 1,
+  "sessionOneShotFullResponseEquality": true,
+  "completedAnalysisRequired": true,
+  "ownInitialDrawsRedacted": true,
+  "actionEncodingChecked": true,
+  "earlierDiagnostic": {
+    "moveTimeMs": 10000,
+    "result": "FAIL",
+    "stage": "session / one-shot full response parity",
+    "budgetExhausted": true,
+    "interpretation": "Incomplete timed analysis is not deterministic full-response parity; retained as failed diagnostic"
+  }
+}
