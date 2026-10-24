@@ -1,0 +1,52 @@
+name: Offline No Variant Level4 and Max full games
+
+on:
+  push:
+    branches:
+      - verification/no-variant-offline-full-games
+    paths:
+      - .github/workflows/offline-no-variant-full-games.yml
+
+permissions:
+  contents: read
+
+jobs:
+  offline-game:
+    name: "No Variant ${{ matrix.game }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - game: level4
+            test: offline_full_game_level4_p4v0s1
+          - game: max
+            test: offline_full_game_max_p4v0s2
+    steps:
+      - name: Checkout frozen PR64 branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install project Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - name: Build offline self-play test
+        run: cargo test --release --locked -p hanabi-search --test self_play --no-run
+      - name: Run one real full game with production planner budgets
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p target/offline-full-games
+          executable="$(find target/release/deps -maxdepth 1 -type f -name 'self_play-*' -executable | head -n 1)"
+          test -n "$executable"
+          /usr/bin/timeout 650s "$executable" --ignored --exact "${{ matrix.test }}" --nocapture 2>&1 | tee "target/offline-full-games/${{ matrix.game }}-run.log"
+      - name: Upload exact full game results or interrupted prefix
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: no-variant-${{ matrix.game }}-result
+          path: target/offline-full-games/
+          if-no-files-found: warn
+          retention-days: 7
