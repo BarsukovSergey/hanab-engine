@@ -1,4 +1,79 @@
-# H-Group max self-play benchmark
+# H-Group self-play diagnostics
+
+## Bounded No Variant MVP smoke
+
+```sh
+bash scripts/run-python.sh scripts/check-no-variant-smoke.py
+```
+
+This opt-in diagnostic reuses the self-play loop for at most three fixed games,
+in order: `p3v0s1` at Level1, `p4v0s1` at Level4, and `p4v0s2` at Max. Each move
+has a 2-second planner budget with the ordinary perfect-score search limits. The
+game run has a hard 180-second wall limit; compilation is outside that limit.
+The wrapper kills the test binary on timeout and returns 124. The first engine
+error or total timeout stops the run; there are no retries or invented fallback
+actions. A legal best-so-far result returned by the planner itself is retained
+and its deadline turn is recorded.
+
+`target/no-variant-smoke/games.ndjson` records each completed or failed game:
+profile, score, stack score, strikes, elapsed time, deadline turns, engine
+error, one-based failing turn (`turns + 1`), zero-based observer and response
+stage. `legalReplayParity` compares the complete simulator state with an
+independent replay of the emitted action JSON. Before every decision,
+`<seed>.json` saves the exact legal prefix, next turn, observer, profile and
+budget. `run.json` records process status and the active prefix on hard timeout;
+`run.log` retains test failures. Reports from the previous invocation are
+removed before play. Preserve these files before rerunning a failure. Active
+files describe the position before the last attempted decision; game reports
+include its result.
+
+These generated games check reproducibility and software invariants. Scores and
+engine choices are diagnostics, not reviewed convention expectations. A timeout
+or engine error is a failed smoke, even when the saved prefix is legal. Use
+`analyze --explain` on that prefix for a separately scoped diagnosis.
+
+The [first recorded MVP run](no-variant-smoke-result.json) completed Level1
+(`p3v0s1`, 23 points, zero strikes), then stopped at Level4 `p4v0s1`, turn 15,
+observer 2, `plan_move`: `analysis deadline reached`. Both emitted prefixes
+replayed to the identical simulator state. Max was not run. This records a
+failed smoke under the explicit 2-second budget, not a source-backed convention
+defect or a release-ready result.
+
+Focused harness validation:
+
+```sh
+bash scripts/check-scoped.sh hanabi-search -- --test self_play mvp_smoke_configuration_and_action_codec
+```
+
+## Bounded No Variant profile reachability
+
+```sh
+bash scripts/check-scoped.sh hanabi-search contract_no_variant_mvp_profile_reachability --lib -- --ignored
+```
+
+This opt-in contract initializes cumulative Levels 1–25 and Max on three
+positions from the reviewed manifest: `p4v0s9` turns 1 and 2, and `p4v0s2` turn
+1, always from the acting observer. Each position has a 2-second inference
+deadline, with a 60-second checkpoint guard checked before each position. It
+stops at the first failure and writes `target/no-variant-profiles.json`,
+including PASS/FAIL/UNTESTED per profile, elapsed time and the first failing
+seed, one-based turn, observer and error.
+
+Assertions cover nonempty admitted actions, physical action legality and no
+strike from a required action. On the opening positions, different simulator
+identities are swapped within the observer's own hidden hand; the legal views
+and complete convention analyses must remain equal. Simulator truth is used only
+by the test oracle, never supplied to inference.
+
+This small opening checkpoint does not exercise every rule, every mandatory
+response, later-game behavior or planner strength. It does not replace the
+separate exhaustive profile matrix or the required release review.
+
+The [recorded checkpoint](no-variant-profile-result.json) passed all 26 profiles
+on these three positions (78 checks) in 30.79 seconds. This does not change the
+failed gameplay smoke above or establish later-game readiness.
+
+## H-Group max self-play benchmark
 
 `h_group_max_self_play_200` plays seeds `p4v0s1` through `p4v0s200`, with four
 H-Group max players and the normal perfect-score planner budgets (4,096 worlds

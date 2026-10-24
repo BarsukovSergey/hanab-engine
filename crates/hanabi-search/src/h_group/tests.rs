@@ -10,6 +10,7 @@ mod basic_semantics;
 mod clue_vocabulary;
 mod generic_connections;
 mod generic_focus_context;
+mod mvp_profiles;
 mod replay;
 mod replay_memo;
 mod snapshots;

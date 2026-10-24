@@ -1,0 +1,444 @@
+{
+  "sourceCommit": "5a8e6c1c4db099a6448e1cda02877c59a9a36043",
+  "purpose": "Unreviewed self-play diagnostics, not a convention or optimal-move oracle",
+  "run": {
+    "exitCode": 101,
+    "hardTimeout": false,
+    "elapsedSeconds": 105.61025090003386,
+    "moveTimeMs": 2000,
+    "totalTimeSeconds": 180,
+    "stage": "test",
+    "prefixes": ["p3v0s1.json", "p4v0s1.json"]
+  },
+  "games": [
+    {
+      "game": {
+        "actions": [
+          {
+            "target": 2,
+            "type": 3,
+            "value": 2
+          },
+          {
+            "target": 2,
+            "type": 2,
+            "value": 4
+          },
+          {
+            "target": 14,
+            "type": 0
+          },
+          {
+            "target": 1,
+            "type": 2,
+            "value": 2
+          },
+          {
+            "target": 6,
+            "type": 0
+          },
+          {
+            "target": 1,
+            "type": 2,
+            "value": 3
+          },
+          {
+            "target": 2,
+            "type": 2,
+            "value": 0
+          },
+          {
+            "target": 16,
+            "type": 0
+          },
+          {
+            "target": 15,
+            "type": 0
+          },
+          {
+            "target": 1,
+            "type": 2,
+            "value": 0
+          },
+          {
+            "target": 9,
+            "type": 0
+          },
+          {
+            "target": 1,
+            "type": 2,
+            "value": 1
+          },
+          {
+            "target": 0,
+            "type": 1
+          },
+          {
+            "target": 17,
+            "type": 0
+          },
+          {
+            "target": 0,
+            "type": 2,
+            "value": 2
+          },
+          {
+            "target": 2,
+            "type": 2,
+            "value": 2
+          },
+          {
+            "target": 5,
+            "type": 1
+          },
+          {
+            "target": 10,
+            "type": 0
+          },
+          {
+            "target": 1,
+            "type": 2,
+            "value": 0
+          },
+          {
+            "target": 21,
+            "type": 0
+          },
+          {
+            "target": 11,
+            "type": 1
+          },
+          {
+            "target": 1,
+            "type": 3,
+            "value": 5
+          },
+          {
+            "target": 8,
+            "type": 0
+          },
+          {
+            "target": 12,
+            "type": 1
+          },
+          {
+            "target": 1,
+            "type": 0
+          },
+          {
+            "target": 2,
+            "type": 3,
+            "value": 2
+          },
+          {
+            "target": 18,
+            "type": 0
+          },
+          {
+            "target": 2,
+            "type": 1
+          },
+          {
+            "target": 2,
+            "type": 2,
+            "value": 4
+          },
+          {
+            "target": 23,
+            "type": 0
+          },
+          {
+            "target": 3,
+            "type": 1
+          },
+          {
+            "target": 2,
+            "type": 3,
+            "value": 3
+          },
+          {
+            "target": 13,
+            "type": 0
+          },
+          {
+            "target": 4,
+            "type": 1
+          },
+          {
+            "target": 19,
+            "type": 1
+          },
+          {
+            "target": 25,
+            "type": 0
+          },
+          {
+            "target": 20,
+            "type": 1
+          },
+          {
+            "target": 7,
+            "type": 0
+          },
+          {
+            "target": 29,
+            "type": 1
+          },
+          {
+            "target": 2,
+            "type": 2,
+            "value": 1
+          },
+          {
+            "target": 22,
+            "type": 1
+          },
+          {
+            "target": 39,
+            "type": 0
+          },
+          {
+            "target": 2,
+            "type": 3,
+            "value": 5
+          },
+          {
+            "target": 2,
+            "type": 2,
+            "value": 3
+          },
+          {
+            "target": 27,
+            "type": 0
+          },
+          {
+            "target": 28,
+            "type": 1
+          },
+          {
+            "target": 24,
+            "type": 1
+          },
+          {
+            "target": 36,
+            "type": 0
+          },
+          {
+            "target": 1,
+            "type": 2,
+            "value": 3
+          },
+          {
+            "target": 2,
+            "type": 2,
+            "value": 1
+          },
+          {
+            "target": 41,
+            "type": 0
+          },
+          {
+            "target": 30,
+            "type": 1
+          },
+          {
+            "target": 44,
+            "type": 0
+          },
+          {
+            "target": 45,
+            "type": 0
+          },
+          {
+            "target": 32,
+            "type": 1
+          },
+          {
+            "target": 35,
+            "type": 0
+          },
+          {
+            "target": 31,
+            "type": 0
+          }
+        ],
+        "deadlineTurns": [
+          1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 14, 16, 19, 20, 23, 26, 29, 40, 43, 44,
+          45, 48, 49, 50, 51, 52, 53, 54, 55, 56
+        ],
+        "elapsedSeconds": 75.4031788,
+        "error": null,
+        "failedObserver": null,
+        "failedStage": null,
+        "legalReplayParity": true,
+        "score": 23,
+        "seed": "p3v0s1",
+        "stackScore": 23,
+        "strikes": 0,
+        "turns": 57
+      },
+      "moveTimeMs": 2000,
+      "profile": "Level(Level1)",
+      "totalTimeSeconds": 180
+    },
+    {
+      "game": {
+        "actions": [
+          {
+            "target": 1,
+            "type": 2,
+            "value": 3
+          },
+          {
+            "target": 4,
+            "type": 0
+          },
+          {
+            "target": 0,
+            "type": 2,
+            "value": 3
+          },
+          {
+            "target": 2,
+            "type": 3,
+            "value": 4
+          },
+          {
+            "target": 2,
+            "type": 3,
+            "value": 1
+          },
+          {
+            "target": 6,
+            "type": 0
+          },
+          {
+            "target": 8,
+            "type": 0
+          },
+          {
+            "target": 2,
+            "type": 3,
+            "value": 2
+          },
+          {
+            "target": 3,
+            "type": 0
+          },
+          {
+            "target": 3,
+            "type": 2,
+            "value": 1
+          },
+          {
+            "target": 9,
+            "type": 0
+          },
+          {
+            "target": 15,
+            "type": 0
+          },
+          {
+            "target": 3,
+            "type": 2,
+            "value": 0
+          },
+          {
+            "target": 2,
+            "type": 2,
+            "value": 2
+          }
+        ],
+        "deadlineTurns": [1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14],
+        "elapsedSeconds": 30.1362027,
+        "error": "analysis deadline reached",
+        "failedObserver": 2,
+        "failedStage": "plan_move",
+        "legalReplayParity": true,
+        "score": 0,
+        "seed": "p4v0s1",
+        "stackScore": 6,
+        "strikes": 0,
+        "turns": 14
+      },
+      "moveTimeMs": 2000,
+      "profile": "Level(Level4)",
+      "totalTimeSeconds": 180
+    }
+  ],
+  "firstFailurePrefix": {
+    "actions": [
+      {
+        "target": 1,
+        "type": 2,
+        "value": 3
+      },
+      {
+        "target": 4,
+        "type": 0
+      },
+      {
+        "target": 0,
+        "type": 2,
+        "value": 3
+      },
+      {
+        "target": 2,
+        "type": 3,
+        "value": 4
+      },
+      {
+        "target": 2,
+        "type": 3,
+        "value": 1
+      },
+      {
+        "target": 6,
+        "type": 0
+      },
+      {
+        "target": 8,
+        "type": 0
+      },
+      {
+        "target": 2,
+        "type": 3,
+        "value": 2
+      },
+      {
+        "target": 3,
+        "type": 0
+      },
+      {
+        "target": 3,
+        "type": 2,
+        "value": 1
+      },
+      {
+        "target": 9,
+        "type": 0
+      },
+      {
+        "target": 15,
+        "type": 0
+      },
+      {
+        "target": 3,
+        "type": 2,
+        "value": 0
+      },
+      {
+        "target": 2,
+        "type": 2,
+        "value": 2
+      }
+    ],
+    "moveTimeMs": 2000,
+    "nextTurn": 15,
+    "observer": 2,
+    "profile": "Level(Level4)",
+    "seed": "p4v0s1",
+    "stage": "plan_move"
+  },
+  "notRun": ["p4v0s2 / Max: stopped at first engine error"]
+}

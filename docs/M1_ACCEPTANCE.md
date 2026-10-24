@@ -1,6 +1,9 @@
 # M1 Acceptance
 
-Status: **candidate ready for live smoke**, not final live-validated.
+Status: **infrastructure acceptance only; No Variant MVP live sign-off PENDING**.
+Current delivery evidence and remaining gates are recorded in
+[No Variant MVP readiness](NO_VARIANT_MVP_READINESS.md). The historical M1
+checklist does not certify current convention behavior or live readiness.
 
 ## Automated acceptance
 
@@ -16,7 +19,7 @@ Status: **candidate ready for live smoke**, not final live-validated.
 - [x] Deterministic parity verification replays each recorded decision in a fresh engine session.
 - [x] TurnTrace schema v1 normalizes existing knowledge, convention and planner diagnostics.
 - [x] Deferred M7/M8 fields remain explicit rather than fabricated.
-- [x] Focused Python live checks, MSRV and H-Group profile validation run in CI.
+- [x] Focused Python live checks, MSRV and deterministic H-Group contracts run in CI.
 
 ## Manual live acceptance
 
@@ -32,4 +35,4 @@ These require a real dedicated hanab.live bot account and are intentionally not 
 
 ## Full inherited Rust suite
 
-The imported upstream full replay suite is not an M1 release gate until its pre-existing timeout behavior is repaired. Routine PR CI uses the fast quality path plus MSRV, exhaustive H-Group profile checks and dedicated live-bridge tests.
+The imported upstream full replay suite is not an M1 release gate until its pre-existing timeout behavior is repaired. Routine PR CI uses the targeted gates documented in [validation.md](validation.md), including MSRV and dedicated live-bridge checks. The exhaustive profile matrix is a separate manual gate.

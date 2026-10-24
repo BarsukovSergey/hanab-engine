@@ -65,31 +65,10 @@ fn protocol_handshake_is_versioned_json_not_help_text() {
 }
 
 fn traced_opening_snapshot() -> serde_json::Value {
-    serde_json::json!({
-        "tableID": 39,
-        "playerNames": ["hanabi-engine", "red_hedgehog", "James"],
-        "ourPlayerIndex": 0,
-        "spectating": false,
-        "replay": false,
-        "options": {"variantName": "No Variant"},
-        "actions": [
-            {"type": "draw", "playerIndex": 0, "order": 0, "suitIndex": -1, "rank": -1},
-            {"type": "draw", "playerIndex": 0, "order": 1, "suitIndex": -1, "rank": -1},
-            {"type": "draw", "playerIndex": 0, "order": 2, "suitIndex": -1, "rank": -1},
-            {"type": "draw", "playerIndex": 0, "order": 3, "suitIndex": -1, "rank": -1},
-            {"type": "draw", "playerIndex": 0, "order": 4, "suitIndex": -1, "rank": -1},
-            {"type": "draw", "playerIndex": 1, "order": 5, "suitIndex": 0, "rank": 2},
-            {"type": "draw", "playerIndex": 1, "order": 6, "suitIndex": 1, "rank": 3},
-            {"type": "draw", "playerIndex": 1, "order": 7, "suitIndex": 3, "rank": 3},
-            {"type": "draw", "playerIndex": 1, "order": 8, "suitIndex": 0, "rank": 1},
-            {"type": "draw", "playerIndex": 1, "order": 9, "suitIndex": 0, "rank": 3},
-            {"type": "draw", "playerIndex": 2, "order": 10, "suitIndex": 4, "rank": 3},
-            {"type": "draw", "playerIndex": 2, "order": 11, "suitIndex": 0, "rank": 1},
-            {"type": "draw", "playerIndex": 2, "order": 12, "suitIndex": 0, "rank": 1},
-            {"type": "draw", "playerIndex": 2, "order": 13, "suitIndex": 3, "rank": 1},
-            {"type": "draw", "playerIndex": 2, "order": 14, "suitIndex": 1, "rank": 1}
-        ]
-    })
+    serde_json::from_str(include_str!(
+        "../../hanabi-protocol/tests/fixtures/no-variant-live-opening.json"
+    ))
+    .unwrap()
 }
 
 #[test]
