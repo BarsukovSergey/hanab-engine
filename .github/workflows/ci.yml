@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - run: rustup toolchain install 1.85.0 --profile minimal
       - name: Restore Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo +1.85.0 check --workspace --all-targets --all-features --locked
@@ -63,11 +63,11 @@ jobs:
           rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
           rustup default 1.97.1
       - name: Restore Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 24
           cache: npm
@@ -106,7 +106,7 @@ jobs:
           rustup toolchain install 1.97.1 --profile minimal
           rustup default 1.97.1
       - name: Restore Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Run core and protocol tests
@@ -124,7 +124,7 @@ jobs:
           rustup toolchain install 1.97.1 --profile minimal
           rustup default 1.97.1
       - name: Restore Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Run generic search boundary tests
@@ -148,7 +148,7 @@ jobs:
           rustup toolchain install 1.97.1 --profile minimal
           rustup default 1.97.1
       - name: Restore Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Run Rust documentation tests
